@@ -1,0 +1,15 @@
+# Python belső cuccok
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtuális környezet
+venv/
+ENV/
+env/
+
+# VS Code és egyéb szerkesztő beállítások
+.vscode/
+.idea/
+.DS_Store

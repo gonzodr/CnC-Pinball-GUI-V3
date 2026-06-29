@@ -1,0 +1,34 @@
+[Unit]
+Description=Cheech & Chong Pinball - Pi GUI/video vezerlo
+# Várjunk meg, amíg a multi-user célállapot elérhető (boot vége),
+# de NE várjunk grafikus rétegre (nincs is X/Wayland telepítve).
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# A felhasználó (pi) legyen tagja a 'video', 'render' és 'dialout' csoportoknak,
+# mert kell: DRM/KMS írási jog (video, render) és soros port elérés (dialout).
+# Ellenőrzés: groups pi
+# Hozzáadás, ha hiányzik: sudo usermod -aG video,render,dialout pi
+
+WorkingDirectory=/home/pi/cnc_pinball_pi/src
+ExecStart=/usr/bin/python3 /home/pi/cnc_pinball_pi/src/main.py
+
+# Ha a program elszáll (pl. soros hiba, mpv crash), systemd indítsa újra.
+Restart=on-failure
+RestartSec=3
+
+# Naplózás a journal-ba, hogy `journalctl -u cnc-pinball -f`-fel követhető legyen
+StandardOutput=journal
+StandardError=journal
+
+# Néhány embedded rendszeren segít, hogy a process kapjon elég prioritást
+# a videó/GUI simasághoz, de ne fusson realtime (azt a Teensy-nek hagyjuk).
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
