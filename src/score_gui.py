@@ -313,11 +313,15 @@ class ScoreGUI:
         )
         pygame.display.set_caption("Cheech & Chong Pinball - Score")
 
-        self.font_score_big = pygame.font.SysFont("Arial", 80, bold=True)
-        self.font_label = pygame.font.SysFont("Arial", 60, bold=True)
-        self.font_small = pygame.font.SysFont("Arial", 22)
-        self.font_card_name = pygame.font.SysFont("Arial", 20, bold=True)
-        self.font_card_score = pygame.font.SysFont("Arial", 26, bold=True)
+        # Elérési út a Modak fontfájlhoz az assets mappában
+        modak_font_path = os.path.join(ASSETS_DIR, "Modak.ttf")
+
+        # A pygame.font.Font-nak átadjuk a fájlt és a méretet
+        self.font_score_big = pygame.font.Font(modak_font_path, 80)
+        self.font_label = pygame.font.Font(modak_font_path, 28)
+        self.font_small = pygame.font.Font(modak_font_path, 22)
+        self.font_card_name = pygame.font.Font(modak_font_path, 20)
+        self.font_card_score = pygame.font.Font(modak_font_path, 26)
 
         self._load_assets()
         self.active = True
