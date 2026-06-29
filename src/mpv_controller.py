@@ -18,7 +18,8 @@ class MpvController:
     """
 
     SOCKET_PATH = "/tmp/mpv-socket"
-    VIDEO_DIR = "/home/pi/videos"  # ide kerülnek a konvertált .mp4 fájlok
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    VIDEO_DIR = os.path.join(BASE_DIR, "assets", "Videos")  # ide kerülnek a konvertált .mp4 fájlok
     FAKE_VIDEO_DURATION_SEC = 3.0   # offline modban ennyi ido utan "er veget" egy fake video
 
     def __init__(self):
