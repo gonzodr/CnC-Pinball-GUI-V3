@@ -1,0 +1,20 @@
+Fizikai bemenetek a flipperen: 
+ - Bal Flipperkar: Bal kurzor
+ - Jobb flipperkar: Jobb kurzor
+ - Start gomb: S
+ - Player gomb: P
+
+Event kontrollerek:
+ - Aktív játékos pontszámához hozzáad 1000 pontot: Q
+ - Labda lement, következő játékos: B
+ - Random event: R
+
+Mivel a mock input a játéklogikát szimulálja, ez az alap játék logika:
+ - Attract módból kilépéshez nyomja meg a Start gombot (S)
+ - Játékosok számának beállításához nyomja meg a Player gombot (P)
+ - Ha megvan a játékosok száma, nyomja meg a Start gombot (S) a játék elindításához
+ - A játékosok pontszámait a Q gombbal lehet növelni. 
+ - B gombbal lehet váltani a játékosok között, kvázi azt szimulálja, hogy a golyó lement, így vége a játékos körének, a következő játékos jön.
+ - az R gombbal lehet random eseményeket generálni, pl multiball, extra life, stb. A random események hatására egy hozzá tartozó videót játszik le a GUI.
+
+ 
