@@ -22,14 +22,14 @@ class MockInputController:
 
         # Kiterjesztések nélkül, a mappádból kiszedett pontos nevekkel
         self._available_video_events = [
-            "Multiball1", "Multiball2", "Multiball3", "Multiball4",
+            "Acapulco Gold", "Michokan", "Thai Stick", "Multiball4","Ufofuck",
             "Point1", "Point2", "Point3", "Point4", "Point5", "Point6", "Point7", "Point8",
             "Weed", "Drift",
-            "Jackpot1", "Jackpot2", "Jackpot3", "Jackpot4", "Jackpot5", "Jackpot6",
-            "Bonus1", "Bonus2", "Bonus3", "Bonus4", "ExtraB",
+            "Jackpot2", "Jackpot3", "Jackpot4", "Jackpot5", "Jackpot6","PsyJackpot",
+            "Bonus2", "Bonus4", "Bonus6", "Bonus8", "Extraball",
             "Ufo1", "Ufo2", "Ufo3", "Ufo4", "Ufo5", "Ufo6", "Ufo7", "Ufo8", "Ufo9", "Ufo10", "Ufo11", "Ufo12", "Ufo13",
-            "Beer1", "Beer2", "Beer3",
-            "Combo1", "Combo2", "Combo3", "Combo4", "Combo5", "Combo6",
+            "BEEEER1", "BEEEER2", "BEEEER3",
+            "Combo2500", "Combo5000", "Combo7500", "Combo10000", "Comb15000", "Combo20000",
             "Danger", "Tilt",
             "ChongC1", "ChongC2", "ChongC3",
             "CheechC1", "CheechC2", "CheechC3"
