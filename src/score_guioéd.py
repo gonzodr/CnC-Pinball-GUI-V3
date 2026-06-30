@@ -66,22 +66,16 @@ def build_outlined_text_surface(font, text, fill_color, outline_color, outline_w
 def build_drop_shadow(source_surface, opacity=38, blur_radius=6):
     """
     Elkeszit egy fekete "arnyek" verziot a megadott surface-bol.
-
-    blur_radius > 0 eseten lagy arnyekot ad. A gaussian_blur helyett
-    box_blur-t hasznalunk, mert a gaussian_blur 32 bites ARM rendszereken
-    (pl. 32 bites Raspberry Pi OS) Bus Error-t okoz SIMD/NEON memoria-
-    alignment problema miatt. A box_blur vizualisan hasonlo eredmenyt ad
-    es nem hasznal problemat okoz ARM-on.
     """
     shadow = source_surface.copy()
     shadow.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MULT)
 
-    if blur_radius > 0 and hasattr(pygame.transform, 'box_blur'):
+    if blur_radius > 0:
         padded_w = shadow.get_width() + blur_radius * 2
         padded_h = shadow.get_height() + blur_radius * 2
         padded = pygame.Surface((padded_w, padded_h), pygame.SRCALPHA)
         padded.blit(shadow, (blur_radius, blur_radius))
-        shadow = pygame.transform.box_blur(padded, blur_radius)
+        shadow = pygame.transform.gaussian_blur(padded, blur_radius)
 
     shadow.set_alpha(opacity)
     return shadow
@@ -147,113 +141,6 @@ class CardAnimator:
         return self._visible[slot] or self._anim_direction[slot] is not None
 
 
-class SequentialAnimator:
-    """
-    Egymás utáni elemek (pl. SUMMARY képernyő sorai) időzített,
-    "pop-in" stílusú megjelenítését kezeli, EGYETLEN kezdő időponttal.
-
-    Használat:
-        anim = SequentialAnimator()
-        anim.add("player", start=0.0, duration=1.0)
-        anim.add("score",  start=1.0, duration=1.0)
-        anim.add("bonus",  start=2.0, duration=1.0)
-        anim.add("total",  start=3.0, duration=1.0)
-
-        anim.start()  # SUMMARY allapotba lepeskor egyszer hivva
-
-        # render()-ben minden frame-ben:
-        scale = anim.get_scale("player")  # 0.0 -> ~1.05 -> 1.0 (bounce)
-        alpha = anim.get_alpha("player")  # 0 -> 255 (ha fade=True)
-
-    Minden elem a sajat (start, start+duration) ablakaban animal be
-    0%-rol 100%-ra, enyhe "bounce" tullovessel (ease-out + sin-hullam
-    a vegen), majd nyugalmi 100%-on marad. Ha az elapsed meg a start
-    elott van, az elem lathatatlan (scale=0) - igy nem kell minden
-    elemhez kulon idozitest szamolgatni a hivo kodban, csak egyszer
-    kell elinditani a teljes szekvenciat.
-    """
-
-    BOUNCE_OVERSHOOT = 0.12   # mennyivel "tullojon" 100%-on, majd visszaall
-    FADE_DEFAULT = False      # legyen-e alapbol fade-in is a scale mellett
-
-    def __init__(self):
-        self._items = {}       # name -> {"start": float, "duration": float, "fade": bool}
-        self._anim_start_time = None
-
-    def add(self, name: str, start: float, duration: float = 0.6, fade: bool = None):
-        """
-        Regisztral egy animalando elemet.
-        start: hany masodperccel a start() hivasa utan kezdjen animalni.
-        duration: az adott elem sajat pop-in animacioja mennyi ideig tart.
-        fade: legyen-e fade-in is (alpha 0->255) a scale mellett. Ha
-        None, a FADE_DEFAULT erteket hasznalja.
-        """
-        self._items[name] = {
-            "start": start,
-            "duration": duration,
-            "fade": self.FADE_DEFAULT if fade is None else fade,
-        }
-
-    def start(self):
-        """Elinditja (vagy ujrainditja) a TELJES szekvenciat a jelen pillanattol."""
-        self._anim_start_time = time.time()
-
-    def reset_if_needed(self):
-        """Ha meg sosem indult el a szekvencia, elinditja most."""
-        if self._anim_start_time is None:
-            self.start()
-
-    def _local_t(self, name: str) -> float:
-        """
-        Visszaadja az adott elem SAJAT 0.0-1.0 elteltseget a sajat
-        (start, start+duration) ablakaban. <0 = meg nem kezdodott,
-        >1 = mar regen kesz (nyugalmi allapot).
-        """
-        if self._anim_start_time is None:
-            return -1.0
-        item = self._items[name]
-        elapsed = time.time() - self._anim_start_time
-        local_elapsed = elapsed - item["start"]
-        if item["duration"] <= 0:
-            return 1.0
-        return local_elapsed / item["duration"]
-
-    def get_scale(self, name: str) -> float:
-        """
-        Visszaadja az elem aktualis meretarany-at (0.0 = lathatatlan,
-        ~1.0 = vegleges meret, enyhe tullovessel a bekapcsolas pillanataban).
-        """
-        t = self._local_t(name)
-
-        if t <= 0.0:
-            return 0.0
-        if t >= 1.0:
-            return 1.0
-
-        eased = ease_out_cubic(t)
-        # enyhe "bounce": a gorbe vegen egy csillapulo szinusz-hullamot
-        # adunk hozza, ami egy kicsit tullo, majd visszaall 1.0-ra.
-        bounce = self.BOUNCE_OVERSHOOT * math.sin(t * math.pi) * (1 - t)
-        return eased + bounce
-
-    def get_alpha(self, name: str) -> int:
-        """
-        Visszaadja az elem aktualis attetszoseget (0-255). Ha az elemhez
-        fade=False van beallitva (alapertelmezett), mindig 255-ot ad
-        vissza - csak a meret animal, az atlatszosag nem.
-        """
-        item = self._items[name]
-        if not item["fade"]:
-            return 255
-
-        t = self._local_t(name)
-        if t <= 0.0:
-            return 0
-        if t >= 1.0:
-            return 255
-        return int(255 * ease_out_cubic(t))
-
-
 class ScoreGUI:
     """
     A pontszám-kijelző alap képernyő 640x480 felbontásra optimalizálva.
@@ -295,17 +182,7 @@ class ScoreGUI:
 
         self.background = None
         self.card_texture = None
-
-        # SUMMARY kepernyo szekvencialis pop-in animacioja: PLAYER,
-        # SCORE, BONUS, +pontok egymas utan, 1-1 masodperces ablakokban.
-        self.summary_animator = SequentialAnimator()
-        self.summary_animator.add("player", start=0.0, duration=0.6)
-        self.summary_animator.add("score", start=1.0, duration=0.6)
-        self.summary_animator.add("bonus", start=2.0, duration=0.6)
-        self.summary_animator.add("total", start=3.0, duration=0.6)
-        # Ha a summary_data tartalma valtozik render_summary()-ben,
-        # ujrainditjuk a fenti animatort - ez a cache key hozza.
-        self._summary_cache_key = None
+        self.summary_anim_start = None
 
         # 640x480-hoz igazított átlós animációs úthossz (pixelben)
         distances = {1: 280, 2: 280, 3: 280, 4: 280}
@@ -327,10 +204,12 @@ class ScoreGUI:
             return
 
         pygame.init()
-        self.screen = pygame.display.set_mode(
-            (self.SCREEN_W, self.SCREEN_H),
-            pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
-        )
+        #self.screen = pygame.display.set_mode(
+        #    (self.SCREEN_W, self.SCREEN_H),
+        #    pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
+        #)
+
+        self.screen = pygame.display.set_mode((self.SCREEN_W, self.SCREEN_H))
         pygame.display.set_caption("Cheech & Chong Pinball - Score")
 
         modak_font_path = os.path.join(ASSETS_DIR, "Modak.ttf")
@@ -415,43 +294,37 @@ class ScoreGUI:
             self._card_shadow_cache_key[player_num] = cache_key
         return self._card_shadow_cache[player_num]
 
-    # Animációs skálázás a kártyákhoz (egyenes vonal mentén)
-    def draw_scaled(self, surface, center, scale, alpha=255):
+    def get_bounce_scale(self, t):
+        """Egy egyszerű 'overshoot' (bounce) animáció."""
+        # 0.0 -> 1.0 közötti érték, t = idő (0-1)
+        # Ez egy sima back-out easing
+        if t >= 1.0: return 1.0
+        return 1.0 + 0.3 * math.sin(t * math.pi) * (1.0 - t)
+
+    def _draw_animated(self, surface, center, start_time, elapsed):
         """
-        Kirajzol egy surface-t a megadott KOZEPRE, a megadott meretaranyban
-        es attetszoseggel.
-
-        scale: 0.0 = lathatatlan, 1.0 = eredeti meret. Ennel NAGYOBB
-        ertek (pl. 1.05) is megengedett - ez a SequentialAnimator
-        "bounce" tullovesehez kell, hogy az elem egy pillanatra
-        nagyobbra nojon, mielott visszaall 100%-ra. Csak also hataron
-        (0.0) vagjuk le, felso hataron nem.
-        alpha: 0-255, az elem attetszosege (255 = teljesen lathato).
+        Kirajzolja az elemet lassan induló (ease-in) animációval.
+        start_time: mikor kell elindulnia ennek az elemnek (0.0, 1.0, 2.0...)
         """
-        scale = max(0.0, scale)
-
-        if scale <= 0.01 or alpha <= 0:
-            return
-
+        duration = 0.6 # Animáció hossza
+        t = (elapsed - start_time) / duration
+        
+        # Ha még nem jött el az idő, ne rajzoljunk semmit
+        if t < 0:
+            return 
+            
+        # Clamp t 0 és 1 közé
+        t = min(1.0, t)
+        
+        # Ease-in: t * t * t (gyorsuló hatás)
+        scale = t * t * t
+        
+        # Rajzolás
         w = max(1, int(surface.get_width() * scale))
         h = max(1, int(surface.get_height() * scale))
-
         scaled = pygame.transform.smoothscale(surface, (w, h))
-
-        if alpha < 255:
-            # set_alpha a TELJES surface-t halvanyitja, a per-pixel
-            # alpha-csatorna (pl. a szoveg kontur-effektje) megmarad,
-            # csak skalazva lesz vele egyutt.
-            scaled.set_alpha(alpha)
-
         rect = scaled.get_rect(center=center)
         self.screen.blit(scaled, rect)
-        if t <= 0:
-            return 0
-        if t >= 1:
-            return 1
-
-        return 1 + 0.12 * math.sin(t * math.pi) * (1 - t)
 
     # Score Screen Rendering
     def render(self, state):
@@ -542,25 +415,15 @@ class ScoreGUI:
     # SUMMARY SCREEN RENDERING
     def render_summary(self, summary_data):
         """
-        Kirajzolja a bónusz összegző felületet, ha SUMMARY állapotban
-        vagyunk. A négy sor (PLAYER / SCORE / BONUS / +pontok) egymás
-        után, időzítve jelenik meg, mindegyik egy kis "bounce" pop-in
-        animációval a self.summary_animator (SequentialAnimator) által.
-
-        Az animáció AUTOMATIKUSAN újraindul minden új SUMMARY körnél:
-        ezt azzal érjük el, hogy figyeljük, változott-e a summary_data
-        tartalma az előző híváshoz képest (új cache key) - ha igen,
-        feltételezzük, hogy ez egy ÚJ summary képernyő, és újraindítjuk
-        a szekvenciát a 0. másodperctől.
+        Kirajzolja a bónusz összegző felületet, ha SUMMARY állapotban vagyunk.
         """
-        cache_key = (
-            summary_data.get("player"), summary_data.get("old_score"),
-            summary_data.get("multiplier"), summary_data.get("bonus_points"),
-        )
-        if self._summary_cache_key != cache_key:
-            self._summary_cache_key = cache_key
-            self.summary_animator.start()
+        now = time.time()
 
+        if self.summary_anim_start is None:
+            self.summary_anim_start = now
+
+        elapsed = now - self.summary_anim_start
+        
         # Dzsungel háttér
         self.screen.blit(self.background2, (0, 0))
 
@@ -570,46 +433,24 @@ class ScoreGUI:
         mult = summary_data.get("multiplier", 1)
         bonus = summary_data.get("bonus_points", 0)
 
-        anim = self.summary_animator
+        # 1. PLAYER (0-1 mp)
+        p_surf = build_outlined_text_surface(self.font_summary_title, f"PLAYER {p_num}", (255, 215, 0), self.COLOR_TEXT_OUTLINE, 3)
+        self._draw_animated(p_surf, (self.SCREEN_W // 2, 160), 0.0, elapsed)
 
-        # 1. Player cím (0,0 - 1,0 mp)
-        p_surf = build_outlined_text_surface(
-            self.font_summary_title, f"PLAYER {p_num}",
-            (255, 215, 0), self.COLOR_TEXT_OUTLINE, outline_width=3
-        )
-        self.draw_scaled(
-            p_surf, (self.SCREEN_W // 2, 160),
-            anim.get_scale("player"), anim.get_alpha("player"),
-        )
 
-        # 2. Score kiírása (1,0 - 2,0 mp)
-        score_surf = build_outlined_text_surface(
-            self.font_summary_score, f"SCORE: {score:,}",
-            self.COLOR_TEXT, self.COLOR_TEXT_OUTLINE, outline_width=2
-        )
-        self.draw_scaled(
-            score_surf, (self.SCREEN_W // 2, 215),
-            anim.get_scale("score"), anim.get_alpha("score"),
-        )
+        # 2. SCORE (1-2 mp)
+        score_surf = build_outlined_text_surface(self.font_summary_mid, f"SCORE: {score:,}", self.COLOR_TEXT, self.COLOR_TEXT_OUTLINE, 2)
+        self._draw_animated(score_surf, (self.SCREEN_W // 2, 215), 1.0, elapsed)
 
-        # 3. Bonus Multiplier (2,0 - 3,0 mp)
-        mult_surf = build_outlined_text_surface(
-            self.font_summary_mid, f"BONUS {mult}x",
-            (240, 190, 40), self.COLOR_TEXT_OUTLINE, outline_width=2
-        )
-        self.draw_scaled(
-            mult_surf, (self.SCREEN_W // 2, 260),
-            anim.get_scale("bonus"), anim.get_alpha("bonus"),
-        )
 
-        # 4. A bónusz pontszám (3,0 - 4,0 mp)
-        bonus_surf = build_outlined_text_surface(
-            self.font_score_big, f"+{bonus:,}",
-            (255, 255, 255), self.COLOR_TEXT_OUTLINE, outline_width=3
-        )
-        self.draw_scaled(
-            bonus_surf, (self.SCREEN_W // 2, 320),
-            anim.get_scale("total"), anim.get_alpha("total"),
-        )
+        # 3. BONUS (2-3 mp)
+        mult_surf = build_outlined_text_surface(self.font_summary_mid, f"BONUS {mult}x", (240, 190, 40), self.COLOR_TEXT_OUTLINE, 2)
+        self._draw_animated(mult_surf, (self.SCREEN_W // 2, 260), 2.0, elapsed)
+
+
+        # 4. +BONUS (3-4 mp)
+        bonus_surf = build_outlined_text_surface(self.font_score_big, f"+{bonus:,}", (255, 255, 255), self.COLOR_TEXT_OUTLINE, 3)
+        self._draw_animated(bonus_surf, (self.SCREEN_W // 2, 320), 3.0, elapsed)
 
         pygame.display.flip()
+        
