@@ -204,10 +204,12 @@ class ScoreGUI:
             return
 
         pygame.init()
-        self.screen = pygame.display.set_mode(
-            (self.SCREEN_W, self.SCREEN_H),
-            pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
-        )
+        #self.screen = pygame.display.set_mode(
+        #    (self.SCREEN_W, self.SCREEN_H),
+        #    pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
+        #)
+
+        self.screen = pygame.display.set_mode((self.SCREEN_W, self.SCREEN_H))
         pygame.display.set_caption("Cheech & Chong Pinball - Score")
 
         modak_font_path = os.path.join(ASSETS_DIR, "Modak.ttf")
