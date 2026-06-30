@@ -63,20 +63,31 @@ def build_outlined_text_surface(font, text, fill_color, outline_color, outline_w
     return result
 
 
+def _blur_supported() -> bool:
+    """
+    Ellenorzi, hogy a blur biztonságosan hasznalhato-e ezen a platformon.
+    32 bites ARM rendszereken (pl. 32 bites Raspberry Pi OS) mind a
+    gaussian_blur, mind a box_blur Bus Error-t dob SIMD/NEON memoria-
+    alignment problema miatt. Ezeket a platformokat kizarjuk.
+    """
+    import platform
+    machine = platform.machine().lower()
+    # 'armv7l' = 32 bites ARM (Pi OS 32 bit), 'armv6l' = Pi Zero
+    # 'aarch64' = 64 bites ARM (Pi OS 64 bit, ahol ez nem problema)
+    if machine in ("armv7l", "armv6l"):
+        return False
+    return hasattr(pygame.transform, 'box_blur')
+
+
 def build_drop_shadow(source_surface, opacity=38, blur_radius=6):
     """
     Elkeszit egy fekete "arnyek" verziot a megadott surface-bol.
-
-    blur_radius > 0 eseten lagy arnyekot ad. A gaussian_blur helyett
-    box_blur-t hasznalunk, mert a gaussian_blur 32 bites ARM rendszereken
-    (pl. 32 bites Raspberry Pi OS) Bus Error-t okoz SIMD/NEON memoria-
-    alignment problema miatt. A box_blur vizualisan hasonlo eredmenyt ad
-    es nem hasznal problemat okoz ARM-on.
+    Ha a blur nem tamogatott (32 bites ARM), eles arnyekot ad vissza.
     """
     shadow = source_surface.copy()
     shadow.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MULT)
 
-    if blur_radius > 0 and hasattr(pygame.transform, 'box_blur'):
+    if blur_radius > 0 and _blur_supported():
         padded_w = shadow.get_width() + blur_radius * 2
         padded_h = shadow.get_height() + blur_radius * 2
         padded = pygame.Surface((padded_w, padded_h), pygame.SRCALPHA)
@@ -497,9 +508,14 @@ class ScoreGUI:
 
             # Drop shadow kirajzolás
             shadow = self._get_cached_card_shadow(player_num, rotated)
-            shadow_offset = 5 # Csökkentett offset a kisebb felbontás miatt (7 * 0.8 ≈ 5)
-            shadow_x = actual_x + shadow_offset - self.SHADOW_BLUR_RADIUS
-            shadow_y = actual_y - self.SHADOW_BLUR_RADIUS
+            shadow_offset = 5
+            # A blur_radius-szal csak akkor kell korrigalni a poziciot,
+            # ha a blur tenylegesen le is futott (padding miatt lett
+            # nagyobb a shadow surface). Ha _blur_supported() False
+            # (pl. 32 bites ARM), nincs padding, nincs korrekcio.
+            blur_correction = self.SHADOW_BLUR_RADIUS if _blur_supported() else 0
+            shadow_x = actual_x + shadow_offset - blur_correction
+            shadow_y = actual_y - blur_correction
             self.screen.blit(shadow, (shadow_x, shadow_y))
 
             self.screen.blit(rotated, (actual_x, actual_y))
