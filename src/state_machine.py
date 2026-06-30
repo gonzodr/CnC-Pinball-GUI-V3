@@ -1,89 +1,129 @@
-"""A fő állapotgép: SCORE <-> VIDEO váltás, és a játékállás nyilvántartása."""
+"""A fő állapotgép: SCORE <-> VIDEO <-> SUMMARY váltás, és a játékállás nyilvántartása."""
 
+import time
 from enum import Enum, auto
 from protocol import GameEvent
 from mpv_controller import MpvController
 
-
 class AppState(Enum):
-    SCORE = auto()   # alap állapot: pontszám-GUI látható
-    VIDEO = auto()   # videólejátszás aktív, GUI elrejtve
+    SCORE = auto()     # alap állapot: pontszám-GUI látható
+    VIDEO = auto()     # videólejátszás aktív, GUI elrejtve
+    SUMMARY = auto()   # bónusz / kör végi összegző képernyő
 
 
 class StateMachine:
+    SUMMARY_DURATION_SEC = 4.0  # Ennyi ideig látszódik a bónusz képernyő
+
     def __init__(self, mpv: MpvController):
         self.mpv = mpv
         self.state = AppState.SCORE
-        self._previous_state = AppState.SCORE  # váltás detektálásához
+        self._previous_state = AppState.SCORE
 
-        # GUI-nak releváns adat, amit a Score renderer fog kirajzolni
         self.players = {1: 0, 2: 0, 3: 0, 4: 0}
         self.current_player = 1
         self.current_ball = 1
-        self.multiball_active = False
-
-        # Hány jatekos-kartya legyen lathato (1-4). A fizikai player
-        # selector gomb minden megnyomasra +1-et lep, 4 utan visszaall
-        # 1-re. Ez FUGGETLEN a current_player-tol: az dontia el, MELYIK
-        # kartya van kiemelve, ez pedig, HANY kartya latszik egyaltalan.
         self.active_player_count = 1
-        self._previous_player_count = 1  # animacio-trigger detektalashoz
+        self._previous_player_count = 1
+        self.multiball_active = False
+        
+        # Bónusz adatok nyilvántartása
+        self.current_bonus = 0
+        self.current_bonusx = 0
+
+        self.summary_data = {
+            "player": 1,
+            "old_score": 0,
+            "multiplier": 1,
+            "bonus_points": 0
+        }
+        self._summary_end_time = 0.0
+
+    def _get_multiplier(self, bonusx_index):
+        """Átváltja az Arduino bonusx indexét (0-4) igazi szorzóvá (1,2,4,6,8)."""
+        if bonusx_index == 1: return 2
+        if bonusx_index == 2: return 4
+        if bonusx_index == 3: return 6
+        if bonusx_index == 4: return 8
+        return 1
 
     def handle_event(self, event: GameEvent):
-        """Egy beérkezett Teensy parancs hatására frissíti az állapotot."""
+        """Egy beérkezett Teensy/Mock parancs hatására frissíti az állapotot."""
 
-        if event.kind == "SCORE":
-            player, score = event.args
+        if event.kind == "SCORE_UPDATE":
+            score, num_players, player, ball, bonus, bonusx = event.args
+            
             self.players[player] = score
+            self.active_player_count = num_players
+            self.current_player = player
+            self.current_ball = ball
+            self.current_bonus = bonus
+            self.current_bonusx = bonusx
+            
+            # Ha épp nem SUMMARY módban vagyunk, a GUI ezt fogja mutatni
+            if self.state != AppState.SUMMARY:
+                self.state = AppState.SCORE
 
-        elif event.kind == "PLAYER":
-            self.current_player = event.args[0]
+        elif event.kind == "NEXT" or event.kind == "GAMEOVER":
+            # 1. Kiszámoljuk a szorzót és a végleges bónuszt a mentett értékekből
+            mult = self._get_multiplier(self.current_bonusx)
+            bonus_total = self.current_bonus * mult
+            
+            # 2. Összerakjuk a bónusz képernyő (summary) adatait
+            self.summary_data = {
+                "player": self.current_player,
+                "old_score": self.players[self.current_player],
+                "multiplier": mult,
+                "bonus_points": bonus_total
+            }
+            
+            # 3. Hozzáadjuk a bónuszt a játékoshoz
+            self.players[self.current_player] += bonus_total
 
-        elif event.kind == "BALL":
-            self.current_ball = event.args[0]
+            # 4. Elindítjuk az összegző animációt
+            self._start_summary()
+            
+            # 5. HA GAME OVER: A háttérben azonnal lenullázzuk az összes pontot és állapotot.
+            if event.kind == "GAMEOVER":
+                self.players = {1: 0, 2: 0, 3: 0, 4: 0}
+                self.current_player = 1
+                self.current_ball = 1
+                self.active_player_count = 1
+                self.current_bonus = 0
+                self.current_bonusx = 0
 
         elif event.kind == "VIDEO":
-            video_name = event.args[0]
-            self.mpv.play(video_name)
-            self.state = AppState.VIDEO
+            if self.state == AppState.SCORE:
+                video_name = event.args[0]
+                self.mpv.play(video_name)
+                self.state = AppState.VIDEO
 
         elif event.kind == "VIDEO_STOP":
-            self.mpv.stop()
-            self.state = AppState.SCORE
-
-        elif event.kind == "MULTIBALL_ON":
-            self.multiball_active = True
-
-        elif event.kind == "MULTIBALL_OFF":
-            self.multiball_active = False
-
-        elif event.kind == "GAMEOVER":
-            self.state = AppState.SCORE
-            # ide jöhet majd "game over" felirat/animáció a GUI-ban
-
-        elif event.kind == "ATTRACT":
-            self.state = AppState.SCORE
-            # ide jöhet majd attract-mode logika (demo pontszámok, animáció)
+            if self.state == AppState.VIDEO:
+                self.mpv.stop()
+                self.state = AppState.SCORE
 
         elif event.kind == "PLAYERCOUNT_NEXT":
-            # ciklikus lepes: 1 -> 2 -> 3 -> 4 -> 1 -> ...
-            self.active_player_count = (self.active_player_count % 4) + 1
+            # 1->2->3->4->1 ciklikus léptetés
+            new_count = self.active_player_count + 1
+            if new_count > 4:
+                new_count = 1
+            self.active_player_count = new_count
+
+    def _start_summary(self):
+        """Belső segédfüggvény a bónusz mód élesítésére."""
+        self._summary_end_time = time.time() + self.SUMMARY_DURATION_SEC
+        self.state = AppState.SUMMARY
 
     def tick(self):
-        """
-        Minden frame-ben meghívva: ellenőrzi, hogy a videó véget ért-e.
-        Ha igen, automatikusan visszavált SCORE állapotba — anélkül,
-        hogy a Teensy-nek explicit VIDEO,STOP-ot kellene küldenie.
-        """
+        """Minden frame-ben ellenőrzi az időzítéseket."""
         if self.state == AppState.VIDEO and self.mpv.is_finished():
             self.state = AppState.SCORE
+            
+        elif self.state == AppState.SUMMARY:
+            if time.time() >= self._summary_end_time:
+                self.state = AppState.SCORE
 
     def consume_transition(self):
-        """
-        Visszaadja, hogy történt-e állapotváltás az előző hívás óta,
-        és milyen irányban. A fő loop ezt hívja minden frame-ben,
-        és csak akkor reagál (acquire/release display), ha van változás.
-        """
         if self.state != self._previous_state:
             transition = (self._previous_state, self.state)
             self._previous_state = self.state
@@ -91,13 +131,6 @@ class StateMachine:
         return None
 
     def consume_player_count_change(self):
-        """
-        Visszaadja (régi, új) párost, ha az active_player_count
-        megváltozott az előző hívás óta, különben None.
-
-        A GUI ezt hívja minden frame-ben, és ha van változás, elindítja
-        a megfelelő be-/kicsúszó animációt a kártyákon.
-        """
         if self.active_player_count != self._previous_player_count:
             change = (self._previous_player_count, self.active_player_count)
             self._previous_player_count = self.active_player_count

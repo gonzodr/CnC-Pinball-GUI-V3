@@ -52,25 +52,28 @@ def main():
             loop_start = time.time()
 
             # 1. Soros parancsok feldolgozasa (nem blokkol, queue-bol olvas)
-            for event in serial_reader.poll_events():
-                state.handle_event(event)
+            #for event in serial_reader.poll_events():
+            #    state.handle_event(event)
 
             # 2. Video-vege detektalas (ha VIDEO allapotban vagyunk)
             state.tick()
 
-            # 3. Allapotvaltas kezelese: DRM kijelzo atadasa
+            # 3. Allapotvaltas kezelese
             transition = state.consume_transition()
             if transition:
                 old_state, new_state = transition
                 print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
 
-                if new_state == AppState.VIDEO:
-                    # GUI elengedi a kijelzot, mpv mar a play()-nel elindult lejatszani
-                    gui.release_display()
-                elif new_state == AppState.SCORE:
-                    # mpv mar leallt/elfogyott a video, GUI visszaveszi a kijelzot
+                if new_state == AppState.SUMMARY:
+                    # RESET: biztosítjuk, hogy a SUMMARY képernyő az elejéről induljon
+                    gui.summary_anim_start = None 
+                    gui.release_display() # opcionális, ha a summary-t is a GUI rajzolja
                     gui.acquire_display()
 
+                elif new_state == AppState.VIDEO:
+                    gui.release_display()
+                elif new_state == AppState.SCORE:
+                    gui.acquire_display()
             # 4. Pygame esemenyek lekerdezese EGYSZER, majd szetosztva:
             #    - QUIT esemeny -> leallitja a fo loopot
             #    - KEYDOWN esemenyek -> MockInputController GameEvent-eket general
@@ -83,6 +86,8 @@ def main():
             # 5. Rajzolas, ha SCORE allapotban vagyunk
             if state.state == AppState.SCORE:
                 gui.render(state)
+            elif state.state == AppState.SUMMARY:
+                gui.render_summary(state.summary_data)
 
             # 6. Frame-utemezes tartasa (ne porgessuk feleslegesen a CPU-t)
             elapsed = time.time() - loop_start

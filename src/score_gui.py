@@ -173,6 +173,7 @@ class ScoreGUI:
     def __init__(self):
         self.screen = None
         self.font_score_big = None
+        self.font_active_player = None
         self.font_label = None
         self.font_small = None
         self.font_card_name = None
@@ -181,6 +182,7 @@ class ScoreGUI:
 
         self.background = None
         self.card_texture = None
+        self.summary_anim_start = None
 
         # 640x480-hoz igazított átlós animációs úthossz (pixelben)
         distances = {1: 280, 2: 280, 3: 280, 4: 280}
@@ -194,6 +196,8 @@ class ScoreGUI:
         self._ball_label_cache_key = None
         self._main_score_cache = None
         self._main_score_cache_key = None
+        self._active_player_cache = None
+        self._active_player_cache_key = None
 
     def acquire_display(self):
         if self.active:
@@ -210,10 +214,20 @@ class ScoreGUI:
 
         # Betűméretek arányos csökkentése (eredeti * 0.8)
         self.font_score_big = pygame.font.Font(modak_font_path, 90)   # 80 * 0.8
+        self.font_active_player = pygame.font.Font(modak_font_path, 40)       # 28 * 0.8
         self.font_label = pygame.font.Font(modak_font_path, 40)       # 28 * 0.8
         self.font_small = pygame.font.Font(modak_font_path, 18)       # 22 * 0.8
         self.font_card_name = pygame.font.Font(modak_font_path, 20)   # 20 * 0.8
         self.font_card_score = pygame.font.Font(modak_font_path, 26)  # 26 * 0.8
+
+        # A SUMMARY (kor-vegi bonusz osszegzo) kepernyohoz hasznalt
+        # fontok - ezek hianyoztak, a render_summary() hivatkozott
+        # rajuk, de sosem lettek letrehozva, ezert AttributeError-t
+        # dobott amikor NEXT/GAMEOVER utan a SUMMARY allapotba lepett
+        # a program.
+        self.font_summary_title = pygame.font.Font(modak_font_path, 56)
+        self.font_summary_mid = pygame.font.Font(modak_font_path, 36)
+        self.font_summary_score = pygame.font.Font(modak_font_path, 70)
 
         self._load_assets()
         self.active = True
@@ -223,6 +237,11 @@ class ScoreGUI:
         bg_raw = pygame.image.load(bg_path).convert()
         self.background = pygame.transform.smoothscale(
             bg_raw, (self.SCREEN_W, self.SCREEN_H)
+        )
+        bg2_path = os.path.join(ASSETS_DIR, "BGR2_Scoremode.png")
+        bg_raw2 = pygame.image.load(bg2_path).convert()
+        self.background2 = pygame.transform.smoothscale(
+            bg_raw2, (self.SCREEN_W, self.SCREEN_H)
         )
 
         card_path = os.path.join(ASSETS_DIR, "cigip.jpg")
@@ -273,6 +292,39 @@ class ScoreGUI:
             self._card_shadow_cache_key[player_num] = cache_key
         return self._card_shadow_cache[player_num]
 
+    def get_bounce_scale(self, t):
+        """Egy egyszerű 'overshoot' (bounce) animáció."""
+        # 0.0 -> 1.0 közötti érték, t = idő (0-1)
+        # Ez egy sima back-out easing
+        if t >= 1.0: return 1.0
+        return 1.0 + 0.3 * math.sin(t * math.pi) * (1.0 - t)
+
+    def _draw_animated(self, surface, center, start_time, elapsed):
+        """
+        Kirajzolja az elemet lassan induló (ease-in) animációval.
+        start_time: mikor kell elindulnia ennek az elemnek (0.0, 1.0, 2.0...)
+        """
+        duration = 0.6 # Animáció hossza
+        t = (elapsed - start_time) / duration
+        
+        # Ha még nem jött el az idő, ne rajzoljunk semmit
+        if t < 0:
+            return 
+            
+        # Clamp t 0 és 1 közé
+        t = min(1.0, t)
+        
+        # Ease-in: t * t * t (gyorsuló hatás)
+        scale = t * t * t
+        
+        # Rajzolás
+        w = max(1, int(surface.get_width() * scale))
+        h = max(1, int(surface.get_height() * scale))
+        scaled = pygame.transform.smoothscale(surface, (w, h))
+        rect = scaled.get_rect(center=center)
+        self.screen.blit(scaled, rect)
+
+    # Score Screen Rendering
     def render(self, state):
         if not self.active:
             return
@@ -288,6 +340,15 @@ class ScoreGUI:
             self._ball_label_cache_key = state.current_ball
         ball_rect = self._ball_label_cache.get_rect(center=(135, 90))
         self.screen.blit(self._ball_label_cache, ball_rect)
+
+        # "player" felirat pozíciója átszámolva a felhőhöz (190*0.8, 105*0.8 -> 152, 84)
+        if self._active_player_cache_key != state.current_player:
+            self._active_player_cache = self.font_active_player.render(
+                f"Player: {state.current_player}", True, self.COLOR_ACTIVE
+            )
+            self._active_player_cache_key = state.current_player
+        active_player_rect = self._active_player_cache.get_rect(center=(515, 90))
+        self.screen.blit(self._active_player_cache, active_player_rect)
 
         # 4 kártya kirajzolása átlós animációval
         for player_num, layout in zip(self.players_order(), self.CARD_LAYOUT):
@@ -335,11 +396,7 @@ class ScoreGUI:
         score_rect = self._main_score_cache.get_rect(center=(center_x, center_y))
         self.screen.blit(self._main_score_cache, score_rect)
 
-        # Multiball szöveg eltolása (640 - 128 = 512)
-        if state.multiball_active:
-            mb_text = self.font_small.render("MULTIBALL!", True, self.COLOR_MULTIBALL)
-            self.screen.blit(mb_text, (self.SCREEN_W - 128, 24))
-
+        
         pygame.display.flip()
 
     def players_order(self):
@@ -352,3 +409,46 @@ class ScoreGUI:
 
     def has_quit_event(self, pygame_events) -> bool:
         return any(e.type == pygame.QUIT for e in pygame_events)
+
+    # SUMMARY SCREEN RENDERING
+    def render_summary(self, summary_data):
+        """
+        Kirajzolja a bónusz összegző felületet, ha SUMMARY állapotban vagyunk.
+        """
+        now = time.time()
+
+        if self.summary_anim_start is None:
+            self.summary_anim_start = now
+
+        elapsed = now - self.summary_anim_start
+        
+        # Dzsungel háttér
+        self.screen.blit(self.background2, (0, 0))
+
+        # Adatok kibontása
+        p_num = summary_data.get("player", 1)
+        score = summary_data.get("old_score", 0)
+        mult = summary_data.get("multiplier", 1)
+        bonus = summary_data.get("bonus_points", 0)
+
+        # 1. PLAYER (0-1 mp)
+        p_surf = build_outlined_text_surface(self.font_summary_title, f"PLAYER {p_num}", (255, 215, 0), self.COLOR_TEXT_OUTLINE, 3)
+        self._draw_animated(p_surf, (self.SCREEN_W // 2, 160), 0.0, elapsed)
+
+
+        # 2. SCORE (1-2 mp)
+        score_surf = build_outlined_text_surface(self.font_summary_mid, f"SCORE: {score:,}", self.COLOR_TEXT, self.COLOR_TEXT_OUTLINE, 2)
+        self._draw_animated(score_surf, (self.SCREEN_W // 2, 215), 1.0, elapsed)
+
+
+        # 3. BONUS (2-3 mp)
+        mult_surf = build_outlined_text_surface(self.font_summary_mid, f"BONUS {mult}x", (240, 190, 40), self.COLOR_TEXT_OUTLINE, 2)
+        self._draw_animated(mult_surf, (self.SCREEN_W // 2, 260), 2.0, elapsed)
+
+
+        # 4. +BONUS (3-4 mp)
+        bonus_surf = build_outlined_text_surface(self.font_score_big, f"+{bonus:,}", (255, 255, 255), self.COLOR_TEXT_OUTLINE, 3)
+        self._draw_animated(bonus_surf, (self.SCREEN_W // 2, 320), 3.0, elapsed)
+
+        pygame.display.flip()
+        
