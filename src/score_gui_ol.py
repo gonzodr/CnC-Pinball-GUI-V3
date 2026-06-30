@@ -22,20 +22,7 @@ import os
 import sys
 
 # A kmsdrm drivert KIZAROLAG Linuxon allitjuk be
-# A kmsdrm drivert KIZAROLAG akkor allitjuk be, ha Linuxon vagyunk
-# ES nincs futo X11/Wayland desktop session. Ez kulonbozteti meg a
-# tenyleges, headless Raspberry Pi OS Lite-ot (nincs DISPLAY/WAYLAND_
-# DISPLAY valtozo, mert nincs grafikus felulet) a Linux desktop/VM
-# rendszerektol (pl. VirtualBox-os Debian asztali feluettel) - ott a
-# DISPLAY valtozo letezik, mert fut X11/Wayland, es a kmsdrm driver
-# nem is mukodne (a virtualis videokartya nem ad DRM/KMS hozzaferest,
-# es a desktop session amugy is lefoglalja a DRM master jogot).
-#
-# Igy ugyanez a kod automatikusan:
-# - sima ablakot nyit Windows-on, macOS-en, ES Linux desktop/VM-en
-# - kmsdrm-et hasznal CSAK a tenyleges, headless Pi-n
-_has_x11_or_wayland = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-if sys.platform.startswith("linux") and not _has_x11_or_wayland:
+if sys.platform.startswith("linux"):
     os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
 
 

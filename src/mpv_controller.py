@@ -4,6 +4,7 @@ import socket
 import json
 import os
 import subprocess
+import sys
 import time
 
 
@@ -18,8 +19,7 @@ class MpvController:
     """
 
     SOCKET_PATH = "/tmp/mpv-socket"
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    VIDEO_DIR = os.path.join(BASE_DIR, "assets", "Videos")  # ide kerülnek a konvertált .mp4 fájlok
+    VIDEO_DIR = "/home/pi/videos"  # ide kerülnek a konvertált .mp4 fájlok
     FAKE_VIDEO_DURATION_SEC = 3.0   # offline modban ennyi ido utan "er veget" egy fake video
 
     def __init__(self):
@@ -51,18 +51,30 @@ class MpvController:
         if os.path.exists(self.SOCKET_PATH):
             os.remove(self.SOCKET_PATH)
 
+        # A --vo=drm es --drm-connector csak akkor kell, ha tenyleges
+        # headless Pi-n vagyunk (nincs X11/Wayland desktop). VM-en
+        # vagy barmilyen Linux desktopon (pl. VirtualBox-os Debian)
+        # ezek a flag-ek hibat adnanak, mert nincs DRM/KMS hozzaferes
+        # - ilyenkor hagyjuk, hogy az mpv a sajat alapertelmezett
+        # (X11-es) videokimenetet hasznalja, ablakban.
+        has_x11_or_wayland = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        is_headless_linux = sys.platform.startswith("linux") and not has_x11_or_wayland
+
+        mpv_args = [
+            "mpv",
+            "--idle=yes",                   # ne lépjen ki, ha nincs mit lejátszani
+            "--fullscreen",
+            "--no-osc",                     # ne legyen kezelőfelület-overlay
+            "--no-input-default-bindings",
+            "--input-ipc-server=" + self.SOCKET_PATH,
+            "--keep-open=no",               # videó vége után ne fagyjon az utolsó képkockán
+        ]
+        if is_headless_linux:
+            mpv_args.insert(2, "--vo=drm")
+            mpv_args.insert(3, "--drm-connector=HDMI-A-1")  # allitsd a tenyleges csatlakozora (lsdrm-mel checkelheted)
+
         try:
-            self._proc = subprocess.Popen([
-                "mpv",
-                "--idle=yes",                   # ne lépjen ki, ha nincs mit lejátszani
-                "--vo=drm",                     # direkt framebuffer/DRM-KMS kimenet, nincs X
-                "--drm-connector=HDMI-A-1",      # allitsd a tenyleges csatlakozora (lsdrm-mel checkelheted)
-                "--fullscreen",
-                "--no-osc",                     # ne legyen kezelőfelület-overlay
-                "--no-input-default-bindings",
-                "--input-ipc-server=" + self.SOCKET_PATH,
-                "--keep-open=no",               # videó vége után ne fagyjon az utolsó képkockán
-            ])
+            self._proc = subprocess.Popen(mpv_args)
         except FileNotFoundError:
             print("[mpv] mpv parancs nem talalhato - mpv offline mod "
                   "(a GUI-t igy is tudod tesztelni)")
