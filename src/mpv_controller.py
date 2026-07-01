@@ -69,7 +69,7 @@ class MpvController:
                     "--no-osc",
                     "--no-input-default-bindings",
                     "--input-ipc-server=" + self.SOCKET_PATH,
-                    "--keep-open=no",
+                    "--keep-open=yes",
                     "--drm-mode=640x480@60",
                     "--drm-format=xrgb8888",
                     "--keepaspect=yes",
@@ -174,9 +174,14 @@ class MpvController:
                 except json.JSONDecodeError:
                     continue
                 if data.get("request_id") == 1:
-                    return data.get("data", False) is True
+                    finished = data.get("data", False) is True
+                    if finished:
+                        self._send(["stop"])
+                    return finished
         except (socket.timeout, OSError):
             pass
+        return False
+        
     def shutdown(self):
         if self.offline:
             return
