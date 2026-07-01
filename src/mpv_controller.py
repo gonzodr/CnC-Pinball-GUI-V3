@@ -73,6 +73,7 @@ class MpvController:
                     "--drm-mode=640x480",
                     "--keepaspect=yes",
                     "--keepaspect-window=yes",
+                    "--profile=fast"
                     ]
         if is_headless_linux:
             mpv_args.insert(2, "--vo=drm")
