@@ -70,7 +70,8 @@ class MpvController:
                     "--no-input-default-bindings",
                     "--input-ipc-server=" + self.SOCKET_PATH,
                     "--keep-open=no",
-                    "--drm-mode=640x480",
+                    "--drm-mode=640x480@60",
+                    "--drm-format=xrgb8888",
                     "--keepaspect=yes",
                     "--keepaspect-window=yes",
                     "--profile=fast"
