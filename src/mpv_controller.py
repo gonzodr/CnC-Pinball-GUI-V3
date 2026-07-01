@@ -61,15 +61,21 @@ class MpvController:
         is_headless_linux = sys.platform.startswith("linux") and not has_x11_or_wayland
 
         mpv_args = [
-            "mpv",
-            "--hwdec=v4l2m2m-copy",
-            "--idle=yes",                   # ne lépjen ki, ha nincs mit lejátszani
-            "--fullscreen",
-            "--no-osc",                     # ne legyen kezelőfelület-overlay
-            "--no-input-default-bindings",
-            "--input-ipc-server=" + self.SOCKET_PATH,
-            "--keep-open=no",               # videó vége után ne fagyjon az utolsó képkockán
-        ]
+                    "mpv",
+                    "--hwdec=v4l2m2m-copy",
+                    "--idle=yes",
+                    "--fs=no",                 # <--- KIKAPCSOLVA: Ne a monitor natív felbontását erőltesse
+                    "--geometry=640x480",      # <--- KÉNYSZERÍTVE: Maradjon 640x480-on
+                    "--no-border",             # Ne legyen ablakkeret
+                    "--no-osc",
+                    "--no-input-default-bindings",
+                    "--input-ipc-server=" + self.SOCKET_PATH,
+                    "--keep-open=no",
+                    "--vo=gpu",
+                    "--gpu-api=opengl",
+                    "--scale=nearest",         # <--- EZ A TITOK: 'Nearest neighbor' skálázás (nem terheli a GPU-t)
+                    "--video-unscaled=yes"     # <--- Még egy tipp: ha nem kell skálázni, ne is tegye
+                    ]
         if is_headless_linux:
             mpv_args.insert(2, "--vo=drm")
             mpv_args.insert(3, "--drm-connector=HDMI-A-1")  # allitsd a tenyleges csatlakozora (lsdrm-mel checkelheted)

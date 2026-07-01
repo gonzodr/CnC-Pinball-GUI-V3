@@ -73,8 +73,8 @@ def main():
 
                 if new_state == AppState.SUMMARY:
                     gui.summary_anim_start = None
-                    gui.release_display()
-                    gui.acquire_display()
+               #     gui.release_display()
+               #     gui.acquire_display()
 
                 elif new_state == AppState.VIDEO:
                     gui.release_display()
