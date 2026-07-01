@@ -19,7 +19,7 @@ class MpvController:
     """
 
     SOCKET_PATH = "/tmp/mpv-socket"
-    VIDEO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "Videos")
+    VIDEO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "assets", "Videos")
     FAKE_VIDEO_DURATION_SEC = 3.0   # offline modban ennyi ido utan "er veget" egy fake video
 
     def __init__(self):
