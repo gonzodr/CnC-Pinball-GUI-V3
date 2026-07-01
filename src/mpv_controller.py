@@ -77,9 +77,9 @@ class MpvController:
                     "--profile=fast"
                     ]
         if is_headless_linux:
-            mpv_args.insert(2, "--vo=gpu")
-            mpv_args.insert(3, "--gpu-context=drm")
-            mpv_args.insert(4, "--drm-connector=HDMI-A-1")
+            mpv_args.insert(2, "--vo=drm")
+            mpv_args.insert(3, "--drm-connector=HDMI-A-1")
+            mpv_args.insert(4, "--drm-mode=640x480@60")
 
         try:
             self._proc = subprocess.Popen(mpv_args)
