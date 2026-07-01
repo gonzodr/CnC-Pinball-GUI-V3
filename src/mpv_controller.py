@@ -36,6 +36,7 @@ class MpvController:
         self._fake_video_started_at = None
         self._recv_buffer = ""
         self._playing = False
+        self._play_started_at = None
 
     def start(self):
         """Elindítja az mpv-t idle módban, framebuffer/DRM kimenetre.
@@ -119,17 +120,18 @@ class MpvController:
             self._connect()
 
     def play(self, video_name: str):
-        """Betölti és azonnal lejátssza a megadott videót."""
         if self.offline:
             print(f"[mpv] (offline) play() hivva: {video_name} "
                   f"- fake lejatszas {self.FAKE_VIDEO_DURATION_SEC}s")
             self._fake_video_started_at = time.time()
             return
+        self._recv_buffer = ""          # eldobjuk az esetleges elavult IPC valaszokat
         path = os.path.join(self.VIDEO_DIR, video_name)
         if not path.endswith(".mp4"):
             path += ".mp4"
         self._send(["loadfile", path, "replace"])
         self._playing = True
+        self._play_started_at = time.time()
 
     def stop(self):
         """Leállítja a lejátszást, visszamegy idle (fekete) állapotba."""
@@ -161,6 +163,8 @@ class MpvController:
         if not self._sock:
             return False
         if not self._playing:
+            return False
+        if self._play_started_at and (time.time() - self._play_started_at) < 0.3:
             return False
         request = json.dumps({
             "command": ["get_property", "eof-reached"],
