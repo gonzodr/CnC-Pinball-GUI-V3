@@ -64,17 +64,14 @@ class MpvController:
                     "mpv",
                     "--hwdec=v4l2m2m-copy",
                     "--idle=yes",
-                    "--fs=no",                 # <--- KIKAPCSOLVA: Ne a monitor natív felbontását erőltesse
-                    "--geometry=640x480",      # <--- KÉNYSZERÍTVE: Maradjon 640x480-on
-                    "--no-border",             # Ne legyen ablakkeret
+                    "--fullscreen",
                     "--no-osc",
                     "--no-input-default-bindings",
                     "--input-ipc-server=" + self.SOCKET_PATH,
                     "--keep-open=no",
-                    "--vo=gpu",
-                    "--gpu-api=opengl",
-                    "--scale=nearest",         # <--- EZ A TITOK: 'Nearest neighbor' skálázás (nem terheli a GPU-t)
-                    "--video-unscaled=yes"     # <--- Még egy tipp: ha nem kell skálázni, ne is tegye
+                    "--drm-mode=640x480",
+                    "--keepaspect=yes",
+                    "--keepaspect-window=yes",
                     ]
         if is_headless_linux:
             mpv_args.insert(2, "--vo=drm")
