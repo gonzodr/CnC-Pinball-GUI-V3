@@ -40,7 +40,7 @@ class MockInputController:
 
             # 3. Videó trigger (R)
             elif key == pygame.K_r:
-                videos = ["Drift", "Point1", "Multiball1", "Jackpot2"]
+                videos = ["Drift", "Danger", "5000", "BEEEER3", "BEEEER2", "BEEEER1"]
                 events.append(GameEvent("VIDEO", (random.choice(videos),)))
 
             # 4. Labda leesik (B) - EZ A KULCS
