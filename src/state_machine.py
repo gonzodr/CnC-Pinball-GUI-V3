@@ -18,7 +18,8 @@ class StateMachine:
         self.mpv = mpv
         self.state = AppState.SCORE
         self._previous_state = AppState.SCORE
-
+        self.pending_video = None
+        
         self.players = {1: 0, 2: 0, 3: 0, 4: 0}
         self.current_player = 1
         self.current_ball = 1
@@ -93,8 +94,7 @@ class StateMachine:
 
         elif event.kind == "VIDEO":
             if self.state == AppState.SCORE:
-                video_name = event.args[0]
-                self.mpv.play(video_name)
+                self.pending_video = event.args[0]
                 self.state = AppState.VIDEO
 
         elif event.kind == "VIDEO_STOP":

@@ -62,6 +62,7 @@ class MpvController:
 
         mpv_args = [
             "mpv",
+            "--hwdec=v4l2m2m-copy",
             "--idle=yes",                   # ne lépjen ki, ha nincs mit lejátszani
             "--fullscreen",
             "--no-osc",                     # ne legyen kezelőfelület-overlay

@@ -55,34 +55,34 @@ def main():
             #for event in serial_reader.poll_events():
             #    state.handle_event(event)
 
-            # 2. Video-vege detektalas (ha VIDEO allapotban vagyunk)
+            # 2. Video-vege detektalas
             state.tick()
 
-            # 3. Allapotvaltas kezelese
-            transition = state.consume_transition()
-            if transition:
-                old_state, new_state = transition
-                print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
-
-                if new_state == AppState.SUMMARY:
-                    # RESET: biztosítjuk, hogy a SUMMARY képernyő az elejéről induljon
-                    gui.summary_anim_start = None 
-                    gui.release_display() # opcionális, ha a summary-t is a GUI rajzolja
-                    gui.acquire_display()
-
-                elif new_state == AppState.VIDEO:
-                    gui.release_display()
-                elif new_state == AppState.SCORE:
-                    gui.acquire_display()
-            # 4. Pygame esemenyek lekerdezese EGYSZER, majd szetosztva:
-            #    - QUIT esemeny -> leallitja a fo loopot
-            #    - KEYDOWN esemenyek -> MockInputController GameEvent-eket general
+            # 3. Pygame esemenyek
             pygame_events = gui.poll_pygame_events()
             if gui.has_quit_event(pygame_events):
                 running = False
             for mock_event in mock_input.poll_events(pygame_events):
                 state.handle_event(mock_event)
 
+            # 4. Allapotvaltas kezelese
+            transition = state.consume_transition()
+            if transition:
+                old_state, new_state = transition
+                print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
+
+                if new_state == AppState.SUMMARY:
+                    gui.summary_anim_start = None
+                    gui.release_display()
+                    gui.acquire_display()
+
+                elif new_state == AppState.VIDEO:
+                    gui.release_display()
+                    mpv.play(state.pending_video)
+                    state.pending_video = None
+                elif new_state == AppState.SCORE:
+                    gui.acquire_display()
+                    
             # 5. Rajzolas, ha SCORE allapotban vagyunk
             if state.state == AppState.SCORE:
                 gui.render(state)
