@@ -63,7 +63,7 @@ class MpvController:
 
         mpv_args = [
                     "mpv",
-                    "--hwdec=v4l2m2m-copy",
+                    "--hwdec=v4l2m2m",
                     "--idle=yes",
                     "--fullscreen",
                     "--no-osc",
@@ -76,8 +76,9 @@ class MpvController:
                     "--profile=fast"
                     ]
         if is_headless_linux:
-            mpv_args.insert(2, "--vo=drm")
-            mpv_args.insert(3, "--drm-connector=HDMI-A-1")  # allitsd a tenyleges csatlakozora (lsdrm-mel checkelheted)
+            mpv_args.insert(2, "--vo=gpu")
+            mpv_args.insert(3, "--gpu-context=drm")
+            mpv_args.insert(4, "--drm-connector=HDMI-A-1")
 
         try:
             self._proc = subprocess.Popen(mpv_args)
