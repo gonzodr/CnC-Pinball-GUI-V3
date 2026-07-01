@@ -35,6 +35,7 @@ class MpvController:
         # hogy is_finished() szimulalni tudja a lejatszas veget.
         self._fake_video_started_at = None
         self._recv_buffer = ""
+        self._playing = False
 
     def start(self):
         """Elindítja az mpv-t idle módban, framebuffer/DRM kimenetre.
@@ -128,6 +129,7 @@ class MpvController:
         if not path.endswith(".mp4"):
             path += ".mp4"
         self._send(["loadfile", path, "replace"])
+        self._playing = True
 
     def stop(self):
         """Leállítja a lejátszást, visszamegy idle (fekete) állapotba."""
@@ -158,6 +160,8 @@ class MpvController:
 
         if not self._sock:
             return False
+        if not self._playing:
+            return False
         request = json.dumps({
             "command": ["get_property", "eof-reached"],
             "request_id": 1
@@ -177,11 +181,12 @@ class MpvController:
                     finished = data.get("data", False) is True
                     if finished:
                         self._send(["stop"])
+                        self._playing = False
                     return finished
         except (socket.timeout, OSError):
             pass
         return False
-        
+
     def shutdown(self):
         if self.offline:
             return
