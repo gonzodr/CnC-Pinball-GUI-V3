@@ -19,7 +19,7 @@ class MpvController:
     """
 
     SOCKET_PATH = "/tmp/mpv-socket"
-    VIDEO_DIR = "/home/pi/videos"  # ide kerülnek a konvertált .mp4 fájlok
+    VIDEO_DIR = "/home/pi/CnC-Pinball-GUI-V3/src/assets/Videos"  # ide kerülnek a konvertált .mp4 fájlok
     FAKE_VIDEO_DURATION_SEC = 3.0   # offline modban ennyi ido utan "er veget" egy fake video
 
     def __init__(self):
