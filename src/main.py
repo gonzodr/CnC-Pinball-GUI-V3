@@ -88,7 +88,9 @@ def main():
                 gui.render(state)
             elif state.state == AppState.SUMMARY:
                 gui.render_summary(state.summary_data)
-
+            elif state.state == AppState.HIGHSCORE:               # <--- EZ HIÁNYZOTT
+                gui.render_highscore(state.score_manager.scores)  # <--- EZ HIÁNYZOTT
+            
             # 6. Frame-utemezes tartasa (ne porgessuk feleslegesen a CPU-t)
             elapsed = time.time() - loop_start
             sleep_time = clock_interval - elapsed

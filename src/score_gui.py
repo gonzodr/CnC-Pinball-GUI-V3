@@ -247,10 +247,17 @@ class ScoreGUI:
         self.background = pygame.transform.smoothscale(
             bg_raw, (self.SCREEN_W, self.SCREEN_H)
         )
+        
         bg2_path = os.path.join(ASSETS_DIR, "BGR2_Scoremode.png")
         bg_raw2 = pygame.image.load(bg2_path).convert()
         self.background2 = pygame.transform.smoothscale(
             bg_raw2, (self.SCREEN_W, self.SCREEN_H)
+        )
+
+        bg3_path = os.path.join(ASSETS_DIR, "HiScoreBg.png")
+        bg_raw3 = pygame.image.load(bg3_path).convert()
+        self.background3 = pygame.transform.smoothscale(
+            bg_raw3, (self.SCREEN_W, self.SCREEN_H)
         )
 
         card_path = os.path.join(ASSETS_DIR, "cigip.jpg")
@@ -462,3 +469,46 @@ class ScoreGUI:
 
         pygame.display.flip()
         
+    def render_highscore(self, scores):
+        self.screen.blit(self.background3, (0, 0)) # Háttér
+
+        # Oszlop pozíciók (X koordináták)
+        col_pos = 180   # POS oszlop
+        col_score = 350 # SCORE oszlop
+        col_name = 550  # NAME oszlop
+        
+        # Címsor (Highscore)
+        title = build_outlined_text_surface(self.font_summary_title, "HIGHSCORES", (255, 255, 255), self.COLOR_TEXT_OUTLINE, 3)
+        self.screen.blit(title, title.get_rect(center=(self.SCREEN_W // 2, 40)))
+
+        # Fejlécek
+        header_surf = build_outlined_text_surface(self.font_summary_mid, "POS     SCORE      NAME", (255, 215, 0), self.COLOR_TEXT_OUTLINE, 2)
+        self.screen.blit(header_surf, header_surf.get_rect(center=(self.SCREEN_W // 2, 100)))
+
+        # Sorok rajzolása
+        for i, entry in enumerate(scores):
+            y = 150 + (i * 35) # Sorok közötti távolság
+            
+            # Szín kiemelése az első 3-nak
+            color = (255, 255, 255)
+            if i == 0: color = (50, 255, 50) # Zöld az 1.-nek
+            
+            # 1. POS (ikonokkal)
+            pos_text = f"{i+1}TH"
+            pos_surf = build_outlined_text_surface(self.font_summary_mid, pos_text, color, self.COLOR_TEXT_OUTLINE, 2)
+            self.screen.blit(pos_surf, (col_pos, y))
+            
+            # 2. SCORE
+            score_surf = build_outlined_text_surface(self.font_summary_mid, f"{entry['score']:,}", color, self.COLOR_TEXT_OUTLINE, 2)
+            self.screen.blit(score_surf, score_surf.get_rect(center=(col_score, y + 15)))
+            
+            # 3. NAME
+            name_surf = build_outlined_text_surface(self.font_summary_mid, entry['name'], color, self.COLOR_TEXT_OUTLINE, 2)
+            self.screen.blit(name_surf, (col_name, y))
+            
+            # Ikonok az első háromnak (rajzolj ide egy kis téglalapot, vagy bliteld be az assetedet)
+            if i < 3:
+                # Pl: draw rect helyett itt betölthetsz képet: self.screen.blit(self.leaf_icon, (col_pos - 30, y))
+                pygame.draw.circle(self.screen, (255, 215, 0), (col_pos - 15, y + 15), 8)
+
+        pygame.display.flip()
