@@ -34,6 +34,7 @@ class MpvController:
         # Offline modban ez tartja szamon, mikor "indult" a fake video,
         # hogy is_finished() szimulalni tudja a lejatszas veget.
         self._fake_video_started_at = None
+        self._recv_buffer = ""
 
     def start(self):
         """Elindítja az mpv-t idle módban, framebuffer/DRM kimenetre.
@@ -160,17 +161,19 @@ class MpvController:
         }) + "\n"
         try:
             self._sock.sendall(request.encode("utf-8"))
-            response = self._sock.recv(4096).decode("utf-8")
-            for line in response.strip().split("\n"):
+            self._recv_buffer += self._sock.recv(4096).decode("utf-8")
+            while "\n" in self._recv_buffer:
+                line, self._recv_buffer = self._recv_buffer.split("\n", 1)
                 if not line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if data.get("request_id") == 1:
                     return data.get("data", False) is True
-        except (socket.timeout, OSError, json.JSONDecodeError):
+        except (socket.timeout, OSError):
             pass
-        return False
-
     def shutdown(self):
         if self.offline:
             return

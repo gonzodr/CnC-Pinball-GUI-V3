@@ -71,6 +71,10 @@ def _blur_supported() -> bool:
         return False
     return hasattr(pygame.transform, 'box_blur')
 
+def _smoothscale_supported() -> bool:
+    import platform
+    return platform.machine().lower() not in ("armv7l", "armv6l")
+
 
 def build_drop_shadow(source_surface, opacity=38, blur_radius=6):
     """
@@ -336,7 +340,10 @@ class ScoreGUI:
         # Rajzolás
         w = max(1, int(surface.get_width() * scale))
         h = max(1, int(surface.get_height() * scale))
-        scaled = pygame.transform.smoothscale(surface, (w, h))
+        if _smoothscale_supported():
+            scaled = pygame.transform.smoothscale(surface, (w, h))
+        else:
+            scaled = pygame.transform.scale(surface, (w, h))
         rect = scaled.get_rect(center=center)
         self.screen.blit(scaled, rect)
 
