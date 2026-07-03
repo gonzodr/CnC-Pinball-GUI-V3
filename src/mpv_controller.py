@@ -65,7 +65,7 @@ class MpvController:
 
         mpv_args = [
                     "mpv",
-                    "--hwdec=v4l2m2m",
+                    "--hwdec=v4l2m2m-copy",
                     "--idle=yes",
                     "--fullscreen",
                     "--no-osc",
@@ -133,14 +133,7 @@ class MpvController:
         self._playing = True
         self._play_started_at = time.time()
 
-    def stop(self):
-        """Leállítja a lejátszást, visszamegy idle (fekete) állapotba."""
-        if self.offline:
-            print("[mpv] (offline) stop() hivva")
-            self._fake_video_started_at = None
-            return
-        self._send(["stop"])
-
+    
     def is_finished(self) -> bool:
         """
         Lekérdezi, hogy véget ért-e a jelenlegi videó.
