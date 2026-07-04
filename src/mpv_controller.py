@@ -78,6 +78,7 @@ class MpvController:
             "--keepaspect=yes",
             "--keepaspect-window=yes",
             "--profile=fast"
+            "--ao=alsa",
             ]
         if is_headless_linux:
             mpv_args.insert(2, "--vo=drm")
