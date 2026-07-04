@@ -64,20 +64,21 @@ class MpvController:
         is_headless_linux = sys.platform.startswith("linux") and not has_x11_or_wayland
 
         mpv_args = [
-                    "mpv",
-                    "--hwdec=v4l2m2m-copy",
-                    "--idle=yes",
-                    "--fullscreen",
-                    "--no-osc",
-                    "--no-input-default-bindings",
-                    "--input-ipc-server=" + self.SOCKET_PATH,
-                    "--keep-open=yes",
-                    "--drm-mode=640x480@60",
-                    "--drm-format=xrgb8888",
-                    "--keepaspect=yes",
-                    "--keepaspect-window=yes",
-                    "--profile=fast"
-                    ]
+            "mpv",
+            "--hwdec=v4l2m2m-copy",
+            "--idle=yes",
+            "--fullscreen",
+            "--no-osc",
+            "--no-input-default-bindings",
+            "--input-ipc-server=" + self.SOCKET_PATH,
+            "--keep-open=yes",
+            "--keep-open-pause=no",   # <-- ÚJ: EOF után ne kapcsoljon globális pause-t
+            "--drm-mode=640x480@60",
+            "--drm-format=xrgb8888",
+            "--keepaspect=yes",
+            "--keepaspect-window=yes",
+            "--profile=fast"
+            ]
         if is_headless_linux:
             mpv_args.insert(2, "--vo=drm")
             mpv_args.insert(3, "--drm-connector=HDMI-A-1")
@@ -130,6 +131,7 @@ class MpvController:
         if not path.endswith(".mp4"):
             path += ".mp4"
         self._send(["loadfile", path, "replace"])
+        self._send(["set_property", "pause", False])
         self._playing = True
         self._play_started_at = time.time()
 
