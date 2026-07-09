@@ -2,7 +2,10 @@ import json
 import os
 
 class ScoreManager:
-    FILE_PATH = "hiscores.json"
+    # Abszolut ut a sajat fajl mellett - igy a hiscores.json mindig a
+    # src mappaba kerul, fuggetlenul attol, honnan (melyik munkakonyvtarbol)
+    # inditjak a main.py-t.
+    FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hiscores.json")
 
     def __init__(self):
         self.scores = self.load()
@@ -34,3 +37,17 @@ class ScoreManager:
 
     def is_highscore(self, score):
         return score > self.scores[-1]["score"]
+
+    def remove_at(self, index):
+        """Egy bejegyzes torlese (szerviz menu), a lista utana ujra 10-re
+        van toltve '---'/0 helykitoltovel."""
+        if 0 <= index < len(self.scores):
+            del self.scores[index]
+            while len(self.scores) < 10:
+                self.scores.append({"name": "---", "score": 0})
+            self.save()
+
+    def reset(self):
+        """Az egesz tabla nullazasa (szerviz menu)."""
+        self.scores = [{"name": "---", "score": 0} for _ in range(10)]
+        self.save()

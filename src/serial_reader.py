@@ -3,6 +3,8 @@
 import serial
 import threading
 import queue
+import time
+from collections import deque
 from protocol import parse_line, GameEvent
 
 
@@ -15,12 +17,19 @@ class SerialReader:
     és nem akarjuk, hogy ez lefagyassza a GUI/video render loopot.
     """
 
+    RAW_LOG_MAXLEN = 30  # a szerviz menu Serial Monitor kepernyojehez
+
     def __init__(self, port: str, baudrate: int = 115200):
         self.port = port
         self.baudrate = baudrate
         self.event_queue: "queue.Queue[GameEvent]" = queue.Queue()
         self._stop_flag = threading.Event()
         self._thread = None
+        # (timestamp, nyers sor) parok - MINDEN beerkezo sor, fuggetlenul
+        # attol, hogy sikerult-e ervenyes GameEvent-te alakitani. Deque
+        # append/iterate szalak kozott a GIL miatt biztonsagos ebben az
+        # egyszeru, egy-irou/egy-olvaso esetben.
+        self.raw_log = deque(maxlen=self.RAW_LOG_MAXLEN)
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -44,12 +53,14 @@ class SerialReader:
                             line = raw.decode("utf-8", errors="replace")
                         except Exception:
                             continue
+                        self.raw_log.append((time.time(), line.strip()))
                         event = parse_line(line)
                         if event:
                             self.event_queue.put(event)
             except serial.SerialException as e:
                 # Teensy kihúzva / USB hiba — várunk és próbálkozunk újra
                 print(f"[serial] hiba: {e}, ujracsatlakozas 2s mulva")
+                self.raw_log.append((time.time(), f"[HIBA] {e}"))
                 self._stop_flag.wait(2)
 
     def poll_events(self):
@@ -61,3 +72,8 @@ class SerialReader:
             except queue.Empty:
                 break
         return events
+
+    def get_raw_log(self):
+        """A legutobbi nyers sorok masolata (legrégebbi elöl), a szerviz
+        menu Serial Monitor kepernyojehez."""
+        return list(self.raw_log)

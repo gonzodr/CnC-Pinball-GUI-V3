@@ -34,13 +34,13 @@ def main():
     mpv = MpvController()
     mpv.start()
 
-    state = StateMachine(mpv)
-
-    gui = ScoreGUI()
-    gui.acquire_display()   # induláskor SCORE állapotban vagyunk, GUI kapja a kijelzőt
-
     serial_reader = SerialReader(SERIAL_PORT, SERIAL_BAUDRATE)
     serial_reader.start()
+
+    state = StateMachine(mpv, serial_reader)
+
+    gui = ScoreGUI()
+    gui.acquire_display()   # induláskor is a GUI kapja a kijelzőt (attract-loop, nem VIDEO)
 
     mock_input = MockInputController()
 
@@ -62,8 +62,19 @@ def main():
             pygame_events = gui.poll_pygame_events()
             if gui.has_quit_event(pygame_events):
                 running = False
-            for mock_event in mock_input.poll_events(pygame_events):
-                state.handle_event(mock_event)
+
+            if state.state == AppState.SERVICE_MENU:
+                # Amig a titkos szerviz menu aktiv, a nyers billentyu-eventek
+                # KOZVETLENUL a menuhoz mennek, NEM a mock_input GameEvent-
+                # forditasan keresztul - igy szabadon lehet gepelni
+                # (neveket beirni, stb.) anelkul, hogy a W/R/B/P/stb.
+                # tesztgombok veletlenul jatek-akciokat valtananak ki.
+                state.service_menu.handle_pygame_events(pygame_events)
+            else:
+                if gui.has_quit_key_event(pygame_events):
+                    running = False
+                for mock_event in mock_input.poll_events(pygame_events):
+                    state.handle_event(mock_event)
 
             # 4. Allapotvaltas kezelese
             transition = state.consume_transition()
@@ -75,6 +86,19 @@ def main():
                     gui.summary_anim_start = None
                #     gui.release_display()
                #     gui.acquire_display()
+
+                elif new_state == AppState.SPECIAL_THANKS:
+                    gui.thx_scroll_start = None
+                    gui._thx_text_cache = None  # a nevlista a szerviz menuben valtozhatott
+
+                elif new_state == AppState.FINAL_SCORES:
+                    gui.final_scores_start = None
+
+                elif new_state == AppState.LOGO:
+                    gui.logo_anim_start = None
+
+                elif new_state == AppState.BEAT_SCORE:
+                    gui.beat_score_start = None
 
                 elif new_state == AppState.VIDEO:
                     gui.release_display()
@@ -88,8 +112,22 @@ def main():
                 gui.render(state)
             elif state.state == AppState.SUMMARY:
                 gui.render_summary(state.summary_data)
-            elif state.state == AppState.HIGHSCORE:               # <--- EZ HIÁNYZOTT
-                gui.render_highscore(state.score_manager.scores)  # <--- EZ HIÁNYZOTT
+            elif state.state == AppState.FINAL_SCORES:
+                gui.render_final_scores(state.final_scores, state.final_player_count)
+            elif state.state == AppState.LOGO:
+                gui.render_logo()
+            elif state.state == AppState.BEAT_SCORE:
+                gui.render_beat_score(state.score_manager.scores)
+            elif state.state == AppState.HIGHSCORE:
+                gui.render_highscore(state.score_manager.scores)
+            elif state.state == AppState.NAME_ENTRY:
+                gui.render_name_entry(state.name_entry, state.pending_highscore_player)
+            elif state.state == AppState.PRESS_START:
+                gui.render_press_start()
+            elif state.state == AppState.SPECIAL_THANKS:
+                gui.render_special_thanks(state.thanks_manager.names)
+            elif state.state == AppState.SERVICE_MENU:
+                gui.render_service_menu(state.service_menu)
             
             # 6. Frame-utemezes tartasa (ne porgessuk feleslegesen a CPU-t)
             elapsed = time.time() - loop_start

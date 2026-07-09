@@ -65,7 +65,7 @@ class MpvController:
 
         mpv_args = [
             "mpv",
-            "--hwdec=v4l2m2m-copy",
+            "--hwdec=v4l2m2m",
             "--idle=yes",
             "--fullscreen",
             "--no-osc",
@@ -77,7 +77,7 @@ class MpvController:
             "--drm-format=xrgb8888",
             "--keepaspect=yes",
             "--keepaspect-window=yes",
-            "--profile=fast"
+            "--profile=fast",
             "--ao=alsa",
             ]
         if is_headless_linux:

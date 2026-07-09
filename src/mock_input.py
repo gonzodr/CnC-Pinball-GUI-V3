@@ -22,12 +22,68 @@ class MockInputController:
 
             key = pg_event.key
 
-            # 1. Player szám választás (P)
+            # 0. Titkos szerviz menu (Ctrl+M) - VALODI, a Pi-hez csatlakoztatott
+            # billentyuzettel nyithato meg, barmikor. Amig a szerviz menu aktiv,
+            # a main.py mar nem is ezen a fuggvenyen keresztul kuldi tovabb a
+            # billentyu-eventeket (lasd main.py), ugyhogy itt nincs utkozes a
+            # tobbi (W/R/B/P/stb.) tesztgombbal.
+            if key == pygame.K_m and (pg_event.mod & pygame.KMOD_CTRL):
+                events.append(GameEvent("SERVICE_MENU_ENTER", ()))
+                continue
+
+            # 0b. Esc - "vissza az attract-loopba" gyorsgomb: barmikor,
+            # amikor NEM az attract-loop fut (pl. teszteles kozben
+            # beragadtal egy dev-elonezeti kepernyon), Esc visszadob a
+            # loop elejere. Ha mar a loopban vagyunk, nem csinal semmit.
+            if key == pygame.K_ESCAPE:
+                events.append(GameEvent("ESCAPE_TO_ATTRACT", ()))
+                continue
+
+            # 1. Player szám választás (P - a valódi gépen a zöld/shoot
+            # gomb) - EGYBEN a NAME_ENTRY "következő betű" (PLAYER_PRESS)
+            # gombja is. A state_machine dönti el az aktuális állapot
+            # alapján, hogy melyik viselkedés érvényes.
             if key == pygame.K_p:
                 self._num_players = (self._num_players % 4) + 1
                 # Ezt az eseményt küldjük, hogy a StateMachine tudja: váltani kell
                 events.append(GameEvent("PLAYERCOUNT_NEXT", ()))
                 events.append(self._generate_score_event())
+                events.append(GameEvent("PLAYER_PRESS", ()))
+
+            # 1b. NAME_ENTRY betűváltás (bal/jobb nyíl - a valódi flipper
+            # gombok helyett, amíg a teljes flipper-bekötés nincs kész)
+            elif key == pygame.K_LEFT:
+                events.append(GameEvent("FLIPPER_LEFT", ()))
+
+            elif key == pygame.K_RIGHT:
+                events.append(GameEvent("FLIPPER_RIGHT", ()))
+
+            # 1c. Start gomb (a valodi gepen piros Start gomb, itt S) -
+            # NAME_ENTRY-ben: skip, attract-loopban: kilepes SCORE-ba
+            elif key == pygame.K_s:
+                events.append(GameEvent("START", ()))
+
+            # 1d. IDEIGLENES teszt-gomb (I) a PRESS_START attract-kepernyo
+            # elovezetesehez - a teljes attract-loop meg nincs megepitve,
+            # ez csak addig kell, amig ki nem alakul a vegleges belepesi mod.
+            elif key == pygame.K_i:
+                events.append(GameEvent("ATTRACT", ()))
+
+            # 1e. IDEIGLENES teszt-gomb (T) a SPECIAL_THANKS attract-kepernyo
+            # elonezetehez - ugyanugy ideiglenes, mint az (I), amig a teljes
+            # attract-loop nincs osszerakva.
+            elif key == pygame.K_t:
+                events.append(GameEvent("DEV_THX", ()))
+
+            # 1f. IDEIGLENES teszt-gomb (L) a LOGO attract-kepernyo
+            # elonezetehez - ugyanugy ideiglenes, mint az (I)/(T).
+            elif key == pygame.K_l:
+                events.append(GameEvent("DEV_LOGO", ()))
+
+            # 1g. IDEIGLENES teszt-gomb (K) a BEAT_SCORE attract-kepernyo
+            # elonezetehez - ugyanugy ideiglenes, mint az (I)/(T)/(L).
+            elif key == pygame.K_k:
+                events.append(GameEvent("DEV_BEAT_SCORE", ()))
 
             # 2. Pontszerzés (W)
             elif key == pygame.K_w:
