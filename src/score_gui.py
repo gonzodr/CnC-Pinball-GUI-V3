@@ -23,6 +23,8 @@ import pygame
 import os
 import sys
 
+from particle_settings import ParticleSettingsManager
+
 # A kmsdrm drivert KIZAROLAG Linuxon allitjuk be
 # A kmsdrm drivert KIZAROLAG akkor allitjuk be, ha Linuxon vagyunk
 # ES nincs futo X11/Wayland desktop session. Ez kulonbozteti meg a
@@ -486,6 +488,12 @@ class ScoreGUI:
         self._fade_snapshot = None
         self._fade_start = None
 
+        # Globalis reszecske-intenzitas szorzok (szerviz menu Particle
+        # szerkesztojebol allithatok, lasd _apply_particle_multipliers).
+        self.particle_settings = ParticleSettingsManager()
+        self._particle_editor_burst = None
+        self._particle_editor_next_spawn = None
+
     def acquire_display(self):
         if self.active:
             return
@@ -733,6 +741,18 @@ class ScoreGUI:
             scale_fn = pygame.transform.smoothscale if _smoothscale_supported() else pygame.transform.scale
             surface = scale_fn(surface, (w, h))
         self.screen.blit(surface, surface.get_rect(center=center))
+
+    def _apply_particle_multipliers(self, count, speed_range, lifetime_range, size_range):
+        """A szerviz menu Particle szerkesztojeben beallitott globalis
+        szorzokat alkalmazza egy ParticleBurst parametereire - minden
+        reszecske-effekt (SUMMARY/FINAL_SCORES/BEAT_SCORE/elonezeti) ezen
+        keresztul megy, hogy egy helyen legyen hangolhato az intenzitas."""
+        m = self.particle_settings.values
+        scaled_count = max(1, int(round(count * m["count_mult"])))
+        scaled_speed = (speed_range[0] * m["speed_mult"], speed_range[1] * m["speed_mult"])
+        scaled_lifetime = (lifetime_range[0] * m["lifetime_mult"], lifetime_range[1] * m["lifetime_mult"])
+        scaled_size = (size_range[0] * m["size_mult"], size_range[1] * m["size_mult"])
+        return scaled_count, scaled_speed, scaled_lifetime, scaled_size
 
     def release_display(self):
         if not self.active:
@@ -998,10 +1018,14 @@ class ScoreGUI:
         # Szikra-effekt, amikor a TOTAL sor megjelenik - ez mindig van
         # (a bonusz lehet 0, akkor nem lenne mit unnepelni), csak egyszer indul
         if elapsed >= self.SUMMARY_SPARK_REVEAL_TIME and not self._bonus_spark_spawned:
+            count, speed, lifetime, size = self._apply_particle_multipliers(
+                self.SUMMARY_SPARK_COUNT, self.SUMMARY_SPARK_SPEED_RANGE,
+                self.SUMMARY_SPARK_LIFETIME_RANGE, self.SUMMARY_SPARK_SIZE_RANGE,
+            )
             self._bonus_spark_burst = ParticleBurst(
                 (self.SCREEN_W // 2, self.SUMMARY_TOTAL_Y),
-                self.SUMMARY_SPARK_COUNT, self.SUMMARY_SPARK_COLORS,
-                self.SUMMARY_SPARK_SPEED_RANGE, self.SUMMARY_SPARK_LIFETIME_RANGE, self.SUMMARY_SPARK_SIZE_RANGE,
+                count, self.SUMMARY_SPARK_COLORS,
+                speed, lifetime, size,
             )
             self._bonus_spark_spawned = True
         if self._bonus_spark_burst is not None:
@@ -1072,10 +1096,14 @@ class ScoreGUI:
             spread = self.FINAL_SCORES_FIREWORK_SPREAD
             ox, oy = random.choice(winner_positions)
             origin = (ox + random.uniform(-spread, spread), oy + random.uniform(-spread, spread))
+            count, speed, lifetime, size = self._apply_particle_multipliers(
+                self.FINAL_SCORES_FIREWORK_COUNT, self.FINAL_SCORES_FIREWORK_SPEED_RANGE,
+                self.FINAL_SCORES_FIREWORK_LIFETIME_RANGE, self.FINAL_SCORES_FIREWORK_SIZE_RANGE,
+            )
             self._firework_bursts.append(ParticleBurst(
-                origin, self.FINAL_SCORES_FIREWORK_COUNT, self.FINAL_SCORES_FIREWORK_COLORS,
-                self.FINAL_SCORES_FIREWORK_SPEED_RANGE, self.FINAL_SCORES_FIREWORK_LIFETIME_RANGE,
-                self.FINAL_SCORES_FIREWORK_SIZE_RANGE, gravity=120.0,
+                origin, count, self.FINAL_SCORES_FIREWORK_COLORS,
+                speed, lifetime,
+                size, gravity=120.0,
             ))
             self._next_firework_time = now + random.uniform(*self.FINAL_SCORES_FIREWORK_INTERVAL_RANGE)
 
@@ -1301,10 +1329,14 @@ class ScoreGUI:
         self._draw_animated(number_surf, (self.SCREEN_W // 2, self.BEAT_SCORE_NUMBER_Y), 0.0, elapsed)
 
         if not self._beat_score_spark_spawned:
+            count, speed, lifetime, size = self._apply_particle_multipliers(
+                self.BEAT_SCORE_SPARK_COUNT, self.BEAT_SCORE_SPARK_SPEED_RANGE,
+                self.BEAT_SCORE_SPARK_LIFETIME_RANGE, self.BEAT_SCORE_SPARK_SIZE_RANGE,
+            )
             self._beat_score_spark_burst = ParticleBurst(
                 (self.SCREEN_W // 2, self.BEAT_SCORE_NUMBER_Y),
-                self.BEAT_SCORE_SPARK_COUNT, self.BEAT_SCORE_SPARK_COLORS,
-                self.BEAT_SCORE_SPARK_SPEED_RANGE, self.BEAT_SCORE_SPARK_LIFETIME_RANGE, self.BEAT_SCORE_SPARK_SIZE_RANGE,
+                count, self.BEAT_SCORE_SPARK_COLORS,
+                speed, lifetime, size,
             )
             self._beat_score_spark_spawned = True
         if self._beat_score_spark_burst is not None:
@@ -1436,6 +1468,7 @@ class ScoreGUI:
             "thanks_add_input": "UJ NEV",
             "input_test": "INPUT / GOMB TESZT",
             "serial_monitor": "SERIAL MONITOR (RAW)",
+            "particle_editor": "PARTICLE SZERKESZTO",
             "reset_confirm": "OSSZES HISCORE TORLESE",
             "version_info": "VERZIO INFO",
         }
@@ -1510,6 +1543,49 @@ class ScoreGUI:
                     display = line if len(line) <= 40 else line[:37] + "..."
                     self._draw_service_line(f"{ago:5.1f}s  {display}", y + i * line_h, i == 0)
             hint = "Esc: vissza"
+
+        elif controller.screen == "particle_editor":
+            ps = controller.particle_settings
+            keys = ps.keys_in_order()
+            row_h = 64
+            bar_x = 30
+            bar_w = self.SCREEN_W - 60
+            bar_h = 18
+            for i, key in enumerate(keys):
+                row_y = y + i * row_h
+                selected = i == controller.cursor
+                color = (255, 230, 90) if selected else (220, 220, 225)
+                value = ps.values[key]
+                lo, hi, _step = ps.RANGES[key]
+                label_surf = self.font_service_item.render(
+                    f"{'> ' if selected else '  '}{ps.LABELS[key]}: {value:.1f}x", True, color
+                )
+                self.screen.blit(label_surf, (bar_x, row_y))
+                bar_y = row_y + 28
+                pygame.draw.rect(self.screen, (60, 60, 68), (bar_x, bar_y, bar_w, bar_h))
+                frac = max(0.0, min(1.0, (value - lo) / (hi - lo)))
+                fill_w = int(bar_w * frac)
+                if fill_w > 0:
+                    pygame.draw.rect(self.screen, color, (bar_x, bar_y, fill_w, bar_h))
+                pygame.draw.rect(self.screen, (140, 140, 150), (bar_x, bar_y, bar_w, bar_h), 2)
+
+            # Elo elonezet: folyamatosan ujrainduló reszecske-robbanas a
+            # kepernyo aljan, hogy azonnal lassuk a hangolt ertekek hatasat.
+            now = time.time()
+            if self._particle_editor_next_spawn is None or now >= self._particle_editor_next_spawn:
+                p_count, p_speed, p_lifetime, p_size = self._apply_particle_multipliers(
+                    self.BEAT_SCORE_SPARK_COUNT, self.BEAT_SCORE_SPARK_SPEED_RANGE,
+                    self.BEAT_SCORE_SPARK_LIFETIME_RANGE, self.BEAT_SCORE_SPARK_SIZE_RANGE,
+                )
+                self._particle_editor_burst = ParticleBurst(
+                    (self.SCREEN_W // 2, self.SCREEN_H - 110),
+                    p_count, self.BEAT_SCORE_SPARK_COLORS, p_speed, p_lifetime, p_size,
+                )
+                self._particle_editor_next_spawn = now + max(0.4, p_lifetime[1] * 0.8)
+            if self._particle_editor_burst is not None:
+                self._particle_editor_burst.draw(self.screen)
+
+            hint = "Fel/Le: parameter   Bal/Jobb: ertek   R: alapertelmezett   Esc: vissza"
 
         elif controller.screen == "reset_confirm":
             self._draw_service_line("Biztosan torlod az OSSZES hiscore-t?", y, False)

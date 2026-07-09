@@ -26,16 +26,18 @@ class ServiceMenuController:
         ("thanks_edit", "Special Thanks nevek"),
         ("input_test", "Input / gomb teszt"),
         ("serial_monitor", "Serial Monitor (raw)"),
+        ("particle_editor", "Particle szerkeszto"),
         ("reset_confirm", "OSSZES hiscore torlese"),
         ("version_info", "Verzio info"),
         ("exit", "Kilepes"),
     ]
 
-    def __init__(self, score_manager, thanks_manager, recent_events, serial_reader=None):
+    def __init__(self, score_manager, thanks_manager, recent_events, serial_reader=None, particle_settings=None):
         self.score_manager = score_manager
         self.thanks_manager = thanks_manager
         self.recent_events = recent_events  # deque, csak olvassuk (input_test kepernyohoz)
         self.serial_reader = serial_reader  # csak olvassuk (serial_monitor kepernyohoz)
+        self.particle_settings = particle_settings  # ParticleSettingsManager (particle_editor kepernyohoz)
 
         self.should_exit = False
         self.screen = "main"
@@ -143,6 +145,22 @@ class ServiceMenuController:
 
     def _handle_serial_monitor(self, event):
         if event.key == pygame.K_ESCAPE:
+            self._go_main()
+
+    def _handle_particle_editor(self, event):
+        keys = self.particle_settings.keys_in_order()
+        if event.key == pygame.K_UP:
+            self.cursor = (self.cursor - 1) % len(keys)
+        elif event.key == pygame.K_DOWN:
+            self.cursor = (self.cursor + 1) % len(keys)
+        elif event.key == pygame.K_LEFT:
+            self.particle_settings.adjust(keys[self.cursor], -1)
+        elif event.key == pygame.K_RIGHT:
+            self.particle_settings.adjust(keys[self.cursor], +1)
+        elif event.key == pygame.K_r:
+            self.particle_settings.reset_defaults()
+            self.status_message = "Alaperelmezesek visszaallitva!"
+        elif event.key == pygame.K_ESCAPE:
             self._go_main()
 
     def _handle_reset_confirm(self, event):

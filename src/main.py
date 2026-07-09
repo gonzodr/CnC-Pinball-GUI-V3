@@ -41,6 +41,7 @@ def main():
 
     gui = ScoreGUI()
     gui.acquire_display()   # induláskor is a GUI kapja a kijelzőt (attract-loop, nem VIDEO)
+    state.service_menu.particle_settings = gui.particle_settings  # particle_editor kepernyohoz
 
     mock_input = MockInputController()
 
