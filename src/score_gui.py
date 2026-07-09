@@ -240,6 +240,12 @@ class ScoreGUI:
     SHADOW_OPACITY = 90
     SHADOW_BLUR_RADIUS = 3  # Kisebb felbontáshoz kicsit visszavett blur
 
+    # Allapotvaltaskori crossfade (lasd start_fade_transition/draw_fade_overlay).
+    # Ugyanaz a biztonsagos technika (surface.set_alpha() + kozvetlen blit a
+    # self.screen-re, NEM kozbenso SRCALPHA feluletre), mint amit a LOGO
+    # kepernyo pszichedelikus hattere mar bizonyitottan hasznal ARM-on.
+    FADE_DURATION_SEC = 0.25
+
     # 640x480-ra átszámolt fix pozíciók (eredeti * 0.8)
     CARD_LAYOUT = [
         {"pos": (8, 330), "angle": 45},
@@ -469,6 +475,9 @@ class ScoreGUI:
         self.beat_score_start = None
         self._beat_score_spark_burst = None
         self._beat_score_spark_spawned = False
+
+        self._fade_snapshot = None
+        self._fade_start = None
 
     def acquire_display(self):
         if self.active:
@@ -886,6 +895,35 @@ class ScoreGUI:
         ellenorizzuk, ha NEM vagyunk a szerviz menuben (lasd main.py),
         hogy ne utkozzon egy oda begepelt "Q"-val."""
         return any(e.type == pygame.KEYDOWN and e.key == pygame.K_q for e in pygame_events)
+
+    def start_fade_transition(self):
+        """Pillanatkepet keszit a JELENLEGI kepernyotartalomrol (az elozo
+        allapot utolso kirajzolt kepe), hogy a kovetkezo nehany frame-ben
+        draw_fade_overlay() elhalvanyithassa fole az uj allapot tartalmat.
+        A main.py hivja allapotvaltaskor, MIELOTT az uj allapot render_*
+        fuggvenye lefut."""
+        if not self.active or self.screen is None:
+            return
+        self._fade_snapshot = self.screen.copy()
+        self._fade_start = time.time()
+
+    def draw_fade_overlay(self):
+        """Ha van folyamatban levo crossfade, ratolja a regi kepernyokepet
+        (csokkeno set_alpha-val) a mar kirajzolt uj tartalomra, majd ujra
+        flip-el. A main.py minden frame-ben hivja, a rendes render_* hivas
+        UTAN - ha nincs aktiv fade, azonnal visszater, nincs extra koltseg.
+        Szandekosan surface.set_alpha()-t hasznal (nem SRCALPHA feluletre
+        komponalast) - lasd FADE_DURATION_SEC kommentje."""
+        if self._fade_snapshot is None:
+            return
+        elapsed = time.time() - self._fade_start
+        if elapsed >= self.FADE_DURATION_SEC:
+            self._fade_snapshot = None
+            return
+        alpha = max(0, min(255, int(255 * (1 - elapsed / self.FADE_DURATION_SEC))))
+        self._fade_snapshot.set_alpha(alpha)
+        self.screen.blit(self._fade_snapshot, (0, 0))
+        pygame.display.flip()
 
     # SUMMARY SCREEN RENDERING
     def render_summary(self, summary_data):

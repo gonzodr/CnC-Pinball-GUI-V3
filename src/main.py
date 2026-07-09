@@ -82,6 +82,14 @@ def main():
                 old_state, new_state = transition
                 print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
 
+                if old_state != AppState.VIDEO and new_state != AppState.VIDEO:
+                    # Pillanatkepet keszitunk az elozo allapot utolso
+                    # kirajzolt kepebol, hogy a kovetkezo par frame-ben
+                    # elhalvanyodjon az uj allapot tartalma fole (lasd
+                    # draw_fade_overlay lejjebb). VIDEO-ba/-bol nem
+                    # csinalunk fade-et, ott mpv veszi at a kijelzot.
+                    gui.start_fade_transition()
+
                 if new_state == AppState.SUMMARY:
                     gui.summary_anim_start = None
                #     gui.release_display()
@@ -128,7 +136,10 @@ def main():
                 gui.render_special_thanks(state.thanks_manager.names)
             elif state.state == AppState.SERVICE_MENU:
                 gui.render_service_menu(state.service_menu)
-            
+
+            # 5b. Folyamatban levo crossfade rarajzolasa, ha van (no-op, ha nincs)
+            gui.draw_fade_overlay()
+
             # 6. Frame-utemezes tartasa (ne porgessuk feleslegesen a CPU-t)
             elapsed = time.time() - loop_start
             sleep_time = clock_interval - elapsed
