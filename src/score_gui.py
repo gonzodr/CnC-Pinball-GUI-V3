@@ -455,7 +455,6 @@ class ScoreGUI:
         self.thx_scroll_start = None
         self._thx_text_cache = None
         self._thx_line_gap = None
-        self._thx_first_line_h = None
         self._thx_line_count = None
 
         self._bonus_spark_burst = None
@@ -1271,26 +1270,28 @@ class ScoreGUI:
                 )
                 for line in self.PRESS_START_LINES
             ]
-            block_w = max(s.get_width() for s in line_surfaces)
-            block_h = sum(s.get_height() for s in line_surfaces) + self.PRESS_START_LINE_GAP * (len(line_surfaces) - 1)
-            block = pygame.Surface((block_w, block_h), pygame.SRCALPHA)
+            # NE egy kozos SRCALPHA "block" feluletre komponaljuk ossze a
+            # sorokat (lasd render_special_thanks kommentje - 32 bites
+            # ARM-on Bus Error-t okoz a szeles SRCALPHA-ra-SRCALPHA blit).
+            # Helyette minden sort kulon tarolunk, a teljes "block" kozepehez
+            # viszonyitott fuggoleges eltolassal, es pulzalaskor mindegyiket
+            # kulon-kulon skalazzuk/rajzoljuk kozvetlenul a kepernyore.
+            total_h = sum(s.get_height() for s in line_surfaces) + self.PRESS_START_LINE_GAP * (len(line_surfaces) - 1)
+            offsets = []
             y = 0
             for s in line_surfaces:
-                block.blit(s, ((block_w - s.get_width()) // 2, y))
+                offsets.append((y + s.get_height() / 2) - total_h / 2)
                 y += s.get_height() + self.PRESS_START_LINE_GAP
-            self._press_start_cache = block
+            self._press_start_cache = list(zip(line_surfaces, offsets))
 
         scale = self._cosine_pulse_scale(
             self.PRESS_START_PULSE_PERIOD_SEC, self.PRESS_START_PULSE_MIN_SCALE, self.PRESS_START_PULSE_MAX_SCALE
         )
 
-        block = self._press_start_cache
-        w = max(1, int(block.get_width() * scale))
-        h = max(1, int(block.get_height() * scale))
-        scale_fn = pygame.transform.smoothscale if _smoothscale_supported() else pygame.transform.scale
-        scaled = scale_fn(block, (w, h))
-        rect = scaled.get_rect(center=(self.SCREEN_W // 2, self.SCREEN_H // 2))
-        self.screen.blit(scaled, rect)
+        center_x = self.SCREEN_W // 2
+        center_y = self.SCREEN_H // 2
+        for surf, offset in self._press_start_cache:
+            self._blit_scaled_centered(surf, (center_x, center_y + offset * scale), scale)
 
         pygame.display.flip()
 
@@ -1322,27 +1323,27 @@ class ScoreGUI:
                 )
                 for line in lines
             ]
-            gap = round(self.font_thx.get_linesize() * self.THX_LINE_SPACING_MULT)
-            block_w = max(s.get_width() for s in line_surfaces)
-            block_h = gap * (len(line_surfaces) - 1) + line_surfaces[-1].get_height()
-            block = pygame.Surface((block_w, block_h), pygame.SRCALPHA)
-            for i, s in enumerate(line_surfaces):
-                block.blit(s, ((block_w - s.get_width()) // 2, i * gap))
-
-            self._thx_text_cache = block
-            self._thx_line_gap = gap
-            self._thx_first_line_h = line_surfaces[0].get_height()
+            # NE egy szeles kozos SRCALPHA "block" feluletre komponaljuk ossze
+            # a sorokat, majd azt blit-eljuk egyben - ez 32 bites ARM-on
+            # (armv7l/armv6l) Bus Error-t okoz szeles (~500px+) SRCALPHA-ra-
+            # SRCALPHA blitnel (ugyanaz a kategoria hardveres/SDL-bug, mint a
+            # mar ismert smoothscale/blur ARM-problema). Helyette minden sort
+            # KULON, kozvetlenul a kepernyore (self.screen, ami NEM SRCALPHA)
+            # rajzolunk - ez mar bizonyítottan biztonsagos minta a tobbi
+            # kepernyon.
+            self._thx_text_cache = line_surfaces
+            self._thx_line_gap = round(self.font_thx.get_linesize() * self.THX_LINE_SPACING_MULT)
             self._thx_line_count = len(lines)
 
-        block = self._thx_text_cache
+        line_surfaces = self._thx_text_cache
         progress = min(elapsed / self.THX_SCROLL_DURATION_SEC, 1.0)
         scroll_distance = self._thx_line_gap * (self._thx_line_count - 1)
         y_offset = progress * scroll_distance
 
         first_line_center_y = (self.SCREEN_H // 2) - y_offset
-        block_y = first_line_center_y - self._thx_first_line_h / 2
-        block_x = (self.SCREEN_W - block.get_width()) // 2
-        self.screen.blit(block, (block_x, block_y))
+        for i, s in enumerate(line_surfaces):
+            line_center_y = first_line_center_y + i * self._thx_line_gap
+            self.screen.blit(s, s.get_rect(center=(self.SCREEN_W // 2, line_center_y)))
 
         self.screen.blit(self.thx_vignette, (0, 0))
 
