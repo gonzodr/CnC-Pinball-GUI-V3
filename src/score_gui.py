@@ -386,6 +386,13 @@ class ScoreGUI:
     BEAT_TITLE_PULSE_MIN_SCALE = 0.9
     BEAT_TITLE_PULSE_MAX_SCALE = 1.0
 
+    # Hatter-flicker: alapbol beatstate1, de a 3. es a 6. masodpercnel egy-egy
+    # 1 masodperces "ablakban" ketszer oda-vissza valtunk beatstate2-re (4
+    # egyenlo, 0.25 mp-es szakasz: 2,1,2,1), utana megint beatstate1-gyel
+    # folytatodik.
+    BEAT_SCORE_FLICKER_START_TIMES = (3.0, 6.0)
+    BEAT_SCORE_FLICKER_SEGMENT_SEC = 0.25
+
     # Egyszeri (nem ismetlodo) szikraszoras a pontszam korul, amikor a
     # kepernyo megjelenik - visszafogott, nem akarja elvinni a hangsulyt
     # a pulzalo cimrol.
@@ -618,13 +625,17 @@ class ScoreGUI:
         self.logo_bg_frames = self._build_logo_bg_frames()
 
         # --- BEAT THIS SCORE assetek ---
-        # beatstate.png a ket ures dobozt (szam + jatekosnev) tartalmazza,
-        # a cim (beattitle.png) kulon, atlatszo reteg - kozpontba rakva,
-        # pulzalva (lasd render_beat_score). A keret ugyanaz a
-        # Thanksframe.png vignette, mint a Special Thanks kepernyon (mar
-        # be van toltve self.thx_vignette-kent).
-        beat_bg_path = os.path.join(ASSETS_DIR, "beatstate.png")
+        # beatstate1.png (alap allapot) es beatstate2.png (megfeszult
+        # "flicker" allapot) - ugyanaz a ket ures doboz (szam + jatekosnev)
+        # mindketton, a cim (beattitle.png) kulon, atlatszo reteg -
+        # kozpontba rakva, pulzalva (lasd render_beat_score). A keret
+        # ugyanaz a Thanksframe.png vignette, mint a Special Thanks
+        # kepernyon (mar be van toltve self.thx_vignette-kent).
+        beat_bg_path = os.path.join(ASSETS_DIR, "beatstate1.png")
         self.beat_score_bg = pygame.image.load(beat_bg_path).convert()
+
+        beat_bg2_path = os.path.join(ASSETS_DIR, "beatstate2.png")
+        self.beat_score_bg2 = pygame.image.load(beat_bg2_path).convert()
 
         beat_title_path = os.path.join(ASSETS_DIR, "beattitle.png")
         self.beat_title_img = pygame.image.load(beat_title_path).convert_alpha()
@@ -1242,6 +1253,18 @@ class ScoreGUI:
 
         pygame.display.flip()
 
+    def _beat_score_current_bg(self, elapsed):
+        """Melyik hattereet (beatstate1/2) kell mutatni a BEAT_SCORE
+        kepernyo indulasa ota eltelt masodperc alapjan - lasd
+        BEAT_SCORE_FLICKER_START_TIMES kommentje."""
+        seg = self.BEAT_SCORE_FLICKER_SEGMENT_SEC
+        for flicker_start in self.BEAT_SCORE_FLICKER_START_TIMES:
+            window_end = flicker_start + 4 * seg
+            if flicker_start <= elapsed < window_end:
+                segment_index = int((elapsed - flicker_start) / seg)
+                return self.beat_score_bg2 if segment_index % 2 == 0 else self.beat_score_bg
+        return self.beat_score_bg
+
     def render_beat_score(self, scores):
         """BEAT THIS SCORE (attract-mode) képernyő: a beatstate.png hátteret
         (Cheech & Chong + felirat + két üres doboz) egészíti ki a #1 hiscore
@@ -1255,7 +1278,8 @@ class ScoreGUI:
             self._beat_score_spark_burst = None
             self._beat_score_spark_spawned = False
 
-        self.screen.blit(self.beat_score_bg, (0, 0))
+        beat_elapsed = time.time() - self.beat_score_start
+        self.screen.blit(self._beat_score_current_bg(beat_elapsed), (0, 0))
 
         title_scale = self._cosine_pulse_scale(
             self.BEAT_TITLE_PULSE_PERIOD_SEC, self.BEAT_TITLE_PULSE_MIN_SCALE, self.BEAT_TITLE_PULSE_MAX_SCALE
