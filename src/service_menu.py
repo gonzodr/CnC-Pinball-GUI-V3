@@ -19,6 +19,8 @@ import sys
 
 import pygame
 
+import arduino_port
+
 
 class ServiceMenuController:
     MAIN_ITEMS = [
@@ -27,6 +29,7 @@ class ServiceMenuController:
         ("input_test", "Input / gomb teszt"),
         ("serial_monitor", "Serial Monitor (raw)"),
         ("particle_editor", "Particle szerkeszto"),
+        ("find_arduino", "Arduino keresese"),
         ("firmware_update", "Firmware update"),
         ("reset_confirm", "OSSZES hiscore torlese"),
         ("version_info", "Verzio info"),
@@ -89,6 +92,8 @@ class ServiceMenuController:
                 # Nem valt sub-screen-re - main.py meg ebben a korben eszreveszi
                 # a flaget es atadja a vezerlest a kulon firmware_update.py-nak.
                 self.should_launch_firmware_update = True
+            elif target == "find_arduino":
+                self._handle_find_arduino()
             else:
                 self.screen = target
                 self.cursor = 0
@@ -151,6 +156,18 @@ class ServiceMenuController:
     def _handle_input_test(self, event):
         if event.key == pygame.K_ESCAPE:
             self._go_main()
+
+    def _handle_find_arduino(self):
+        """Nem sub-screen, hanem egy azonnali akcio: lefuttatja az
+        arduino-cli-s port-detektalast (max ~1-2s, elfogadhato egy
+        deliberalt, ritka menupontnal), elmenti a talalt portot (ha van),
+        es a status_message-ben mutatja az eredmenyt."""
+        port, label = arduino_port.detect_port()
+        if port:
+            arduino_port.save_port(port)
+            self.status_message = f"Talalva: {port} ({label})"
+        else:
+            self.status_message = f"Nincs Arduino ({label})"
 
     def _handle_serial_monitor(self, event):
         if event.key == pygame.K_ESCAPE:

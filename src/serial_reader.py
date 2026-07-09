@@ -6,6 +6,7 @@ import queue
 import time
 from collections import deque
 from protocol import parse_line, GameEvent
+import arduino_port
 
 
 class SerialReader:
@@ -20,7 +21,7 @@ class SerialReader:
     RAW_LOG_MAXLEN = 30  # a szerviz menu Serial Monitor kepernyojehez
 
     def __init__(self, port: str, baudrate: int = 115200):
-        self.port = port
+        self.port = port  # fallback, ha az auto-detektalas nem talal semmit
         self.baudrate = baudrate
         self.event_queue: "queue.Queue[GameEvent]" = queue.Queue()
         self._stop_flag = threading.Event()
@@ -41,11 +42,22 @@ class SerialReader:
         if self._thread:
             self._thread.join(timeout=2)
 
+    def _resolve_port(self):
+        """A legutobb elmentett (firmware_update.py vagy a szerviz menu
+        "Arduino keresese" pontja altal detektalt) portot hasznalja, ha van
+        ilyen - kulonben a konstruktorban kapott alapertelmezettre esik
+        vissza. Csak egy kis JSON fajlt olvas be, NEM hiv arduino-cli-t -
+        azt csak a ket fenti, deliberalt/ritka eset teszi, kulonben feleslegesen
+        futna masodpercenkent akkor is, ha nincs Arduino csatlakoztatva."""
+        saved = arduino_port.load_saved_port()
+        return saved if saved else self.port
+
     def _run(self):
         while not self._stop_flag.is_set():
+            active_port = self._resolve_port()
             try:
-                with serial.Serial(self.port, self.baudrate, timeout=1) as ser:
-                    print(f"[serial] csatlakozva: {self.port}")
+                with serial.Serial(active_port, self.baudrate, timeout=1) as ser:
+                    print(f"[serial] csatlakozva: {active_port}")
                     while not self._stop_flag.is_set():
                         raw = ser.readline()
                         if not raw:

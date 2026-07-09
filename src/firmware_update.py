@@ -12,7 +12,6 @@ A tenyleges munka kulon szalon fut, hogy a kepernyo a hosszabb lepesek
 (forditas, feltoltes) alatt is frissuljon, ne fagyjon le.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -20,12 +19,14 @@ import threading
 
 import pygame
 
+import arduino_port
+
 _has_x11_or_wayland = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 if sys.platform.startswith("linux") and not _has_x11_or_wayland:
     os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
 
 FIRMWARE_DIR = os.environ.get("CNC_FIRMWARE_DIR", os.path.expanduser("~/CnC_firmware4"))
-ARDUINO_CLI = os.environ.get("CNC_ARDUINO_CLI", os.path.expanduser("~/bin/arduino-cli"))
+ARDUINO_CLI = arduino_port.ARDUINO_CLI_PATH
 FQBN = "arduino:avr:mega"
 
 SCREEN_W, SCREEN_H = 640, 480
@@ -70,25 +71,16 @@ class Worker:
 
     def detect_port(self):
         self.log("Arduino port keresese...", WARN_COLOR)
-        try:
-            result = subprocess.run(
-                [ARDUINO_CLI, "board", "list", "--json"],
-                capture_output=True, text=True, timeout=15,
-            )
-            data = json.loads(result.stdout)
-            for entry in data.get("detected_ports", []):
-                port_info = entry.get("port", {})
-                if port_info.get("protocol") != "serial":
-                    continue
-                matched = entry.get("matching_boards") or []
-                label = matched[0]["name"] if matched else "ismeretlen eszkoz"
-                address = port_info.get("address")
-                self.log(f"Talalva: {address} ({label})", OK_COLOR)
-                return address
-        except Exception as e:
-            self.log(f"Port-detektalas hiba: {e}", ERR_COLOR)
-        self.log("Nem talalhato csatlakoztatott Arduino.", WARN_COLOR)
-        return None
+        port, label = arduino_port.detect_port()
+        if port:
+            self.log(f"Talalva: {port} ({label})", OK_COLOR)
+            # Elmentjuk, hogy a fo GUI SerialReader-e legkozelebb (barmilyen
+            # ujracsatlakozasi probalkozasnal) ezt hasznalja majd a
+            # konstruktorban kapott alapertelmezett helyett.
+            arduino_port.save_port(port)
+        else:
+            self.log(f"Nem talalhato csatlakoztatott Arduino ({label}).", WARN_COLOR)
+        return port
 
     def run(self):
         self.log("=== Firmware update inditasa ===", WARN_COLOR)
