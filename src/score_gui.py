@@ -326,6 +326,7 @@ class ScoreGUI:
     SUMMARY_SPARK_SPEED_RANGE = (60, 170)
     SUMMARY_SPARK_LIFETIME_RANGE = (0.5, 0.9)
     SUMMARY_SPARK_SIZE_RANGE = (3, 6)
+    SUMMARY_SPARK_GRAVITY = 260.0
 
     # --- FINAL SCORES (tobb-jatekos vegeredmeny) kepernyo layout ---
     # 2x2 racs, a regi Unity GUI elrendezeset koveti: 1-es balfent,
@@ -353,6 +354,7 @@ class ScoreGUI:
     FINAL_SCORES_FIREWORK_SPEED_RANGE = (50, 150)
     FINAL_SCORES_FIREWORK_LIFETIME_RANGE = (0.5, 0.9)
     FINAL_SCORES_FIREWORK_SIZE_RANGE = (3, 6)
+    FINAL_SCORES_FIREWORK_GRAVITY = 120.0
 
     # --- LOGO (attract-mode) képernyő ---
     # introscr.png (átlátszó "Cheech & Chong Pinball" logó) egy előre
@@ -403,6 +405,7 @@ class ScoreGUI:
     BEAT_SCORE_SPARK_SPEED_RANGE = (50, 150)
     BEAT_SCORE_SPARK_LIFETIME_RANGE = (0.5, 0.9)
     BEAT_SCORE_SPARK_SIZE_RANGE = (6, 10)
+    BEAT_SCORE_SPARK_GRAVITY = 260.0
 
     # --- SZERVIZ MENU (Ctrl+M) ---
     SERVICE_MENU_BG_COLOR = (10, 20, 60)
@@ -742,7 +745,7 @@ class ScoreGUI:
             surface = scale_fn(surface, (w, h))
         self.screen.blit(surface, surface.get_rect(center=center))
 
-    def _apply_particle_multipliers(self, count, speed_range, lifetime_range, size_range):
+    def _apply_particle_multipliers(self, count, speed_range, lifetime_range, size_range, gravity=260.0):
         """A szerviz menu Particle szerkesztojeben beallitott globalis
         szorzokat alkalmazza egy ParticleBurst parametereire - minden
         reszecske-effekt (SUMMARY/FINAL_SCORES/BEAT_SCORE/elonezeti) ezen
@@ -752,7 +755,8 @@ class ScoreGUI:
         scaled_speed = (speed_range[0] * m["speed_mult"], speed_range[1] * m["speed_mult"])
         scaled_lifetime = (lifetime_range[0] * m["lifetime_mult"], lifetime_range[1] * m["lifetime_mult"])
         scaled_size = (size_range[0] * m["size_mult"], size_range[1] * m["size_mult"])
-        return scaled_count, scaled_speed, scaled_lifetime, scaled_size
+        scaled_gravity = gravity * m["gravity_mult"]
+        return scaled_count, scaled_speed, scaled_lifetime, scaled_size, scaled_gravity
 
     def release_display(self):
         if not self.active:
@@ -1018,14 +1022,15 @@ class ScoreGUI:
         # Szikra-effekt, amikor a TOTAL sor megjelenik - ez mindig van
         # (a bonusz lehet 0, akkor nem lenne mit unnepelni), csak egyszer indul
         if elapsed >= self.SUMMARY_SPARK_REVEAL_TIME and not self._bonus_spark_spawned:
-            count, speed, lifetime, size = self._apply_particle_multipliers(
+            count, speed, lifetime, size, gravity = self._apply_particle_multipliers(
                 self.SUMMARY_SPARK_COUNT, self.SUMMARY_SPARK_SPEED_RANGE,
                 self.SUMMARY_SPARK_LIFETIME_RANGE, self.SUMMARY_SPARK_SIZE_RANGE,
+                self.SUMMARY_SPARK_GRAVITY,
             )
             self._bonus_spark_burst = ParticleBurst(
                 (self.SCREEN_W // 2, self.SUMMARY_TOTAL_Y),
                 count, self.SUMMARY_SPARK_COLORS,
-                speed, lifetime, size,
+                speed, lifetime, size, gravity=gravity,
             )
             self._bonus_spark_spawned = True
         if self._bonus_spark_burst is not None:
@@ -1096,14 +1101,15 @@ class ScoreGUI:
             spread = self.FINAL_SCORES_FIREWORK_SPREAD
             ox, oy = random.choice(winner_positions)
             origin = (ox + random.uniform(-spread, spread), oy + random.uniform(-spread, spread))
-            count, speed, lifetime, size = self._apply_particle_multipliers(
+            count, speed, lifetime, size, gravity = self._apply_particle_multipliers(
                 self.FINAL_SCORES_FIREWORK_COUNT, self.FINAL_SCORES_FIREWORK_SPEED_RANGE,
                 self.FINAL_SCORES_FIREWORK_LIFETIME_RANGE, self.FINAL_SCORES_FIREWORK_SIZE_RANGE,
+                self.FINAL_SCORES_FIREWORK_GRAVITY,
             )
             self._firework_bursts.append(ParticleBurst(
                 origin, count, self.FINAL_SCORES_FIREWORK_COLORS,
                 speed, lifetime,
-                size, gravity=120.0,
+                size, gravity=gravity,
             ))
             self._next_firework_time = now + random.uniform(*self.FINAL_SCORES_FIREWORK_INTERVAL_RANGE)
 
@@ -1329,14 +1335,15 @@ class ScoreGUI:
         self._draw_animated(number_surf, (self.SCREEN_W // 2, self.BEAT_SCORE_NUMBER_Y), 0.0, elapsed)
 
         if not self._beat_score_spark_spawned:
-            count, speed, lifetime, size = self._apply_particle_multipliers(
+            count, speed, lifetime, size, gravity = self._apply_particle_multipliers(
                 self.BEAT_SCORE_SPARK_COUNT, self.BEAT_SCORE_SPARK_SPEED_RANGE,
                 self.BEAT_SCORE_SPARK_LIFETIME_RANGE, self.BEAT_SCORE_SPARK_SIZE_RANGE,
+                self.BEAT_SCORE_SPARK_GRAVITY,
             )
             self._beat_score_spark_burst = ParticleBurst(
                 (self.SCREEN_W // 2, self.BEAT_SCORE_NUMBER_Y),
                 count, self.BEAT_SCORE_SPARK_COLORS,
-                speed, lifetime, size,
+                speed, lifetime, size, gravity=gravity,
             )
             self._beat_score_spark_spawned = True
         if self._beat_score_spark_burst is not None:
@@ -1547,10 +1554,10 @@ class ScoreGUI:
         elif controller.screen == "particle_editor":
             ps = controller.particle_settings
             keys = ps.keys_in_order()
-            row_h = 64
+            row_h = 54
             bar_x = 30
             bar_w = self.SCREEN_W - 60
-            bar_h = 18
+            bar_h = 14
             for i, key in enumerate(keys):
                 row_y = y + i * row_h
                 selected = i == controller.cursor
@@ -1561,7 +1568,7 @@ class ScoreGUI:
                     f"{'> ' if selected else '  '}{ps.LABELS[key]}: {value:.1f}x", True, color
                 )
                 self.screen.blit(label_surf, (bar_x, row_y))
-                bar_y = row_y + 28
+                bar_y = row_y + 26
                 pygame.draw.rect(self.screen, (60, 60, 68), (bar_x, bar_y, bar_w, bar_h))
                 frac = max(0.0, min(1.0, (value - lo) / (hi - lo)))
                 fill_w = int(bar_w * frac)
@@ -1573,13 +1580,14 @@ class ScoreGUI:
             # kepernyo aljan, hogy azonnal lassuk a hangolt ertekek hatasat.
             now = time.time()
             if self._particle_editor_next_spawn is None or now >= self._particle_editor_next_spawn:
-                p_count, p_speed, p_lifetime, p_size = self._apply_particle_multipliers(
+                p_count, p_speed, p_lifetime, p_size, p_gravity = self._apply_particle_multipliers(
                     self.BEAT_SCORE_SPARK_COUNT, self.BEAT_SCORE_SPARK_SPEED_RANGE,
                     self.BEAT_SCORE_SPARK_LIFETIME_RANGE, self.BEAT_SCORE_SPARK_SIZE_RANGE,
+                    self.BEAT_SCORE_SPARK_GRAVITY,
                 )
                 self._particle_editor_burst = ParticleBurst(
-                    (self.SCREEN_W // 2, self.SCREEN_H - 110),
-                    p_count, self.BEAT_SCORE_SPARK_COLORS, p_speed, p_lifetime, p_size,
+                    (self.SCREEN_W // 2, self.SCREEN_H - 80),
+                    p_count, self.BEAT_SCORE_SPARK_COLORS, p_speed, p_lifetime, p_size, gravity=p_gravity,
                 )
                 self._particle_editor_next_spawn = now + max(0.4, p_lifetime[1] * 0.8)
             if self._particle_editor_burst is not None:

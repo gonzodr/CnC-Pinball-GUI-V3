@@ -16,6 +16,7 @@ class ParticleSettingsManager:
         "size_mult": 1.0,
         "speed_mult": 1.0,
         "lifetime_mult": 1.0,
+        "gravity_mult": 1.0,
     }
 
     # (min, max, step) - a szerkeszto csuszkaihoz
@@ -24,6 +25,7 @@ class ParticleSettingsManager:
         "size_mult": (0.5, 4.0, 0.1),
         "speed_mult": (0.3, 3.0, 0.1),
         "lifetime_mult": (0.3, 3.0, 0.1),
+        "gravity_mult": (0.0, 3.0, 0.1),
     }
 
     LABELS = {
@@ -31,6 +33,7 @@ class ParticleSettingsManager:
         "size_mult": "Meret",
         "speed_mult": "Sebesseg",
         "lifetime_mult": "Elettartam",
+        "gravity_mult": "Gravitacio",
     }
 
     def __init__(self):
@@ -55,7 +58,7 @@ class ParticleSettingsManager:
             json.dump(self.values, f)
 
     def keys_in_order(self):
-        return ["count_mult", "size_mult", "speed_mult", "lifetime_mult"]
+        return ["count_mult", "size_mult", "speed_mult", "lifetime_mult", "gravity_mult"]
 
     def adjust(self, key, direction):
         """direction: +1 vagy -1 - egy 'step'-nyivel modositja az erteket,
