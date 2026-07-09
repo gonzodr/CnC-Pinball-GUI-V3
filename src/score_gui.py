@@ -320,10 +320,10 @@ class ScoreGUI:
     # mindig van, szemben a bonusszal, ami lehet 0
     SUMMARY_SPARK_REVEAL_TIME = 4.0  # egyezik a TOTAL reveal-indulasaval
     SUMMARY_SPARK_COLORS = [(255, 245, 180), (255, 210, 60), (255, 160, 40)]
-    SUMMARY_SPARK_COUNT = 18
+    SUMMARY_SPARK_COUNT = 54
     SUMMARY_SPARK_SPEED_RANGE = (60, 170)
     SUMMARY_SPARK_LIFETIME_RANGE = (0.5, 0.9)
-    SUMMARY_SPARK_SIZE_RANGE = (2, 4)
+    SUMMARY_SPARK_SIZE_RANGE = (3, 6)
 
     # --- FINAL SCORES (tobb-jatekos vegeredmeny) kepernyo layout ---
     # 2x2 racs, a regi Unity GUI elrendezeset koveti: 1-es balfent,
@@ -347,10 +347,10 @@ class ScoreGUI:
     FINAL_SCORES_FIREWORK_INTERVAL_RANGE = (0.7, 1.3)  # ennyi ido telik ket robbanas kozott
     FINAL_SCORES_FIREWORK_SPREAD = 45  # a robbanas kozeppontja ennyi pixellel terhet el a gyoztes korul
     FINAL_SCORES_FIREWORK_COLORS = [(255, 90, 90), (255, 210, 60), (120, 220, 255), (140, 255, 140)]
-    FINAL_SCORES_FIREWORK_COUNT = 16
+    FINAL_SCORES_FIREWORK_COUNT = 48
     FINAL_SCORES_FIREWORK_SPEED_RANGE = (50, 150)
     FINAL_SCORES_FIREWORK_LIFETIME_RANGE = (0.5, 0.9)
-    FINAL_SCORES_FIREWORK_SIZE_RANGE = (2, 4)
+    FINAL_SCORES_FIREWORK_SIZE_RANGE = (3, 6)
 
     # --- LOGO (attract-mode) képernyő ---
     # introscr.png (átlátszó "Cheech & Chong Pinball" logó) egy előre
@@ -397,10 +397,10 @@ class ScoreGUI:
     # kepernyo megjelenik - visszafogott, nem akarja elvinni a hangsulyt
     # a pulzalo cimrol.
     BEAT_SCORE_SPARK_COLORS = [(255, 245, 180), (255, 210, 60), (255, 160, 40)]
-    BEAT_SCORE_SPARK_COUNT = 16
+    BEAT_SCORE_SPARK_COUNT = 48
     BEAT_SCORE_SPARK_SPEED_RANGE = (50, 150)
     BEAT_SCORE_SPARK_LIFETIME_RANGE = (0.5, 0.9)
-    BEAT_SCORE_SPARK_SIZE_RANGE = (4, 7)
+    BEAT_SCORE_SPARK_SIZE_RANGE = (6, 10)
 
     # --- SZERVIZ MENU (Ctrl+M) ---
     SERVICE_MENU_BG_COLOR = (10, 20, 60)
