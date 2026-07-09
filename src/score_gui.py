@@ -888,7 +888,6 @@ class ScoreGUI:
         self.screen.blit(self._main_score_cache, score_rect)
 
         
-        pygame.display.flip()
 
     def players_order(self):
         return [1, 2, 3, 4]
@@ -920,11 +919,14 @@ class ScoreGUI:
 
     def draw_fade_overlay(self):
         """Ha van folyamatban levo crossfade, ratolja a regi kepernyokepet
-        (csokkeno set_alpha-val) a mar kirajzolt uj tartalomra, majd ujra
-        flip-el. A main.py minden frame-ben hivja, a rendes render_* hivas
-        UTAN - ha nincs aktiv fade, azonnal visszater, nincs extra koltseg.
-        Szandekosan surface.set_alpha()-t hasznal (nem SRCALPHA feluletre
-        komponalast) - lasd FADE_DURATION_SEC kommentje."""
+        (csokkeno set_alpha-val) a mar kirajzolt uj tartalomra - NEM flip-el
+        maga (a flip most mar egyetlen, kozponti helyen tortenik a main.py
+        loop vegen, hogy frame-enkent PONTOSAN egyszer flip-eljunk; ket
+        flip/frame DRM/KMS kimeneten latvanyos villogast okozott). A main.py
+        minden frame-ben hivja, a rendes render_* hivas UTAN, a kozponti
+        flip ELOTT - ha nincs aktiv fade, azonnal visszater, nincs extra
+        koltseg. Szandekosan surface.set_alpha()-t hasznal (nem SRCALPHA
+        feluletre komponalast) - lasd FADE_DURATION_SEC kommentje."""
         if self._fade_snapshot is None:
             return
         elapsed = time.time() - self._fade_start
@@ -934,7 +936,15 @@ class ScoreGUI:
         alpha = max(0, min(255, int(255 * (1 - elapsed / self.FADE_DURATION_SEC))))
         self._fade_snapshot.set_alpha(alpha)
         self.screen.blit(self._fade_snapshot, (0, 0))
-        pygame.display.flip()
+
+    def flip_display(self):
+        """Az EGYETLEN, kozponti pygame.display.flip() hivas - a main.py
+        loop legvegen hivja, a rendes render_* dispatch ES a
+        draw_fade_overlay() UTAN. A render_* fuggvenyek mar nem flip-elnek
+        maguktol; ket flip/frame DRM/KMS kimeneten (Pi) latvanyos villogast
+        okozott."""
+        if self.active:
+            pygame.display.flip()
 
     # SUMMARY SCREEN RENDERING
     def render_summary(self, summary_data):
@@ -1000,7 +1010,6 @@ class ScoreGUI:
         # Level-keret legfelul - mindenre (szoveg, szikrak) ratakar a szeleknel
         self.screen.blit(self.summary_frame, (0, 0))
 
-        pygame.display.flip()
 
     def render_final_scores(self, final_scores: dict, player_count: int):
         """Tobb-jatekos vegeredmeny kepernyo: csak akkor jon elo, ha 2+
@@ -1077,7 +1086,6 @@ class ScoreGUI:
         # Level-keret legfelul - a pulzalo gyoztes-szoveg/tuzijatek se logjon ki alola
         self.screen.blit(self.summary_frame, (0, 0))
 
-        pygame.display.flip()
 
     @staticmethod
     def _hiscore_rank_label(rank: int) -> str:
@@ -1159,7 +1167,6 @@ class ScoreGUI:
                 leaf_rect = leaf.get_rect(center=(self.HISCORE_LEAF_X, y))
                 self.screen.blit(leaf, leaf_rect)
 
-        pygame.display.flip()
 
     def _blit_multicolor_line(self, parts, font, center_x, y):
         """parts: [(szöveg, szín), ...] - egy sorba rajzolja, a teljes sor
@@ -1218,7 +1225,6 @@ class ScoreGUI:
             self.font_name_hint, self.NAME_HINT_RIGHT_X, self.NAME_HINT_Y
         )
 
-        pygame.display.flip()
 
     def render_logo(self):
         """LOGO (attract-mode) képernyő: a "Cheech & Chong Pinball" logó
@@ -1251,7 +1257,6 @@ class ScoreGUI:
 
         self.screen.blit(self.logo_img, (0, 0))
 
-        pygame.display.flip()
 
     def _beat_score_current_bg(self, elapsed):
         """Melyik hattereet (beatstate1/2) kell mutatni a BEAT_SCORE
@@ -1314,7 +1319,6 @@ class ScoreGUI:
 
         self.screen.blit(self.thx_vignette, (0, 0))
 
-        pygame.display.flip()
 
     def render_press_start(self):
         """Attract-mode "Press Start to Play!" képernyő: zöld sugárirányú
@@ -1355,7 +1359,6 @@ class ScoreGUI:
         for surf, offset in self._press_start_cache:
             self._blit_scaled_centered(surf, (center_x, center_y + offset * scale), scale)
 
-        pygame.display.flip()
 
     def render_special_thanks(self, names):
         """Special Thanks képernyő: htr (ThanksBgr.png) -> felfelé görgetett
@@ -1409,7 +1412,6 @@ class ScoreGUI:
 
         self.screen.blit(self.thx_vignette, (0, 0))
 
-        pygame.display.flip()
 
     def _draw_service_line(self, text, y, selected):
         color = (255, 230, 90) if selected else (220, 220, 225)
@@ -1525,5 +1527,3 @@ class ScoreGUI:
 
         hint_surf = self.font_service_hint.render(hint, True, (140, 140, 150))
         self.screen.blit(hint_surf, (30, self.SCREEN_H - 28))
-
-        pygame.display.flip()

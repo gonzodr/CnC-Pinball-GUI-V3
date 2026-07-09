@@ -140,6 +140,9 @@ def main():
             # 5b. Folyamatban levo crossfade rarajzolasa, ha van (no-op, ha nincs)
             gui.draw_fade_overlay()
 
+            # 5c. Kozponti, EGYETLEN flip/frame (a render_* fuggvenyek mar nem flip-elnek)
+            gui.flip_display()
+
             # 6. Frame-utemezes tartasa (ne porgessuk feleslegesen a CPU-t)
             elapsed = time.time() - loop_start
             sleep_time = clock_interval - elapsed
