@@ -27,6 +27,7 @@ class ServiceMenuController:
         ("input_test", "Input / gomb teszt"),
         ("serial_monitor", "Serial Monitor (raw)"),
         ("particle_editor", "Particle szerkeszto"),
+        ("firmware_update", "Firmware update"),
         ("reset_confirm", "OSSZES hiscore torlese"),
         ("version_info", "Verzio info"),
         ("exit", "Kilepes"),
@@ -40,6 +41,10 @@ class ServiceMenuController:
         self.particle_settings = particle_settings  # ParticleSettingsManager (particle_editor kepernyohoz)
 
         self.should_exit = False
+        # main.py figyeli ezt a flaget - ha True, elengedi a kijelzot/soros
+        # portot, elinditja a firmware_update.py-t kulon programkent, es
+        # amikor az visszater, ujra magahoz veszi oket (lasd main.py).
+        self.should_launch_firmware_update = False
         self.screen = "main"
         self.cursor = 0
         self.status_message = ""
@@ -80,6 +85,10 @@ class ServiceMenuController:
             target, _ = self.MAIN_ITEMS[self.cursor]
             if target == "exit":
                 self.should_exit = True
+            elif target == "firmware_update":
+                # Nem valt sub-screen-re - main.py meg ebben a korben eszreveszi
+                # a flaget es atadja a vezerlest a kulon firmware_update.py-nak.
+                self.should_launch_firmware_update = True
             else:
                 self.screen = target
                 self.cursor = 0

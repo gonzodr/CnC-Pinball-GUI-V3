@@ -12,6 +12,8 @@ nelkul tovabb mukodik, a billentyuzet es a soros port egyszerre
 "elhet" egymas mellett.
 """
 
+import os
+import subprocess
 import time
 import sys
 
@@ -26,6 +28,25 @@ from mock_input import MockInputController
 SERIAL_PORT = "/dev/ttyACM0"   # ellenorizd a Pi-n: `ls /dev/ttyACM*` vagy `/dev/ttyUSB*`
 SERIAL_BAUDRATE = 115200
 TARGET_FPS = 30                # 30 FPS bovven eleg egy pontszam-GUI-hoz
+
+FIRMWARE_UPDATE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware_update.py")
+
+
+def run_firmware_update(gui, serial_reader):
+    """A szerviz menu 'Firmware update' pontja hivja: elengedi a DRM
+    kijelzot es a soros portot, majd MEGVARJA a kulon firmware_update.py
+    programot (sajat pygame ablak, git pull + arduino-cli compile/upload),
+    utana ujra magahoz veszi mindkettot es folytatja a GUI-t onnan, ahol
+    abbahagyta - ugyanaz a minta, mint a VIDEO allapotnal az mpv-nek."""
+    print("[main] firmware update inditasa...")
+    gui.release_display()
+    serial_reader.stop()
+    try:
+        subprocess.run([sys.executable, FIRMWARE_UPDATE_SCRIPT])
+    finally:
+        serial_reader.start()
+        gui.acquire_display()
+    print("[main] firmware update vege, GUI folytatva.")
 
 
 def main():
@@ -71,6 +92,10 @@ def main():
                 # (neveket beirni, stb.) anelkul, hogy a W/R/B/P/stb.
                 # tesztgombok veletlenul jatek-akciokat valtananak ki.
                 state.service_menu.handle_pygame_events(pygame_events)
+                if state.service_menu.should_launch_firmware_update:
+                    state.service_menu.should_launch_firmware_update = False
+                    run_firmware_update(gui, serial_reader)
+                    continue  # ez a korulfordulas mar ne probaljon SERVICE_MENU-t rajzolni
             else:
                 if gui.has_quit_key_event(pygame_events):
                     running = False

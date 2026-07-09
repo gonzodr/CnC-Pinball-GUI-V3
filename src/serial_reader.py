@@ -32,6 +32,7 @@ class SerialReader:
         self.raw_log = deque(maxlen=self.RAW_LOG_MAXLEN)
 
     def start(self):
+        self._stop_flag.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
