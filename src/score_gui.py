@@ -922,7 +922,17 @@ class ScoreGUI:
         return pygame.event.get()
 
     def has_quit_event(self, pygame_events) -> bool:
-        return any(e.type == pygame.QUIT for e in pygame_events)
+        """pygame.QUIT esemeny - DE kmsdrm (Pi, eles gep) alatt IGNORALJUK:
+        ott nincs bezarhato ablak, viszont az mpv<->pygame kijelzo-atadas
+        versenyhelyzeteiben az SDL neha hamis QUIT-ot general, amitol a GUI
+        video utan kilepett ("kifagyas"). A kilepes utja a Pi-n: Q billentyu,
+        Ctrl+C vagy systemd stop."""
+        if not any(e.type == pygame.QUIT for e in pygame_events):
+            return False
+        if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm":
+            print("[gui] QUIT esemeny kmsdrm-en - figyelmen kivul hagyva")
+            return False
+        return True
 
     def has_quit_key_event(self, pygame_events) -> bool:
         """Q billentyu - kilepes a progibol a parancssorba. Csak akkor

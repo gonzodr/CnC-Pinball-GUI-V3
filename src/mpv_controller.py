@@ -139,12 +139,46 @@ class MpvController:
     
     def stop(self):
         """Lejátszás leállítása - az mpv lebontja a videokimenetét, és
-        elengedi a DRM kijelzőt (a VIDEO watchdog és a VIDEO_STOP is ezt hívja)."""
+        elengedi a DRM kijelzőt (a VIDEO watchdog és a VIDEO_STOP is ezt hívja).
+        MEGVÁRJA, amíg az mpv ténylegesen idle lesz, különben a pygame még
+        azelőtt venné vissza a kijelzőt, hogy az mpv elengedte volna - ez a
+        versenyhelyzet okozta a videó utáni hamis QUIT-okat/szaggatást."""
         if self.offline:
             self._fake_video_started_at = None
             return
         self._send(["stop"])
         self._playing = False
+        self._wait_idle()
+
+    def _wait_idle(self, timeout_sec=1.0):
+        """Az 'idle-active' property-t pollozza, amig az mpv le nem bontotta
+        a lejatszast (max timeout_sec-ig - ha addig sem, tovabbmegyunk)."""
+        if self.offline or not self._sock:
+            return
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            request = json.dumps({
+                "command": ["get_property", "idle-active"],
+                "request_id": 2
+            }) + "\n"
+            try:
+                self._sock.sendall(request.encode("utf-8"))
+                self._recv_buffer += self._sock.recv(4096).decode("utf-8")
+                while "\n" in self._recv_buffer:
+                    line, self._recv_buffer = self._recv_buffer.split("\n", 1)
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("request_id") == 2 and data.get("data") is True:
+                        return
+            except socket.timeout:
+                pass
+            except OSError:
+                return
+            time.sleep(0.05)
 
     def is_finished(self) -> bool:
         """
@@ -197,8 +231,7 @@ class MpvController:
                 if data.get("request_id") == 1:
                     finished = data.get("data", False) is True
                     if finished:
-                        self._send(["stop"])
-                        self._playing = False
+                        self.stop()  # megvarja az idle-t is -> tiszta kijelzo-atadas
                     return finished
         except socket.timeout:
             pass
