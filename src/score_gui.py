@@ -507,7 +507,7 @@ class ScoreGUI:
         # mielott feladnank, kulonben a video vegi atadasnal osszeomlik.
         fullscreen_flag = pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
         last_error = None
-        for attempt in range(40):  # max ~10 mp: az mpv DRM-elengedese a Pi-n lassu tud lenni
+        for attempt in range(12):  # ~3 mp - ha addig sem megy, a hivo mpv hard resetet csinal
             try:
                 self.screen = pygame.display.set_mode(
                     (self.SCREEN_W, self.SCREEN_H), fullscreen_flag
@@ -515,8 +515,8 @@ class ScoreGUI:
                 break
             except pygame.error as e:
                 last_error = e
-                if attempt % 5 == 0:
-                    print(f"[gui] kijelzo-visszavetel sikertelen ({e}), ujraproba {attempt + 1}/40...")
+                if attempt % 4 == 0:
+                    print(f"[gui] kijelzo-visszavetel sikertelen ({e}), ujraproba {attempt + 1}/12...")
                 pygame.display.quit()
                 time.sleep(0.25)
                 try:

@@ -257,6 +257,30 @@ class MpvController:
                 pass
         return None
 
+    def hard_reset(self):
+        """Vegso mentsvar: az mpv process teljes ujrainditasa. A process
+        halalaval a kernel GARANTALTAN visszaadja a DRM kijelzot - akkor
+        hivjuk, ha az mpv a stop utan sem engedi el a kepernyot."""
+        if self.offline:
+            return
+        print("[mpv] hard reset: mpv process ujrainditasa")
+        if self._sock:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+        if self._proc:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                self._proc.wait()
+            self._proc = None
+        self._playing = False
+        self.start()
+
     def shutdown(self):
         if self.offline:
             return

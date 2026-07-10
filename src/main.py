@@ -155,7 +155,15 @@ def main():
                     mpv.play(state.pending_video)
                     state.pending_video = None
                 elif new_state == AppState.SCORE:
-                    gui.acquire_display()
+                    try:
+                        gui.acquire_display()
+                    except RuntimeError:
+                        # Az mpv nem engedte el a kijelzot (ritka teardown-
+                        # beragadas) - a process ujrainditasa garantaltan
+                        # felszabaditja, utana a visszavetel mar sikerul.
+                        print("[main] a kijelzo nem szabadult fel - mpv hard reset")
+                        mpv.hard_reset()
+                        gui.acquire_display()
                     
             # 5. Rajzolas, ha SCORE allapotban vagyunk
             if state.state == AppState.SCORE:
