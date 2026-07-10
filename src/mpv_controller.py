@@ -54,10 +54,14 @@ class MpvController:
             "--ao=alsa",
         ]
         if is_headless_linux:
+            # SZANDEKOSAN NINCS --drm-mode: a GUI (pygame/SDL) is 640x480-at
+            # allit be, az mpv csak atveszi az aktualis modot. A sajat
+            # modvaltasi kiserlete a pygame utani DRM-allapoton EINVAL
+            # atomic-hibazaporba fulladt (fekete kepernyo, mikozben a
+            # video "lejatszodott") - modvaltas nelkul nincs utkozes.
             args.insert(1, "--vo=gpu")
             args.insert(2, "--gpu-context=drm")
             args.insert(3, "--drm-connector=HDMI-A-1")
-            args.insert(4, "--drm-mode=640x480@60")
         args.append(path)
         return args
 
@@ -79,6 +83,7 @@ class MpvController:
             self._fake_video_started_at = time.time()
             return
         self.stop()  # ha meg futna egy elozo video, eloszor tisztan lezarjuk
+        time.sleep(0.3)  # hagyjuk, hogy a pygame/SDL teljesen elengedje a DRM-et
         path = os.path.join(self.VIDEO_DIR, video_name)
         if not path.endswith(".mp4"):
             path += ".mp4"
