@@ -54,10 +54,23 @@ class StateMachine:
         AppState.SPECIAL_THANKS, AppState.HIGHSCORE, AppState.BEAT_SCORE,
     )
 
-    # A Unity-korszakos video-hozzarendeles ket elcsuszott UFO-parancsa
-    # (reszletek: firmware repo, VIDEO_MAP.md). A tobbi triggernel a
-    # video fajlneve megegyezik a parancs nevevel.
-    VIDEO_NAME_REMAP = {"Ufo6": "Ufofuck", "Ufo7": "Ufo6"}
+    # Firmware-parancs -> tenyleges videofajl nev (a Videos mappa valodi
+    # fajlnevei alapjan, 2026-07-10; reszletek: firmware repo VIDEO_MAP.md).
+    # Ami nincs a tablaban, annal a fajlnev = a parancs neve (pl. Drift,
+    # Weed, Danger, Tilt, Jackpot2..6, ChongC1..3, CheechC1..3, Ufo1..5...).
+    VIDEO_NAME_REMAP = {
+        "Ufo6": "Ufofuck", "Ufo7": "Ufo6",  # Unity-korszakos elcsuszas
+        "Point1": "2500", "Point2": "5000", "Point3": "7500", "Point4": "10000",
+        "Point5": "15000", "Point6": "20000", "Point7": "25000", "Point8": "30000",
+        "Beer1": "BEEEER1", "Beer2": "BEEEER2", "Beer3": "BEEEER3",
+        "Bonus1": "Bonus2", "Bonus2": "Bonus4", "Bonus3": "Bonus6", "Bonus4": "Bonus8",
+        "Combo1": "Combo2500", "Combo2": "Combo5000", "Combo3": "Combo7500",
+        "Combo4": "Combo10000", "Combo5": "Combo15000", "Combo6": "Combo20000",
+        "Jackpot1": "PsyJackpot",
+        "Multiball1": "Michokan", "Multiball2": "Acapulco Gold",
+        "Multiball3": "Thai Stick", "Multiball4": "Labrador",
+        "ExtraB": "Extraball",
+    }
 
     # VIDEO watchdog: ennel tovabb egyetlen video sem tarthat - ha megis
     # (beragadt mpv/IPC), kenyszerrel visszaterunk a SCORE kepernyore.
@@ -144,6 +157,10 @@ class StateMachine:
                 AppState.SUMMARY, AppState.HIGHSCORE, AppState.NAME_ENTRY,
                 AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO,
                 AppState.BEAT_SCORE, AppState.SERVICE_MENU,
+                # VIDEO is vedett: jatek kozben 350 ms-onkent jon score-uzenet,
+                # es e nelkul MINDEN videot azonnal lelott a kovetkezo update
+                # ("sotet villanas, majd vissza a GUI")!
+                AppState.VIDEO,
             ):
                 self.state = AppState.SCORE
                 self._in_attract_loop = False
