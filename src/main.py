@@ -70,6 +70,7 @@ def main():
 
     clock_interval = 1.0 / TARGET_FPS
     running = True
+    exit_code = 0
 
     try:
         while running:
@@ -194,19 +195,20 @@ def main():
         print("[main] Ctrl+C, leallas...")
 
     except Exception:
-        # FONTOS: a finally-beli sys.exit(0) elnyelne a kivetelt, es a
+        # FONTOS: a finally-beli sys.exit elnyelne a kivetelt, es a
         # naploba SEMMI nem kerulne - a GUI "hangtalanul" halt meg igy
         # (ezt vadasztuk orakig a bench-en). Itt kiirjuk, mielott kilepunk.
         import traceback
         print("[main] VARATLAN HIBA - a GUI osszeomlott:")
         traceback.print_exc()
+        exit_code = 1  # nem-nulla -> a systemd (Restart=on-failure) ujrainditja!
 
     finally:
         print("[main] takaritas...")
         serial_reader.stop()
         gui.release_display()
         mpv.shutdown()
-        sys.exit(0)
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

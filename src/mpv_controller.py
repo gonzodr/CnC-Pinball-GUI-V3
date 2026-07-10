@@ -155,7 +155,7 @@ class MpvController:
             return
         self._send(["stop"])
         self._playing = False
-        self._wait_idle()
+        self._wait_idle(timeout_sec=3.0)
 
     def _wait_idle(self, timeout_sec=1.0):
         """Az 'idle-active' property-t pollozza, amig az mpv le nem bontotta
