@@ -137,6 +137,15 @@ class MpvController:
         self._play_started_at = time.time()
 
     
+    def stop(self):
+        """Lejátszás leállítása - az mpv lebontja a videokimenetét, és
+        elengedi a DRM kijelzőt (a VIDEO watchdog és a VIDEO_STOP is ezt hívja)."""
+        if self.offline:
+            self._fake_video_started_at = None
+            return
+        self._send(["stop"])
+        self._playing = False
+
     def is_finished(self) -> bool:
         """
         Lekérdezi, hogy véget ért-e a jelenlegi videó.
@@ -155,6 +164,14 @@ class MpvController:
                 self._fake_video_started_at = None
                 return True
             return False
+
+        if self._proc and self._proc.poll() is not None:
+            # Az mpv process MEGHALT - ne ragadjunk orokre VIDEO allapotban:
+            # a videot "befejezettnek" tekintjuk, es offline (fake) modra
+            # valtunk, hogy a GUI videok nelkul is eletben maradjon.
+            print("[mpv] az mpv process meghalt - offline modra valtas")
+            self.offline = True
+            return True
 
         if not self._sock:
             return False
@@ -183,8 +200,18 @@ class MpvController:
                         self._send(["stop"])
                         self._playing = False
                     return finished
-        except (socket.timeout, OSError):
+        except socket.timeout:
             pass
+        except OSError:
+            # A socket megszakadt (ezt lattuk a naplokban: "Connection reset
+            # by peer") - ha itt csak lenyelnenk, SOHA nem latnank meg az
+            # EOF-ot, es a GUI orokre VIDEO allapotban ragadna ("kifagy a
+            # video utan"). Ujracsatlakozunk, a kovetkezo poll mar mukodik.
+            print("[mpv] IPC socket megszakadt, ujracsatlakozas...")
+            try:
+                self._connect()
+            except OSError:
+                pass
         return False
 
     def shutdown(self):

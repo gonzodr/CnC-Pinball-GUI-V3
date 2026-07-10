@@ -59,6 +59,10 @@ class StateMachine:
     # video fajlneve megegyezik a parancs nevevel.
     VIDEO_NAME_REMAP = {"Ufo6": "Ufofuck", "Ufo7": "Ufo6"}
 
+    # VIDEO watchdog: ennel tovabb egyetlen video sem tarthat - ha megis
+    # (beragadt mpv/IPC), kenyszerrel visszaterunk a SCORE kepernyore.
+    VIDEO_MAX_DURATION_SEC = 45.0
+
     def __init__(self, mpv: MpvController, serial_reader=None):
         self.mpv = mpv
         self.serial_reader = serial_reader  # csak a szerviz menu Serial Monitor kepernyojehez
@@ -67,6 +71,7 @@ class StateMachine:
         self.state = AppState.SCORE
         self._previous_state = AppState.SCORE
         self.pending_video = None
+        self._video_started_at = 0.0  # a VIDEO watchdoghoz
         
         self.players = {1: 0, 2: 0, 3: 0, 4: 0}
         self.current_player = 1
@@ -266,6 +271,7 @@ class StateMachine:
 
             if self.state == AppState.SCORE:
                 self.pending_video = video_name
+                self._video_started_at = time.time()  # a VIDEO watchdoghoz
                 self.state = AppState.VIDEO
 
         elif event.kind == "VIDEO_STOP":
@@ -326,8 +332,15 @@ class StateMachine:
                 self._advance_attract_loop()
             return
 
-        if self.state == AppState.VIDEO and self.mpv.is_finished():
-            self.state = AppState.SCORE
+        if self.state == AppState.VIDEO:
+            # Vedohalo: ha az mpv/IPC barmiert beragad (halott socket,
+            # kijelzo-problema), ne ragadjunk orokre a VIDEO allapotban.
+            timed_out = time.time() - self._video_started_at > self.VIDEO_MAX_DURATION_SEC
+            if timed_out:
+                print("[state] VIDEO watchdog: tul regota fut, kenyszer-stop")
+                self.mpv.stop()
+            if timed_out or self.mpv.is_finished():
+                self.state = AppState.SCORE
             
         elif self.state == AppState.SUMMARY:
             if time.time() >= self._summary_end_time:
