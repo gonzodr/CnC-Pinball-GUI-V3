@@ -193,6 +193,14 @@ def main():
     except KeyboardInterrupt:
         print("[main] Ctrl+C, leallas...")
 
+    except Exception:
+        # FONTOS: a finally-beli sys.exit(0) elnyelne a kivetelt, es a
+        # naploba SEMMI nem kerulne - a GUI "hangtalanul" halt meg igy
+        # (ezt vadasztuk orakig a bench-en). Itt kiirjuk, mielott kilepunk.
+        import traceback
+        print("[main] VARATLAN HIBA - a GUI osszeomlott:")
+        traceback.print_exc()
+
     finally:
         print("[main] takaritas...")
         serial_reader.stop()

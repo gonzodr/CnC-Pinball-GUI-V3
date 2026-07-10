@@ -502,10 +502,25 @@ class ScoreGUI:
             return
 
         pygame.init()
-        self.screen = pygame.display.set_mode(
-            (self.SCREEN_W, self.SCREEN_H),
-            pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
-        )
+        # A kijelzo visszavetele VERSENYEZHET az mpv lebontasaval (DRM
+        # master csak egy lehet) - ezert nehany ujraprobalkozast engedunk,
+        # mielott feladnank, kulonben a video vegi atadasnal osszeomlik.
+        fullscreen_flag = pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
+        last_error = None
+        for attempt in range(15):
+            try:
+                self.screen = pygame.display.set_mode(
+                    (self.SCREEN_W, self.SCREEN_H), fullscreen_flag
+                )
+                break
+            except pygame.error as e:
+                last_error = e
+                print(f"[gui] kijelzo-visszavetel sikertelen ({e}), ujraproba {attempt + 1}/15...")
+                pygame.display.quit()
+                time.sleep(0.2)
+                pygame.display.init()
+        else:
+            raise RuntimeError(f"kijelzo-visszavetel vegleg sikertelen: {last_error}")
         pygame.display.set_caption("Cheech & Chong Pinball - Score")
         # A TENYLEGESEN hasznalt SDL video driver (az env-valtozotol
         # fuggetlenul - a Pi-n az SDL magatol valaszt kmsdrm-et!) -
