@@ -1490,7 +1490,7 @@ class ScoreGUI:
         if controller.screen == "main":
             for i, (_, label) in enumerate(controller.MAIN_ITEMS):
                 self._draw_service_line(label, y + i * line_h, i == controller.cursor)
-            hint = "Fel/Le: navigalas   Enter: kivalaszt   Esc: kilepes"
+            hint = "Fel/Le + Enter vagy F1-F10: kivalaszt   Esc: kilepes"
 
         elif controller.screen == "hiscore_edit":
             for i, entry in enumerate(controller.score_manager.scores):

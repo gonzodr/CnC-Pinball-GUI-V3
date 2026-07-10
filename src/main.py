@@ -22,6 +22,8 @@ from state_machine import StateMachine, AppState
 from mpv_controller import MpvController
 from score_gui import ScoreGUI
 from mock_input import MockInputController
+from protocol import GameEvent
+from service_menu import ServiceMenuController
 
 
 # --- Konfiguracio ---
@@ -74,8 +76,8 @@ def main():
             loop_start = time.time()
 
             # 1. Soros parancsok feldolgozasa (nem blokkol, queue-bol olvas)
-            #for event in serial_reader.poll_events():
-            #    state.handle_event(event)
+            for event in serial_reader.poll_events():
+                state.handle_event(event)
 
             # 2. Video-vege detektalas
             state.tick()
@@ -92,15 +94,28 @@ def main():
                 # (neveket beirni, stb.) anelkul, hogy a W/R/B/P/stb.
                 # tesztgombok veletlenul jatek-akciokat valtananak ki.
                 state.service_menu.handle_pygame_events(pygame_events)
-                if state.service_menu.should_launch_firmware_update:
-                    state.service_menu.should_launch_firmware_update = False
-                    run_firmware_update(gui, serial_reader)
-                    continue  # ez a korulfordulas mar ne probaljon SERVICE_MENU-t rajzolni
             else:
                 if gui.has_quit_key_event(pygame_events):
                     running = False
-                for mock_event in mock_input.poll_events(pygame_events):
-                    state.handle_event(mock_event)
+                # Globalis F-gombok (F1..F10): VAK hasznalatra - barmely
+                # nyugalmi allapotbol egyetlen gombnyomassal megnyitjak a
+                # szerviz menut ES vegrehajtjak a menupontot (pl. F7 =
+                # firmware update, monitor nelkul, powerbankrol a pinceben).
+                fkey = ServiceMenuController.fkey_in_events(pygame_events)
+                if fkey is not None:
+                    state.handle_event(GameEvent("SERVICE_MENU_ENTER", ()))
+                    if state.state == AppState.SERVICE_MENU:
+                        state.service_menu.handle_fkey(fkey)
+                else:
+                    for mock_event in mock_input.poll_events(pygame_events):
+                        state.handle_event(mock_event)
+
+            # A firmware update flaget MINDKET ag (menun beluli Enter/F7 es
+            # a globalis F7) utan ellenorizni kell.
+            if state.state == AppState.SERVICE_MENU and state.service_menu.should_launch_firmware_update:
+                state.service_menu.should_launch_firmware_update = False
+                run_firmware_update(gui, serial_reader)
+                continue  # ez a korulfordulas mar ne probaljon SERVICE_MENU-t rajzolni
 
             # 4. Allapotvaltas kezelese
             transition = state.consume_transition()

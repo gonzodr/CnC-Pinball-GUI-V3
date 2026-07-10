@@ -24,16 +24,25 @@ import arduino_port
 
 class ServiceMenuController:
     MAIN_ITEMS = [
-        ("hiscore_edit", "Hiscore szerkesztes / torles"),
-        ("thanks_edit", "Special Thanks nevek"),
-        ("input_test", "Input / gomb teszt"),
-        ("serial_monitor", "Serial Monitor (raw)"),
-        ("particle_editor", "Particle szerkeszto"),
-        ("find_arduino", "Arduino keresese"),
-        ("firmware_update", "Firmware update"),
-        ("reset_confirm", "OSSZES hiscore torlese"),
-        ("version_info", "Verzio info"),
-        ("exit", "Kilepes"),
+        ("hiscore_edit", "F1 - Hiscore szerkesztes / torles"),
+        ("thanks_edit", "F2 - Special Thanks nevek"),
+        ("input_test", "F3 - Input / gomb teszt"),
+        ("serial_monitor", "F4 - Serial Monitor (raw)"),
+        ("particle_editor", "F5 - Particle szerkeszto"),
+        ("find_arduino", "F6 - Arduino keresese"),
+        ("firmware_update", "F7 - Firmware update"),
+        ("reset_confirm", "F8 - OSSZES hiscore torlese"),
+        ("version_info", "F9 - Verzio info"),
+        ("exit", "F10 - Kilepes"),
+    ]
+
+    # F-billentyu -> fomenu menupont, sorrendben (F1 = elso menupont...).
+    # VAK hasznalatra: monitor nelkul (pl. powerbankos pince-frissiteskor)
+    # eleg egyetlen F-gombot megnyomni - a main.py barmely nyugalmi
+    # allapotbol megnyitja a szerviz menut ES vegrehajtja a menupontot.
+    FKEYS = [
+        pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4, pygame.K_F5,
+        pygame.K_F6, pygame.K_F7, pygame.K_F8, pygame.K_F9, pygame.K_F10,
     ]
 
     def __init__(self, score_manager, thanks_manager, recent_events, serial_reader=None, particle_settings=None):
@@ -70,11 +79,49 @@ class ServiceMenuController:
 
     # --- esemeny feldolgozas ---
 
+    @classmethod
+    def fkey_in_events(cls, pygame_events):
+        """Az elso F1..F10 KEYDOWN a listaban, vagy None (main.py hasznalja
+        a menun KIVULI, globalis F-gomb figyeleshez)."""
+        for event in pygame_events:
+            if event.type == pygame.KEYDOWN and event.key in cls.FKEYS:
+                return event.key
+        return None
+
+    def handle_fkey(self, key):
+        """F-billentyu: kurzor a menupontra + azonnali vegrehajtas.
+        Barmelyik al-kepernyorol is hivjak, a fomenurol indul ujra."""
+        idx = self.FKEYS.index(key)
+        if idx >= len(self.MAIN_ITEMS):
+            return
+        self.screen = "main"
+        self.cursor = idx
+        self._activate_main_item()
+
+    def _activate_main_item(self):
+        """A kurzoron allo fomenu-pont vegrehajtasa (Enter es F-gomb kozos utja)."""
+        target, _ = self.MAIN_ITEMS[self.cursor]
+        if target == "exit":
+            self.should_exit = True
+        elif target == "firmware_update":
+            # Nem valt sub-screen-re - main.py meg ebben a korben eszreveszi
+            # a flaget es atadja a vezerlest a kulon firmware_update.py-nak.
+            self.should_launch_firmware_update = True
+        elif target == "find_arduino":
+            self._handle_find_arduino()
+        else:
+            self.screen = target
+            self.cursor = 0
+
     def handle_pygame_events(self, pygame_events):
         for event in pygame_events:
             if event.type != pygame.KEYDOWN:
                 continue
             self.status_message = ""
+            # F-gombok a menu BARMELY kepernyojerol mukodnek
+            if event.key in self.FKEYS:
+                self.handle_fkey(event.key)
+                continue
             handler = getattr(self, f"_handle_{self.screen}", None)
             if handler:
                 handler(event)
@@ -85,18 +132,7 @@ class ServiceMenuController:
         elif event.key == pygame.K_DOWN:
             self.cursor = (self.cursor + 1) % len(self.MAIN_ITEMS)
         elif event.key == pygame.K_RETURN:
-            target, _ = self.MAIN_ITEMS[self.cursor]
-            if target == "exit":
-                self.should_exit = True
-            elif target == "firmware_update":
-                # Nem valt sub-screen-re - main.py meg ebben a korben eszreveszi
-                # a flaget es atadja a vezerlest a kulon firmware_update.py-nak.
-                self.should_launch_firmware_update = True
-            elif target == "find_arduino":
-                self._handle_find_arduino()
-            else:
-                self.screen = target
-                self.cursor = 0
+            self._activate_main_item()
         elif event.key == pygame.K_ESCAPE:
             self.should_exit = True
 

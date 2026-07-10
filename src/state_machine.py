@@ -54,6 +54,11 @@ class StateMachine:
         AppState.SPECIAL_THANKS, AppState.HIGHSCORE, AppState.BEAT_SCORE,
     )
 
+    # A Unity-korszakos video-hozzarendeles ket elcsuszott UFO-parancsa
+    # (reszletek: firmware repo, VIDEO_MAP.md). A tobbi triggernel a
+    # video fajlneve megegyezik a parancs nevevel.
+    VIDEO_NAME_REMAP = {"Ufo6": "Ufofuck", "Ufo7": "Ufo6"}
+
     def __init__(self, mpv: MpvController, serial_reader=None):
         self.mpv = mpv
         self.serial_reader = serial_reader  # csak a szerviz menu Serial Monitor kepernyojehez
@@ -243,8 +248,24 @@ class StateMachine:
                 self.state = AppState.BEAT_SCORE
 
         elif event.kind == "VIDEO":
+            video_name = event.args[0]
+
+            # Ufo10..13 = az UFO "pontlopas" nyeremenye: a firmware a
+            # KIRABOLT jatekos pontjabol vont le 10000-et, de a score
+            # uzenetben mindig csak az aktualis jatekos pontja jon -
+            # itt szinkronizaljuk a kijelzett pontszamot is (0-nal nem
+            # megy lejjebb, ugyanugy, ahogy a firmware-ben).
+            if video_name in ("Ufo10", "Ufo11", "Ufo12", "Ufo13"):
+                victim = int(video_name[3:]) - 9  # Ufo10 -> 1 ... Ufo13 -> 4
+                self.players[victim] = max(0, self.players[victim] - 10000)
+
+            # A Unity-korszakbol orokolt elcsuszas (lasd a firmware repo
+            # VIDEO_MAP.md-jet): a "Ufo6" trigger a Ufofuck.mp4-et, a
+            # "Ufo7" pedig az Ufo6.mp4-et jelenti - Ufo7.mp4 nem letezik!
+            video_name = self.VIDEO_NAME_REMAP.get(video_name, video_name)
+
             if self.state == AppState.SCORE:
-                self.pending_video = event.args[0]
+                self.pending_video = video_name
                 self.state = AppState.VIDEO
 
         elif event.kind == "VIDEO_STOP":
