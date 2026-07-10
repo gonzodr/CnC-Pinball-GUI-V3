@@ -518,7 +518,10 @@ class ScoreGUI:
                 print(f"[gui] kijelzo-visszavetel sikertelen ({e}), ujraproba {attempt + 1}/15...")
                 pygame.display.quit()
                 time.sleep(0.2)
-                pygame.display.init()
+                try:
+                    pygame.display.init()
+                except pygame.error:
+                    pass  # a kovetkezo korben ujra probaljuk az egeszet
         else:
             raise RuntimeError(f"kijelzo-visszavetel vegleg sikertelen: {last_error}")
         pygame.display.set_caption("Cheech & Chong Pinball - Score")

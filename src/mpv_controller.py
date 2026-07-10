@@ -37,6 +37,12 @@ class MpvController:
         self._recv_buffer = ""
         self._playing = False
         self._play_started_at = None
+        # Csak akkor fogadunk el EOF-ot, ha a lejatszas BIZONYITOTTAN
+        # elindult (time-pos > 0) - fajlbetoltes kozben az eof-reached
+        # meg az elozo/idle allapotot mutathatja (igazat!), amitol a GUI
+        # a video legelejen visszavette a kijelzot es osszeomlott.
+        self._playback_confirmed = False
+        self._request_id = 10
 
     def start(self):
         """Elindítja az mpv-t idle módban, framebuffer/DRM kimenetre.
@@ -134,6 +140,7 @@ class MpvController:
         self._send(["loadfile", path, "replace"])
         self._send(["set_property", "pause", False])
         self._playing = True
+        self._playback_confirmed = False
         self._play_started_at = time.time()
 
     
@@ -157,26 +164,7 @@ class MpvController:
             return
         deadline = time.time() + timeout_sec
         while time.time() < deadline:
-            request = json.dumps({
-                "command": ["get_property", "idle-active"],
-                "request_id": 2
-            }) + "\n"
-            try:
-                self._sock.sendall(request.encode("utf-8"))
-                self._recv_buffer += self._sock.recv(4096).decode("utf-8")
-                while "\n" in self._recv_buffer:
-                    line, self._recv_buffer = self._recv_buffer.split("\n", 1)
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if data.get("request_id") == 2 and data.get("data") is True:
-                        return
-            except socket.timeout:
-                pass
-            except OSError:
+            if self._query_property("idle-active") is True:
                 return
             time.sleep(0.05)
 
@@ -211,41 +199,63 @@ class MpvController:
             return False
         if not self._playing:
             return False
-        if self._play_started_at and (time.time() - self._play_started_at) < 0.3:
+
+        # 1. fazis: megvarjuk, hogy a lejatszas TENYLEGESEN elinduljon.
+        # Fajlbetoltes kozben (~0.5-1 mp a Pi-n) az eof-reached meg a
+        # korabbi/idle allapot "igaz"-at mutathatja!
+        if not self._playback_confirmed:
+            t = self._query_property("time-pos")
+            if isinstance(t, (int, float)) and t > 0:
+                self._playback_confirmed = True
+            elif self._play_started_at and (time.time() - self._play_started_at) > 5.0:
+                # 5 mp alatt sem indult el (pl. hianyzo/serult fajl) - feladjuk
+                print("[mpv] a video nem indult el 5 mp alatt - feladjuk")
+                self.stop()
+                return True
             return False
+
+        # 2. fazis: mar fut a video - most mar hiheto az EOF
+        if self._query_property("eof-reached") is True:
+            self.stop()  # megvarja az idle-t is -> tiszta kijelzo-atadas
+            return True
+        return False
+
+    def _query_property(self, name):
+        """Egy mpv property lekerdezese IPC-n. None, ha nem elerheto.
+        IPC-hiba eseten ujracsatlakozik (a "Connection reset" utan
+        kulonben SOHA nem latnank meg az EOF-ot -> orok VIDEO allapot)."""
+        if self.offline or not self._sock:
+            return None
+        self._request_id += 1
+        req_id = self._request_id
         request = json.dumps({
-            "command": ["get_property", "eof-reached"],
-            "request_id": 1
+            "command": ["get_property", name],
+            "request_id": req_id
         }) + "\n"
         try:
             self._sock.sendall(request.encode("utf-8"))
-            self._recv_buffer += self._sock.recv(4096).decode("utf-8")
-            while "\n" in self._recv_buffer:
-                line, self._recv_buffer = self._recv_buffer.split("\n", 1)
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if data.get("request_id") == 1:
-                    finished = data.get("data", False) is True
-                    if finished:
-                        self.stop()  # megvarja az idle-t is -> tiszta kijelzo-atadas
-                    return finished
+            deadline = time.time() + 0.15
+            while time.time() < deadline:
+                self._recv_buffer += self._sock.recv(4096).decode("utf-8")
+                while "\n" in self._recv_buffer:
+                    line, self._recv_buffer = self._recv_buffer.split("\n", 1)
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("request_id") == req_id:
+                        return data.get("data")
         except socket.timeout:
             pass
         except OSError:
-            # A socket megszakadt (ezt lattuk a naplokban: "Connection reset
-            # by peer") - ha itt csak lenyelnenk, SOHA nem latnank meg az
-            # EOF-ot, es a GUI orokre VIDEO allapotban ragadna ("kifagy a
-            # video utan"). Ujracsatlakozunk, a kovetkezo poll mar mukodik.
             print("[mpv] IPC socket megszakadt, ujracsatlakozas...")
             try:
                 self._connect()
             except OSError:
                 pass
-        return False
+        return None
 
     def shutdown(self):
         if self.offline:
