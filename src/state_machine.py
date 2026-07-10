@@ -180,11 +180,18 @@ class StateMachine:
             self._start_summary()
             
             if event.kind == "GAMEOVER":
-                # 1. Elmentjük a pontot és a játékost a NAME_ENTRY-hez -
-                #    a tényleges mentés csak a névbeírás után történik meg
-                #    (lásd tick() / NAME_ENTRY állapot).
-                self._pending_highscore_check = self.players[self.current_player]
-                self.pending_highscore_player = self.current_player
+                # 1. A GYOZTES (legmagasabb pontszamu) jatekos pontjat merjuk
+                #    a hiscore-tablahoz - NEM az utolsokent befejezo jatekosét!
+                #    (Tobbjatekos modban a game over mindig az utolso jatekos
+                #    utolso golyojanal jon, es korabban az o pontja ment be.)
+                #    A tenyleges mentes csak a nevbeiras utan tortenik meg
+                #    (lasd tick() / NAME_ENTRY allapot).
+                winner = max(
+                    range(1, self.active_player_count + 1),
+                    key=lambda p: self.players.get(p, 0),
+                )
+                self._pending_highscore_check = self.players[winner]
+                self.pending_highscore_player = winner
                 self._pending_game_over = True
 
                 # 1b. Pillanatkep mindenki vegso allasarol a FINAL_SCORES

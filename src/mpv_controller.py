@@ -65,6 +65,12 @@ class MpvController:
             args.insert(1, "--vo=gpu")
             args.insert(2, "--gpu-context=drm")
             args.insert(3, "--drm-connector=HDMI-A-1")
+            # A shader-forditas a Pi3-on masodperceket eszik MINDEN mpv
+            # inditasnal (ettol "veszett el" a videok eleje) - a cache-dir
+            # a masodik lejatszastol megszunteti.
+            shader_cache = os.path.expanduser("~/.cache/mpv-shaders")
+            os.makedirs(shader_cache, exist_ok=True)
+            args.insert(4, "--gpu-shader-cache-dir=" + shader_cache)
         args.append(path)
         return args
 
