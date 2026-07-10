@@ -44,7 +44,10 @@ class MpvController:
 
         args = [
             "mpv",
-            "--hwdec=v4l2m2m",  # benchmark (Pi3B+, 640x480 h264): vo=gpu + v4l2m2m ~ valos ideju
+            "--hwdec=no",  # szoftveres dekodolas: a hwdec drm_prime HW-overlay
+                           # sikja a pygame utani DRM-allapoton EINVAL-t kap
+                           # (fekete kep); swdec = sima GL-render, es a merese
+                           # ugyanolyan gyors volt (5.5s vs 5.1s / 90 frame)
             "--fullscreen",
             "--no-osc",
             "--no-input-default-bindings",
