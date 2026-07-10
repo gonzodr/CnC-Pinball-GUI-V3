@@ -71,7 +71,7 @@ class MpvController:
 
         mpv_args = [
             "mpv",
-            "--hwdec=v4l2m2m-copy",  # a sima v4l2m2m drm_prime->HW-download lassu utvonalra esett (1 fps!)
+            "--hwdec=v4l2m2m",  # vo=gpu melle zero-copy - benchmark (Pi3B+): 90 frame 5.1s (~realtime)
             "--idle=yes",
             "--fullscreen",
             "--no-osc",
@@ -87,9 +87,15 @@ class MpvController:
             "--ao=alsa",
             ]
         if is_headless_linux:
-            mpv_args.insert(2, "--vo=drm")
-            mpv_args.insert(3, "--drm-connector=HDMI-A-1")
-            mpv_args.insert(4, "--drm-mode=640x480@60")
+            # vo=gpu a drm kontexttel: GPU-s render/skalazas. Benchmark a
+            # Pi3B+-on (90 frame, 640x480 h264): vo=drm+swdec 6.7s,
+            # vo=drm+v4l2m2m-copy 11s (!), vo=gpu+v4l2m2m 5.1s <- EZ.
+            # (A regi "vo=gpu rendszerfagyas" a regi OS-en volt; a trixie
+            # teljes KMS-en stabil - lemertuk.)
+            mpv_args.insert(2, "--vo=gpu")
+            mpv_args.insert(3, "--gpu-context=drm")
+            mpv_args.insert(4, "--drm-connector=HDMI-A-1")
+            mpv_args.insert(5, "--drm-mode=640x480@60")
 
         try:
             self._proc = subprocess.Popen(mpv_args)
