@@ -71,7 +71,7 @@ class MpvController:
 
         mpv_args = [
             "mpv",
-            "--hwdec=v4l2m2m",
+            "--hwdec=v4l2m2m-copy",  # a sima v4l2m2m drm_prime->HW-download lassu utvonalra esett (1 fps!)
             "--idle=yes",
             "--fullscreen",
             "--no-osc",
