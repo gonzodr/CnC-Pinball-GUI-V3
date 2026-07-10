@@ -49,7 +49,9 @@ def parse_line(line: str) -> Optional[GameEvent]:
         else:
             # Ha az Arduino csak egyetlen szót küldött (pl. "Drift", "Point1", "Jackpot2"),
             # és az nem a fenti parancsok egyike, akkor az egy VIDEÓ / EFFEKT trigger!
-            if len(parts) == 1:
+            # KIVÉVE az ismert nem-videó üzeneteket (a "Zero" a játékindítás jelzése,
+            # sosem volt hozzá videófájl).
+            if len(parts) == 1 and cmd not in ("ZERO",):
                 return GameEvent("VIDEO", (parts[0],))
 
     except (ValueError, IndexError):
