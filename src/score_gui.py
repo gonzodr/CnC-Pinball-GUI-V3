@@ -507,6 +507,10 @@ class ScoreGUI:
             pygame.FULLSCREEN if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm" else 0
         )
         pygame.display.set_caption("Cheech & Chong Pinball - Score")
+        # A TENYLEGESEN hasznalt SDL video driver (az env-valtozotol
+        # fuggetlenul - a Pi-n az SDL magatol valaszt kmsdrm-et!) -
+        # a has_quit_event() hasznalja a hamis QUIT-ok kiszuresehez.
+        self._video_driver = pygame.display.get_driver().lower()
 
         modak_font_path = os.path.join(ASSETS_DIR, "Modak.ttf")
 
@@ -929,7 +933,7 @@ class ScoreGUI:
         Ctrl+C vagy systemd stop."""
         if not any(e.type == pygame.QUIT for e in pygame_events):
             return False
-        if os.environ.get("SDL_VIDEODRIVER") == "kmsdrm":
+        if getattr(self, "_video_driver", "") == "kmsdrm":
             print("[gui] QUIT esemeny kmsdrm-en - figyelmen kivul hagyva")
             return False
         return True
