@@ -134,3 +134,26 @@ nem használt), `bg640.png`, `arrow.png`
   lanc tesztelheto (a firmware repo f_sim_mode.ino-ja egy teljes demojatekot jatszik).
 - A firmware oldal teljes tortenete a firmware repoban es a Claude memoriajaban van
   (V4 = a gepben futott "fullos" fw + az osszes stabilitasi javitas egyesitve).
+
+## 2026-07-10 (este): a "szaggat es kifagy a video utan" saga - MEGOLDVA
+
+Tunet: a bench-en (Pi + SIM-demos Mega) a GUI video utan kilepett/lefagyott.
+A nyomozas soran talalt es javitott retegek (mind commitolva):
+1. **finally: sys.exit(0) elnyelte a kiveteleket** -> a crash "tiszta kilepesnek"
+   latszott, a naploban semmi. Most: traceback a naploba + exit 1 -> a systemd
+   Restart=on-failure ujrainditja (kiosk-szintu ongyogyitas).
+2. **eof-reached hamis igaz fajlbetoltes kozben** -> a GUI a video legelejen
+   visszavette a kijelzot, mikozben az mpv eppen elfoglalta -> "kmsdrm not
+   available" crash. Most: az EOF-ot csak time-pos > 0 utan hisszuk el
+   (_playback_confirmed), 5 mp nem-indulas = feladas (hianyzo fajl eset).
+3. **IPC "Connection reset" utan nem volt ujracsatlakozas** -> orok VIDEO
+   allapot. Most: _query_property() ujracsatlakozik; + VIDEO watchdog (45 mp).
+4. **mpv teardown-beragadas**: stop utan az mpv neha masodpercekig (neha
+   orokre) fogta a DRM kijelzot. Retegek: stop() megvarja az idle-t (3 mp),
+   a kijelzo-visszavetel 12x ujraprobal (3 mp), ha az sem megy -> **mpv hard
+   reset** (process kill+restart = a kernel garantaltan visszaadja a kijelzot).
+5. pygame.QUIT kmsdrm alatt ignoralva (nincs bezarhato ablak; kilepes: Q).
+6. PYTHONUNBUFFERED=1 drop-in a systemd unitban -> ELO naplo a journalban.
+Vegallapot a bench-en: a GUI egyetlen processzkent tuleli a video-ciklusokat;
+rossz esetben ~3-4 mp fekete a video utan (hard reset), majd megy tovabb.
+A gepbeli (640x480) kijelzon az atadas varhatoan gyorsabb/stabilabb.
