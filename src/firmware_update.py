@@ -91,9 +91,9 @@ class Worker:
         self.log("")
         self.log("Git pull...", WARN_COLOR)
         if self.run_cmd(["git", "pull"], cwd=FIRMWARE_DIR) != 0:
-            self.log("Git pull sikertelen!", ERR_COLOR)
-            self._finish(False)
-            return
+            # NEM vegzetes: a pinceben (halozat nelkul) a mar lehuzott,
+            # helyi verziot forditjuk es toltjuk fel!
+            self.log("Git pull sikertelen (nincs halozat?) - a HELYI verzio megy!", WARN_COLOR)
 
         self.log("")
         self.log("Forditas...", WARN_COLOR)
