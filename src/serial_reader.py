@@ -58,10 +58,26 @@ class SerialReader:
             try:
                 with serial.Serial(active_port, self.baudrate, timeout=1) as ser:
                     print(f"[serial] csatlakozva: {active_port}")
+                    fast_empty = 0
                     while not self._stop_flag.is_set():
+                        t0 = time.monotonic()
                         raw = ser.readline()
                         if not raw:
+                            # Ures olvasas: normal esetben a timeout (~1s) utan
+                            # jon. Ha viszont AZONNAL ures, a device ujra-
+                            # enumeralodott (pl. Arduino reset/ujrachatlakozas)
+                            # es a regi fd HALOTT - orokre nema maradna,
+                            # kivetel nelkul! Ilyenkor ujracsatlakozunk.
+                            if time.monotonic() - t0 < 0.05:
+                                fast_empty += 1
+                                if fast_empty > 20:
+                                    raise serial.SerialException(
+                                        "halott fd (azonnali ures olvasasok) - ujracsatlakozas"
+                                    )
+                            else:
+                                fast_empty = 0
                             continue  # timeout, nincs adat
+                        fast_empty = 0
                         try:
                             line = raw.decode("utf-8", errors="replace")
                         except Exception:
@@ -70,8 +86,10 @@ class SerialReader:
                         event = parse_line(line)
                         if event:
                             self.event_queue.put(event)
-            except serial.SerialException as e:
-                # Teensy kihúzva / USB hiba — várunk és próbálkozunk újra
+            except (serial.SerialException, OSError) as e:
+                # Arduino kihuzva / reset / USB hiba - varunk es ujraprobalkozunk.
+                # (OSError is: a pyserial nehany hibaútja nyers OSError-t dob,
+                # ami korabban csendben megolte ezt a szalat.)
                 print(f"[serial] hiba: {e}, ujracsatlakozas 2s mulva")
                 self.raw_log.append((time.time(), f"[HIBA] {e}"))
                 self._stop_flag.wait(2)
