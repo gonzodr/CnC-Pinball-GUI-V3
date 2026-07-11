@@ -787,6 +787,24 @@ class ScoreGUI:
         pygame.display.quit()
         pygame.quit()
         self.active = False
+        self._blank_console_fb()
+
+    def _blank_console_fb(self):
+        """A konzol-framebuffer feketere torlese: a pygame elengedese utan
+        a kernel-konzol veszi at a kepet, es amit utoljara rarajzoltak
+        (pl. a boot-splash kepe!), az villanna be a video elott. Csak
+        Linuxon ertelmes; barmilyen hiba eseten csendben tovabbmegyunk."""
+        if not sys.platform.startswith("linux"):
+            return
+        try:
+            with open("/dev/fb0", "wb") as fb:
+                # 640x480 @ 32bpp = ~1.2 MB; irunk bloventobbet, az ENOSPC
+                # jelzi a vegat - pont ezt akarjuk (teljesen feketere irva)
+                chunk = b"\x00" * 65536
+                for _ in range(64):
+                    fb.write(chunk)
+        except OSError:
+            pass
 
     def _build_card_surface(self, player_num, state):
         card_texture_scaled = pygame.transform.smoothscale(

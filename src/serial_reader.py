@@ -31,6 +31,7 @@ class SerialReader:
         # append/iterate szalak kozott a GIL miatt biztonsagos ebben az
         # egyszeru, egy-irou/egy-olvaso esetben.
         self.raw_log = deque(maxlen=self.RAW_LOG_MAXLEN)
+        self._ser = None  # az elo kapcsolat (send_raw hasznalja; a szal kezeli)
 
     def start(self):
         self._stop_flag.clear()
@@ -58,6 +59,7 @@ class SerialReader:
             try:
                 with serial.Serial(active_port, self.baudrate, timeout=1) as ser:
                     print(f"[serial] csatlakozva: {active_port}")
+                    self._ser = ser
                     fast_empty = 0
                     while not self._stop_flag.is_set():
                         t0 = time.monotonic()
@@ -93,6 +95,26 @@ class SerialReader:
                 print(f"[serial] hiba: {e}, ujracsatlakozas 2s mulva")
                 self.raw_log.append((time.time(), f"[HIBA] {e}"))
                 self._stop_flag.wait(2)
+            finally:
+                self._ser = None
+
+    def send_raw(self, text: str) -> bool:
+        """Nyers szoveg kuldese az Arduinonak (pl. "Exit1" a nevbevitel
+        vegen). SZANDEKOSAN nincs sorvege-jel: a firmware Serial.readString()-je
+        a teljes stringet hasonlitja ("Exit1\\n" nem egyezne!)."""
+        ser = self._ser
+        if ser is None:
+            print(f"[serial] send_raw('{text}') kihagyva - nincs elo kapcsolat")
+            return False
+        try:
+            ser.write(text.encode("utf-8"))
+            ser.flush()
+            print(f"[serial] kuldve: {text}")
+            self.raw_log.append((time.time(), f"[KULDVE] {text}"))
+            return True
+        except (serial.SerialException, OSError) as e:
+            print(f"[serial] send_raw hiba: {e}")
+            return False
 
     def poll_events(self):
         """Nem-blokkoló: visszaadja az összes várakozó eventet."""

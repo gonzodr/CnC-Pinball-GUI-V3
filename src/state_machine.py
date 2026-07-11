@@ -303,6 +303,14 @@ class StateMachine:
                 self.mpv.stop()
                 self.state = AppState.SCORE
 
+    def _send_exit_to_firmware(self, variant: str):
+        """A jatekveg-folyam legvegen szolunk a firmware-nek, hogy vege -
+        az Arduino erre az A13-as vonalon ujrainditja magat, es friss
+        attract modban var. E nelkul a gep ORORKRE a hiscore-modban
+        (intmon == 2) ragadna minden jatek utan!"""
+        if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
+            self.serial_reader.send_raw(variant)
+
     def _start_summary(self):
         self._summary_end_time = time.time() + self.SUMMARY_DURATION_SEC
         self.state = AppState.SUMMARY
@@ -323,6 +331,7 @@ class StateMachine:
                 # NAME_ENTRY/HIGHSCORE kiterulo, vissza az attract-loopba
                 # (Press Play-tol, nem a Logotol), nem a SCORE kepernyore.
                 self._pending_game_over = False
+                self._send_exit_to_firmware("Exit")  # rekord nelkuli valtozat
                 self._enter_attract_loop(self.ATTRACT_INDEX_AFTER_GAMEOVER)
             else:
                 # Ez csak egy NEXT (labdavaltas) volt, a jatek folytatodik
@@ -394,6 +403,7 @@ class StateMachine:
                 # attract-loopba (Press Play-tol, nem Logotol, nem SCORE-ba),
                 # amig ujra Start nem jon.
                 self._pending_game_over = False
+                self._send_exit_to_firmware("Exit1")  # volt rekord -> hangos valtozat
                 self._enter_attract_loop(self.ATTRACT_INDEX_AFTER_GAMEOVER)
 
         elif self.state == AppState.SERVICE_MENU:
