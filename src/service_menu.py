@@ -14,12 +14,17 @@ Kepernyok (self.screen):
 """
 
 import os
+import re
 import subprocess
 import sys
 
 import pygame
 
 import arduino_port
+
+# A firmware effekt-tablaja innen olvasva (id + nev) - a Pi-n itt van a
+# firmware repo, ebbol flashel az F7 is, tehat ez az igazsag forrasa.
+LIGHT_EFFECTS_HEADER = os.path.expanduser("~/CnC_firmware4/effect_data.h")
 
 
 class ServiceMenuController:
@@ -33,7 +38,9 @@ class ServiceMenuController:
         ("firmware_update", "F7 - Firmware update"),
         ("reset_confirm", "F8 - OSSZES hiscore torlese"),
         ("version_info", "F9 - Verzio info"),
-        ("exit", "F10 - Kilepes"),
+        ("light_editor", "F10 - Light editor (fenyeffekt szerkeszto)"),
+        ("light_test", "F11 - Light test (fenyeffekt teszt)"),
+        ("exit", "F12 - Kilepes"),
     ]
 
     # F-billentyu -> fomenu menupont, sorrendben (F1 = elso menupont...).
@@ -43,6 +50,7 @@ class ServiceMenuController:
     FKEYS = [
         pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4, pygame.K_F5,
         pygame.K_F6, pygame.K_F7, pygame.K_F8, pygame.K_F9, pygame.K_F10,
+        pygame.K_F11, pygame.K_F12,
     ]
 
     def __init__(self, score_manager, thanks_manager, recent_events, serial_reader=None, particle_settings=None):
@@ -57,12 +65,19 @@ class ServiceMenuController:
         # portot, elinditja a firmware_update.py-t kulon programkent, es
         # amikor az visszater, ujra magahoz veszi oket (lasd main.py).
         self.should_launch_firmware_update = False
+        # Ugyanaz a minta, mint a firmware update-nel: main.py figyeli, es
+        # ha True, elengedi a kijelzot/soros portot, elinditja a kulon
+        # CnC Light Editor pygame-appot, majd visszaveszi oket.
+        self.should_launch_light_editor = False
         self.screen = "main"
         self.cursor = 0
         self.status_message = ""
 
         self._text_input_buffer = ""
         self._pending_delete_index = None
+
+        # Light test kepernyo: (id, nev) parok az effect_data.h-bol.
+        self.light_effects = []
 
     def reset(self):
         """Minden belepeskor (Ctrl+M) a fomenurol indulunk ujra."""
@@ -94,6 +109,9 @@ class ServiceMenuController:
         idx = self.FKEYS.index(key)
         if idx >= len(self.MAIN_ITEMS):
             return
+        # Ha a light-test kepernyorol lepunk ki egy F-gombbal, allitsuk le
+        # a firmware loopjat (kulonben a gepen tovabb menne az effekt).
+        self._leave_light_test_if_needed()
         self.screen = "main"
         self.cursor = idx
         self._activate_main_item()
@@ -107,8 +125,14 @@ class ServiceMenuController:
             # Nem valt sub-screen-re - main.py meg ebben a korben eszreveszi
             # a flaget es atadja a vezerlest a kulon firmware_update.py-nak.
             self.should_launch_firmware_update = True
+        elif target == "light_editor":
+            # Ugyanaz a mechanizmus, mint a firmware update-nel: main.py
+            # inditja el a kulon szerkeszto-appot es adja vissza a kijelzot.
+            self.should_launch_light_editor = True
         elif target == "find_arduino":
             self._handle_find_arduino()
+        elif target == "light_test":
+            self._enter_light_test()
         else:
             self.screen = target
             self.cursor = 0
@@ -224,6 +248,63 @@ class ServiceMenuController:
             self.status_message = "Alaperelmezesek visszaallitva!"
         elif event.key == pygame.K_ESCAPE:
             self._go_main()
+
+    # --- Light test (fenyeffekt teszt a gepen, soros LT parancsokkal) ---
+
+    def _load_effect_list(self):
+        """(id, nev) parok az effect_data.h bakedEffects tablajabol.
+        A 'fx_' adat-pointer teszi egyertelmuve, hogy tabla-sort matchelunk
+        (nem a struct-definiciot vagy kommentet)."""
+        effects = []
+        try:
+            with open(LIGHT_EFFECTS_HEADER, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            for m in re.finditer(r'\{\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*fx_', text):
+                effects.append((int(m.group(1)), m.group(2)))
+        except OSError:
+            pass
+        return effects
+
+    def _send_light_test(self, effect_id):
+        """LT,<id> + sorvege - a firmware nem-blokkolo olvasoja \\n-ig gyujt."""
+        if self.serial_reader is not None:
+            self.serial_reader.send_raw(f"LT,{effect_id}\n")
+
+    def _send_light_stop(self):
+        if self.serial_reader is not None:
+            self.serial_reader.send_raw("LT,S\n")
+
+    def _enter_light_test(self):
+        self.light_effects = self._load_effect_list()
+        self.screen = "light_test"
+        self.cursor = 0
+        if self.light_effects:
+            self._send_light_test(self.light_effects[0][0])
+            eid, name = self.light_effects[0]
+            self.status_message = f"Jatszik: {name} (ID {eid})"
+        else:
+            self.status_message = "Nincs effekt (effect_data.h nem talalhato/ures)"
+
+    def _leave_light_test_if_needed(self):
+        """Ha a light-test kepernyon vagyunk, allitsuk le a firmware loopjat."""
+        if self.screen == "light_test":
+            self._send_light_stop()
+
+    def _handle_light_test(self, event):
+        count = len(self.light_effects)
+        if event.key == pygame.K_ESCAPE:
+            self._send_light_stop()
+            self._go_main()
+        elif count:
+            if event.key in (pygame.K_LEFT, pygame.K_UP):
+                self.cursor = (self.cursor - 1) % count
+            elif event.key in (pygame.K_RIGHT, pygame.K_DOWN):
+                self.cursor = (self.cursor + 1) % count
+            else:
+                return
+            eid, name = self.light_effects[self.cursor]
+            self._send_light_test(eid)
+            self.status_message = f"Jatszik: {name} (ID {eid})"
 
     def _handle_reset_confirm(self, event):
         if event.key in (pygame.K_y, pygame.K_RETURN):

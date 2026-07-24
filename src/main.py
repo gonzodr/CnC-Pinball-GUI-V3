@@ -33,6 +33,12 @@ TARGET_FPS = 30                # 30 FPS bovven eleg egy pontszam-GUI-hoz
 
 FIRMWARE_UPDATE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware_update.py")
 
+# A kulon repoban elo CnC Light Editor (fenyeffekt szerkeszto). A GUI venv
+# pygame-ce-jevel fut, a csomagot a PYTHONPATH=<repo>/src teszi elerhetove,
+# igy nem kell kulon telepiteni. A ~ a szolgaltatas HOME-jara oldodik fel.
+LIGHT_EDITOR_DIR = os.path.expanduser("~/CnC-Light-Editor")
+LIGHT_EDITOR_SCRIPT = os.path.join(LIGHT_EDITOR_DIR, "main.py")
+
 
 def run_firmware_update(gui, serial_reader):
     """A szerviz menu 'Firmware update' pontja hivja: elengedi a DRM
@@ -49,6 +55,39 @@ def run_firmware_update(gui, serial_reader):
         serial_reader.start()
         gui.acquire_display()
     print("[main] firmware update vege, GUI folytatva.")
+
+
+def run_light_editor(gui, serial_reader):
+    """A szerviz menu 'Light editor' pontja hivja: ugyanaz a minta, mint a
+    firmware update-nel - elengedi a DRM kijelzot es a soros portot, majd
+    MEGVARJA a kulon CnC Light Editor pygame-appot (sajat ablak), utana
+    ujra magahoz veszi mindkettot es folytatja a GUI-t.
+
+    A szerkesztot a GUI venv Python-javal es pygame-ce-jevel inditjuk; a
+    csomagot a PYTHONPATH=<repo>/src teszi importalhatova (nincs kulon
+    telepites). A cwd a repo gyokere, mert az app oda ment/onnan olvas
+    (projects/, exports/)."""
+    if not os.path.isfile(LIGHT_EDITOR_SCRIPT):
+        print(f"[main] Light editor nem talalhato: {LIGHT_EDITOR_SCRIPT}")
+        return
+    print("[main] light editor inditasa...")
+    gui.release_display()
+    serial_reader.stop()
+    try:
+        env = dict(os.environ)
+        src_dir = os.path.join(LIGHT_EDITOR_DIR, "src")
+        env["PYTHONPATH"] = src_dir + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        # --fullscreen: a szerkeszto sajat Pi-fullscreen utja (KMSDRM), hogy
+        # atvegye a kijelzot ugyanugy, mint a GUI. A felbontas a
+        # CNC_LIGHT_EDITOR_RESOLUTION kornyezeti valtozoval hangolhato.
+        subprocess.run(
+            [sys.executable, LIGHT_EDITOR_SCRIPT, "--fullscreen"],
+            cwd=LIGHT_EDITOR_DIR, env=env,
+        )
+    finally:
+        serial_reader.start()
+        gui.acquire_display()
+    print("[main] light editor vege, GUI folytatva.")
 
 
 def main():
@@ -116,6 +155,11 @@ def main():
             if state.state == AppState.SERVICE_MENU and state.service_menu.should_launch_firmware_update:
                 state.service_menu.should_launch_firmware_update = False
                 run_firmware_update(gui, serial_reader)
+                continue  # ez a korulfordulas mar ne probaljon SERVICE_MENU-t rajzolni
+
+            if state.state == AppState.SERVICE_MENU and state.service_menu.should_launch_light_editor:
+                state.service_menu.should_launch_light_editor = False
+                run_light_editor(gui, serial_reader)
                 continue  # ez a korulfordulas mar ne probaljon SERVICE_MENU-t rajzolni
 
             # 4. Allapotvaltas kezelese

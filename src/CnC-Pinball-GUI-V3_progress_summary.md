@@ -157,3 +157,26 @@ A nyomozas soran talalt es javitott retegek (mind commitolva):
 Vegallapot a bench-en: a GUI egyetlen processzkent tuleli a video-ciklusokat;
 rossz esetben ~3-4 mp fekete a video utan (hard reset), majd megy tovabb.
 A gepbeli (640x480) kijelzon az atadas varhatoan gyorsabb/stabilabb.
+
+## 2026-07-22: CnC Light Editor a szervizmenubol inditva
+
+A kulon repoban elo **CnC Light Editor** (Codex-fele pygame fenyeffekt-szerkeszto,
+`gonzodr/CnC-Light-Editor`) beemelve a kabinetbe:
+- A Pi-n `~/CnC-Light-Editor`-ba klonozva. NEM kell kulon telepites/venv: a GUI
+  sajat venv-je (pygame-ce 2.5.7) futtatja, a csomagot `PYTHONPATH=<repo>/src`
+  teszi importalhatova. Igazolva: import OK + `main.py --smoke-test` exit 0.
+- **Szervizmenu: uj `F10 - Light editor` pont** (a Kilepes emiatt F10 -> **F11**).
+  Ugyanaz a launch-minta, mint a firmware update-nel: `service_menu` egy
+  `should_launch_light_editor` flaget allit, a `main.py` figyeli, elengedi a DRM
+  kijelzot + soros portot (`run_light_editor()`), elinditja a szerkesztot
+  `--fullscreen`-nel (KMSDRM), majd visszaveszi oket. Uj F11 a FKEYS-ben.
+- **FONTOS UX-korlat**: a szerkeszto 1280x1024-re van tervezve, a kabinet kijelzo
+  640x480. Ervi szerkeszteshez kulso monitor+eger+billentyuzet kell a Pi-re; a
+  640x480 panelen a modevaltas elbukhat vagy hasznalhatatlanul zsufolt. Felbontas
+  a `CNC_LIGHT_EDITOR_RESOLUTION` env-vel hangolhato.
+- Export: a szerkeszto a sajat repojaba ir (`exports/effect_data.h`), onnan kell a
+  firmware-be masolni (mint eddig). A firmware oldali formatum stabil, sentinel
+  = magenta (255,0,255) = atlatszo overlaynel.
+Kovetkezo: a szerkeszto LED-terkepe (led_map.json) a firmware LEDMAP.md-hez
+kalibralando; effekt-trigger bekotesek (PlayOverlay/effectID) az uj esemenylista
+utan.
