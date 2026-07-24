@@ -344,10 +344,15 @@ class ScoreGUI:
     FINAL_SCORES_VALUE_OFFSET_Y = 42
     FINAL_SCORES_WINNER_COLOR = (255, 215, 0)
     FINAL_SCORES_LEAF_OFFSET_Y = 46  # a level-ikon a "PLAYER N" felirat FOLOTT, ennyivel feljebb (oldalra nem fer el a 2 oszlop kozott)
-    # Fust-animacio a FINAL_SCORES kepernyon: az assets/Smoke mappa 59 db
-    # 103x181-es PNG-je, ~2 mp-es loop. A pozicio a kep BAL-FELSO sarka
-    # (sima blit-koordinata), nem a kozeppontja.
-    SMOKE_POS = (54, 202)
+    # Fust-animaciok a FINAL_SCORES kepernyon: (mappanev, pozicio) parok,
+    # mindegyik 59 db 103x181-es PNG, ~2 mp-es loop.
+    # FIGYELEM a poziciora: az After Effects a rteg KOZEPPONTJAT adja meg,
+    # a pygame blit viszont a BAL-FELSO sarkot varja. Atvaltas:
+    # blit_x = AE_x - szelesseg/2, blit_y = AE_y - magassag/2.
+    SMOKE_LAYERS = [
+        ("Smoke", (54, 202)),    # AE (105, 292) - bal oldal, Cheech felett
+        ("Smoke2", (481, 196)),  # AE (532, 286) - jobb oldal, Chong felett
+    ]
     SMOKE_FPS = 30
     # A gyoztes pulzalasa - ugyanaz a keplet/idozites, mint a PRESS_START kepernyon
     FINAL_SCORES_WINNER_PULSE_PERIOD_SEC = 1.0
@@ -680,20 +685,26 @@ class ScoreGUI:
         final_frame_path = os.path.join(ASSETS_DIR, "multiplay_sum_frame.png")
         self.final_scores_frame = pygame.image.load(final_frame_path).convert_alpha()
 
-        # Fust-animacio frame-jei (Smoke/ mappa, 59 db 103x181 PNG, ~4 MB
-        # RAM RGBA-ban). A fajlnevek 5 jegyre nullazottak, ezert a sima
-        # sorted() a helyes sorrendet adja. convert_alpha() csak itt, a
-        # betolteskor - futas kozben mar csak egy sima blit megy a
-        # kepernyore (nincs skalazas es nincs SRCALPHA-ra kompozitalas,
-        # lasd az ARM Bus Error-t a render_special_thanks kommentjeben).
-        smoke_dir = os.path.join(ASSETS_DIR, "Smoke")
-        self.smoke_frames = []
-        if os.path.isdir(smoke_dir):
-            for fn in sorted(os.listdir(smoke_dir)):
-                if fn.lower().endswith(".png"):
-                    self.smoke_frames.append(
-                        pygame.image.load(os.path.join(smoke_dir, fn)).convert_alpha()
-                    )
+        # Fust-animaciok frame-jei (lasd SMOKE_LAYERS; mappankent 59 db
+        # 103x181 PNG, ~4 MB RAM RGBA-ban). A fajlnevek 5 jegyre
+        # nullazottak, ezert a sima sorted() a helyes sorrendet adja.
+        # convert_alpha() csak itt, a betolteskor - futas kozben mar csak
+        # egy sima blit megy a kepernyore (nincs skalazas es nincs
+        # SRCALPHA-ra kompozitalas, lasd az ARM Bus Error-t a
+        # render_special_thanks kommentjeben).
+        # Eredmeny: (frame-lista, pozicio) parok listaja.
+        self.smoke_layers = []
+        for dir_name, pos in self.SMOKE_LAYERS:
+            smoke_dir = os.path.join(ASSETS_DIR, dir_name)
+            if not os.path.isdir(smoke_dir):
+                continue
+            frames = [
+                pygame.image.load(os.path.join(smoke_dir, fn)).convert_alpha()
+                for fn in sorted(os.listdir(smoke_dir))
+                if fn.lower().endswith(".png")
+            ]
+            if frames:
+                self.smoke_layers.append((frames, pos))
 
         # --- LOGO assetek ---
         logo_path = os.path.join(ASSETS_DIR, "introscr.png")
@@ -1146,12 +1157,13 @@ class ScoreGUI:
         # 1. BG reteg
         self.screen.blit(self.final_scores_bg, (0, 0))
 
-        # 2. Fust-animacio - kozvetlenul a hatter utan, minden mas reteg
+        # 2. Fust-animaciok - kozvetlenul a hatter utan, minden mas reteg
         # ALATT. Idoalapu frame-valasztas (nem hivas-szamlalo), hogy egy
         # esetleges FPS-ingadozas ne gyorsitsa/lassitsa a loopot.
-        if self.smoke_frames:
-            smoke_idx = int((now - self.final_scores_start) * self.SMOKE_FPS) % len(self.smoke_frames)
-            self.screen.blit(self.smoke_frames[smoke_idx], self.SMOKE_POS)
+        smoke_elapsed = now - self.final_scores_start
+        for smoke_frames, smoke_pos in self.smoke_layers:
+            smoke_idx = int(smoke_elapsed * self.SMOKE_FPS) % len(smoke_frames)
+            self.screen.blit(smoke_frames[smoke_idx], smoke_pos)
 
         # 3. Kiirasok (jatekosok pontszamai)
         active_scores = {p: final_scores.get(p, 0) for p in range(1, player_count + 1)}
