@@ -312,11 +312,11 @@ class ScoreGUI:
     # --- SUMMARY (bónusz-összegző) képernyő layout ---
     # Tömörített elrendezés, hogy az 5 sor (PLAYER/SCORE/BONUS/+bonus/TOTAL)
     # a régi 4-soros elrendezéshez hasonló, szűkebb sávba férjen bele.
-    SUMMARY_PLAYER_Y = 140
-    SUMMARY_SCORE_Y = 185
-    SUMMARY_BONUS_LABEL_Y = 223
-    SUMMARY_BONUS_VALUE_Y = 261
-    SUMMARY_TOTAL_Y = 325
+    SUMMARY_PLAYER_Y = 115
+    SUMMARY_SCORE_Y = 152
+    SUMMARY_BONUS_LABEL_Y = 190
+    SUMMARY_BONUS_VALUE_Y = 220
+    SUMMARY_TOTAL_Y = 270
 
     # Szikra-effekt a TOTAL sor megjelenesekor (lasd ParticleBurst) - ez
     # mindig van, szemben a bonusszal, ami lehet 0
@@ -332,15 +332,23 @@ class ScoreGUI:
     # 2x2 racs, a regi Unity GUI elrendezeset koveti: 1-es balfent,
     # 3-as jobbfent, 2-es ballent, 4-es joblent. Csak annyi slot latszik,
     # ahany jatekos tenylegesen jatszott (final_player_count).
+    # A 2x2 racs feljebb es kompaktabban, hogy a multiplay_sum_frame.png
+    # also sarkaiban levo Cheech & Chong karakterek NE takarjak az also
+    # sort. A keret atlatszo kozepe kb. y=120..300 kozott hasznalhato.
     FINAL_SCORES_SLOT_POS = {
-        1: (190, 150),
-        3: (450, 150),
-        2: (190, 310),
-        4: (450, 310),
+        1: (190, 165),
+        3: (450, 165),
+        2: (190, 270),
+        4: (450, 270),
     }
     FINAL_SCORES_VALUE_OFFSET_Y = 42
     FINAL_SCORES_WINNER_COLOR = (255, 215, 0)
-    FINAL_SCORES_LEAF_OFFSET_Y = 58  # a level-ikon a "PLAYER N" felirat FOLOTT, ennyivel feljebb (oldalra nem fer el a 2 oszlop kozott)
+    FINAL_SCORES_LEAF_OFFSET_Y = 46  # a level-ikon a "PLAYER N" felirat FOLOTT, ennyivel feljebb (oldalra nem fer el a 2 oszlop kozott)
+    # Fust-animacio a FINAL_SCORES kepernyon: az assets/Smoke mappa 59 db
+    # 103x181-es PNG-je, ~2 mp-es loop. A pozicio a kep BAL-FELSO sarka
+    # (sima blit-koordinata), nem a kozeppontja.
+    SMOKE_POS = (54, 202)
+    SMOKE_FPS = 30
     # A gyoztes pulzalasa - ugyanaz a keplet/idozites, mint a PRESS_START kepernyon
     FINAL_SCORES_WINNER_PULSE_PERIOD_SEC = 1.0
     FINAL_SCORES_WINNER_PULSE_MIN_SCALE = 0.7
@@ -526,6 +534,10 @@ class ScoreGUI:
         else:
             raise RuntimeError(f"kijelzo-visszavetel vegleg sikertelen: {last_error}")
         pygame.display.set_caption("Cheech & Chong Pinball - Score")
+        # Az egerkurzort elrejtjuk - a Pi-n kulonben ott ragad a 0,0
+        # sarokban (SDL szoftveres kurzor). Minden display-visszavetelnel
+        # ujra be kell allitani, ezert van itt (nem csak egyszer az initben).
+        pygame.mouse.set_visible(False)
         # A TENYLEGESEN hasznalt SDL video driver (az env-valtozotol
         # fuggetlenul - a Pi-n az SDL magatol valaszt kmsdrm-et!) -
         # a has_quit_event() hasznalja a hamis QUIT-ok kiszuresehez.
@@ -595,7 +607,9 @@ class ScoreGUI:
             bg_raw, (self.SCREEN_W, self.SCREEN_H)
         )
         
-        bg2_path = os.path.join(ASSETS_DIR, "BGR2_Scoremode.png")
+        # SUMMARY hatter (auto-belso naplementes kep) - NEM ugyanaz, mint a
+        # name entry BGR2-je (az a zold-leveles), konnyu osszekeverni!
+        bg2_path = os.path.join(ASSETS_DIR, "BGR3_Scoremode.png")
         bg_raw2 = pygame.image.load(bg2_path).convert()
         self.background2 = pygame.transform.smoothscale(
             bg_raw2, (self.SCREEN_W, self.SCREEN_H)
@@ -633,13 +647,15 @@ class ScoreGUI:
         self.hiscore_panel = self._build_hiscore_panel()
 
         # --- NAME ENTRY assetek ---
-        name_bg_path = os.path.join(ASSETS_DIR, "BGR2_Scoremode.png")
+        name_bg_path = os.path.join(ASSETS_DIR, "hiscorebg_nameentry.png")
         name_bg_raw = pygame.image.load(name_bg_path).convert()
         self.name_entry_bg = pygame.transform.smoothscale(
             name_bg_raw, (self.SCREEN_W, self.SCREEN_H)
         )
 
-        # --- SUMMARY assetek ---
+        # --- FINAL_SCORES / PRESS_START assetek ---
+        # (a SUMMARY kepernyo mar a sima BGR3_Scoremode.png hatteret
+        # hasznalja, lasd render_summary - self.background2)
         summary_bg_path = os.path.join(ASSETS_DIR, "bg640.png")
         summary_bg_raw = pygame.image.load(summary_bg_path).convert()
         self.summary_bg = pygame.transform.smoothscale(
@@ -652,6 +668,32 @@ class ScoreGUI:
         # a szeleknel.
         summary_frame_path = os.path.join(ASSETS_DIR, "frame640.png")
         self.summary_frame = pygame.image.load(summary_frame_path).convert_alpha()
+
+        # --- MULTIPLAYER FINAL_SCORES assetek ---
+        # Kulon BG + frame reteg (Cheech & Chong leveles keret). Mindketto
+        # mar pontosan 640x480, ezert NINCS skalazas. A frame kozepe
+        # atlatszo (alpha=0), igy a pontszamok atlatszanak alatta; a
+        # tuzijatek-particle-ok viszont a frame FOLE kerulnek (lasd
+        # render_final_scores reteg-sorrend).
+        final_bg_path = os.path.join(ASSETS_DIR, "multiplay_sum_bg.png")
+        self.final_scores_bg = pygame.image.load(final_bg_path).convert()
+        final_frame_path = os.path.join(ASSETS_DIR, "multiplay_sum_frame.png")
+        self.final_scores_frame = pygame.image.load(final_frame_path).convert_alpha()
+
+        # Fust-animacio frame-jei (Smoke/ mappa, 59 db 103x181 PNG, ~4 MB
+        # RAM RGBA-ban). A fajlnevek 5 jegyre nullazottak, ezert a sima
+        # sorted() a helyes sorrendet adja. convert_alpha() csak itt, a
+        # betolteskor - futas kozben mar csak egy sima blit megy a
+        # kepernyore (nincs skalazas es nincs SRCALPHA-ra kompozitalas,
+        # lasd az ARM Bus Error-t a render_special_thanks kommentjeben).
+        smoke_dir = os.path.join(ASSETS_DIR, "Smoke")
+        self.smoke_frames = []
+        if os.path.isdir(smoke_dir):
+            for fn in sorted(os.listdir(smoke_dir)):
+                if fn.lower().endswith(".png"):
+                    self.smoke_frames.append(
+                        pygame.image.load(os.path.join(smoke_dir, fn)).convert_alpha()
+                    )
 
         # --- LOGO assetek ---
         logo_path = os.path.join(ASSETS_DIR, "introscr.png")
@@ -1035,8 +1077,8 @@ class ScoreGUI:
 
         elapsed = now - self.summary_anim_start
 
-        # Háttér (bg640.png), a keret (frame640.png) legfelul, a fuggveny vegen kerul ra
-        self.screen.blit(self.summary_bg, (0, 0))
+        # Sima hatter (BGR3_Scoremode.png), keret nelkul
+        self.screen.blit(self.background2, (0, 0))
 
         # Adatok kibontása
         p_num = summary_data.get("player", 1)
@@ -1087,10 +1129,6 @@ class ScoreGUI:
         if self._bonus_spark_burst is not None:
             self._bonus_spark_burst.draw(self.screen)
 
-        # Level-keret legfelul - mindenre (szoveg, szikrak) ratakar a szeleknel
-        self.screen.blit(self.summary_frame, (0, 0))
-
-
     def render_final_scores(self, final_scores: dict, player_count: int):
         """Tobb-jatekos vegeredmeny kepernyo: csak akkor jon elo, ha 2+
         jatekos jatszott es a jatek valodi GAMEOVER-rel ert veget. Minden
@@ -1105,8 +1143,17 @@ class ScoreGUI:
             self._firework_bursts = []
             self._next_firework_time = now  # az elso robbanas szinte azonnal induljon
 
-        self.screen.blit(self.summary_bg, (0, 0))
+        # 1. BG reteg
+        self.screen.blit(self.final_scores_bg, (0, 0))
 
+        # 2. Fust-animacio - kozvetlenul a hatter utan, minden mas reteg
+        # ALATT. Idoalapu frame-valasztas (nem hivas-szamlalo), hogy egy
+        # esetleges FPS-ingadozas ne gyorsitsa/lassitsa a loopot.
+        if self.smoke_frames:
+            smoke_idx = int((now - self.final_scores_start) * self.SMOKE_FPS) % len(self.smoke_frames)
+            self.screen.blit(self.smoke_frames[smoke_idx], self.SMOKE_POS)
+
+        # 3. Kiirasok (jatekosok pontszamai)
         active_scores = {p: final_scores.get(p, 0) for p in range(1, player_count + 1)}
         winner_score = max(active_scores.values()) if active_scores else 0
 
@@ -1147,7 +1194,12 @@ class ScoreGUI:
                 )
                 winner_positions.append((x, y))
 
-        # Ismetlodo kis tuzijatek-robbanasok a gyoztes(ek) korul
+        # 4. Frame reteg - a kiirasok FOLOTT (a keret kozepe atlatszo, igy a
+        # pontszamok atlatszanak), de a particle-ok ALATT.
+        self.screen.blit(self.final_scores_frame, (0, 0))
+
+        # 5. Ismetlodo kis tuzijatek-robbanasok a gyoztes(ek) korul - ezek
+        # kerulnek legfelulre, a frame FOLE is atloghatnak
         if winner_positions and now >= self._next_firework_time:
             spread = self.FINAL_SCORES_FIREWORK_SPREAD
             ox, oy = random.choice(winner_positions)
@@ -1167,9 +1219,6 @@ class ScoreGUI:
         self._firework_bursts = [b for b in self._firework_bursts if b.is_alive()]
         for burst in self._firework_bursts:
             burst.draw(self.screen)
-
-        # Level-keret legfelul - a pulzalo gyoztes-szoveg/tuzijatek se logjon ki alola
-        self.screen.blit(self.summary_frame, (0, 0))
 
 
     @staticmethod
@@ -1527,6 +1576,7 @@ class ScoreGUI:
             "input_test": "INPUT / GOMB TESZT",
             "serial_monitor": "SERIAL MONITOR (RAW)",
             "particle_editor": "PARTICLE SZERKESZTO",
+            "light_test": "LIGHT TEST",
             "reset_confirm": "OSSZES HISCORE TORLESE",
             "version_info": "VERZIO INFO",
         }
@@ -1541,7 +1591,7 @@ class ScoreGUI:
         if controller.screen == "main":
             for i, (_, label) in enumerate(controller.MAIN_ITEMS):
                 self._draw_service_line(label, y + i * line_h, i == controller.cursor)
-            hint = "Fel/Le + Enter vagy F1-F10: kivalaszt   Esc: kilepes"
+            hint = "Fel/Le + Enter vagy F1-F11: kivalaszt   Esc: kilepes"
 
         elif controller.screen == "hiscore_edit":
             for i, entry in enumerate(controller.score_manager.scores):
@@ -1645,6 +1695,17 @@ class ScoreGUI:
                 self._particle_editor_burst.draw(self.screen)
 
             hint = "Fel/Le: parameter   Bal/Jobb: ertek   R: alapertelmezett   Esc: vissza"
+
+        elif controller.screen == "light_test":
+            effects = controller.light_effects
+            if not effects:
+                self._draw_service_line("(nincs effekt - az effect_data.h nem talalhato vagy ures)", y, False)
+                self._draw_service_line("A Pi-n a ~/CnC_firmware4/effect_data.h-bol olvassuk.", y + line_h * 2, False)
+            else:
+                for i, (eid, name) in enumerate(effects):
+                    selected = i == controller.cursor
+                    self._draw_service_line(f"ID {eid:<3} {name}", y + i * line_h, selected)
+            hint = "Bal/Jobb: valt effekt   Esc: stop + vissza"
 
         elif controller.screen == "reset_confirm":
             self._draw_service_line("Biztosan torlod az OSSZES hiscore-t?", y, False)
