@@ -88,6 +88,32 @@ def build_outlined_text_surface_spaced(font, text, fill_color, outline_color, ou
     return result
 
 
+def blit_outlined_text_spaced_centered(
+    screen, font, text, fill_color, outline_color,
+    center, outline_width=2, extra_spacing=0,
+):
+    """Ugyanaz a kimenet, mint build_outlined_text_surface_spaced + egy
+    kozeppontra igazitott blit, de a szeles kozos SRCALPHA "block" surface
+    NELKUL: minden betut kozvetlenul a kijelzore (screen) rajzol.
+
+    A szeles SRCALPHA-ra-SRCALPHA blit 32 bites ARM-on (Pi 3B+) Bus Error-t
+    okoz - lasd render_press_start / render_special_thanks ugyanezt a mintat.
+    A per-karakter outline-surface epitese kicsi, ezert az biztonsagos."""
+    if not text:
+        return
+    char_surfaces = [
+        build_outlined_text_surface(font, ch, fill_color, outline_color, outline_width)
+        for ch in text
+    ]
+    total_w = sum(s.get_width() for s in char_surfaces) + extra_spacing * (len(char_surfaces) - 1)
+    max_h = max(s.get_height() for s in char_surfaces)
+    x = center[0] - total_w // 2
+    top = center[1] - max_h // 2
+    for s in char_surfaces:
+        screen.blit(s, (x, top))
+        x += s.get_width() + extra_spacing
+
+
 def _blur_supported() -> bool:
     """32 bites ARM-on (armv7l/armv6l) a blur Bus Error-t okoz, kizarjuk."""
     import platform
@@ -1461,12 +1487,15 @@ class ScoreGUI:
         if self._beat_score_spark_burst is not None:
             self._beat_score_spark_burst.draw(self.screen)
 
-        player_surf = build_outlined_text_surface_spaced(
-            self.font_beat_player, top_entry["name"],
-            self.BEAT_SCORE_PLAYER_COLOR, self.COLOR_TEXT_OUTLINE, 2,
+        # Kozvetlenul a kijelzore rajzoljuk, betunkent: a szeles kozos
+        # SRCALPHA "block" surface 32 bites ARM-on (Pi 3B+) Bus Error-t okozott
+        # a render_beat_score-ban (crash-loop a BEAT_SCORE kepernyon).
+        blit_outlined_text_spaced_centered(
+            self.screen, self.font_beat_player, top_entry["name"],
+            self.BEAT_SCORE_PLAYER_COLOR, self.COLOR_TEXT_OUTLINE,
+            (self.SCREEN_W // 2, self.BEAT_SCORE_PLAYER_Y), 2,
             extra_spacing=self.BEAT_SCORE_PLAYER_LETTER_SPACING,
         )
-        self.screen.blit(player_surf, player_surf.get_rect(center=(self.SCREEN_W // 2, self.BEAT_SCORE_PLAYER_Y)))
 
         self.screen.blit(self.thx_vignette, (0, 0))
 
