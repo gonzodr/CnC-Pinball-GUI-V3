@@ -8,11 +8,11 @@ ami sima ablakot nyit.
 A Raspberry Pi-n (Linux) explicit kmsdrm driverre állítva direktben
 a framebufferre/DRM-re rajzol, X11/Wayland nélkül.
 
-Grafikai felépítés:
-- htr.png: statikus háttér (dzsungel-keret + "Ball" felhő-buborék
-  már beleégetve a képbe), 640x480-ra nyújtva.
-- cigip.jpg: cigipapír-textúra, amiből kódból (forgatással) készül
-  a játékos-kártyák, rájuk rajzolt névvel és pontszámmal.
+A SCORE kepernyo grafikai felepitese (assets/SCORE/, retegsorrend a
+render()-ben): BACKGROUND.png -> hatterfust (Smoke2) -> MIDDLE_FRAME.png
+-> jatekos-papirok (CigP1..4, 45 fokra forgatva, rajuk rendereltt nevvel
+es pontszammal; inaktivnal baked CigSHADOW arnyek, aktivnal a harom
+animalt glow-reteg az Active_Anim/ alol) -> TOP_FRAME.png -> kiirasok.
 """
 
 import colorsys
@@ -114,35 +114,13 @@ def blit_outlined_text_spaced_centered(
         x += s.get_width() + extra_spacing
 
 
-def _blur_supported() -> bool:
-    """32 bites ARM-on (armv7l/armv6l) a blur Bus Error-t okoz, kizarjuk."""
-    import platform
-    machine = platform.machine().lower()
-    if machine in ("armv7l", "armv6l"):
-        return False
-    return hasattr(pygame.transform, 'box_blur')
-
 def _smoothscale_supported() -> bool:
+    """32 bites ARM-on (armv7l/armv6l) a smoothscale Bus Error-t okoz, ezert
+    ott sima scale-re valtunk. Ugyanez vonatkozik a box_blur-re: futasidoju
+    blur NEM hasznalhato ezen a Pi-n - a papir-arnyek pl. ezert eleve
+    beegetett (baked) CigSHADOW.png, nem kodbol blurozott surface."""
     import platform
     return platform.machine().lower() not in ("armv7l", "armv6l")
-
-
-def build_drop_shadow(source_surface, opacity=38, blur_radius=6):
-    """
-    Elkeszit egy fekete "arnyek" verziot a megadott surface-bol.
-    """
-    shadow = source_surface.copy()
-    shadow.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MULT)
-
-    if blur_radius > 0 and _blur_supported():
-        padded_w = shadow.get_width() + blur_radius * 2
-        padded_h = shadow.get_height() + blur_radius * 2
-        padded = pygame.Surface((padded_w, padded_h), pygame.SRCALPHA)
-        padded.blit(shadow, (blur_radius, blur_radius))
-        shadow = pygame.transform.box_blur(padded, blur_radius)
-
-    shadow.set_alpha(opacity)
-    return shadow
 
 
 def ease_out_cubic(t: float) -> float:
@@ -264,9 +242,6 @@ class ScoreGUI:
     COLOR_ACTIVE = (60, 40, 15)
     COLOR_INACTIVE = (110, 100, 90)
     COLOR_MULTIBALL = (220, 40, 40)
-
-    SHADOW_OPACITY = 90
-    SHADOW_BLUR_RADIUS = 3  # Kisebb felbontáshoz kicsit visszavett blur
 
     # Allapotvaltaskori crossfade (lasd start_fade_transition/draw_fade_overlay).
     # Ugyanaz a biztonsagos technika (surface.set_alpha() + kozvetlen blit a
@@ -527,7 +502,6 @@ class ScoreGUI:
         self.active = False
 
         self.background = None
-        self.card_texture = None
         self.summary_anim_start = None
 
         # 640x480-hoz igazított átlós animációs úthossz (pixelben)
@@ -536,8 +510,6 @@ class ScoreGUI:
 
         self._card_cache = {1: None, 2: None, 3: None, 4: None}
         self._card_cache_key = {1: None, 2: None, 3: None, 4: None}
-        self._card_shadow_cache = {1: None, 2: None, 3: None, 4: None}
-        self._card_shadow_cache_key = {1: None, 2: None, 3: None, 4: None}
         self._ball_label_cache = None
         self._ball_label_cache_key = None
         self._main_score_cache = None
@@ -693,9 +665,6 @@ class ScoreGUI:
             bg_raw3, (self.SCREEN_W, self.SCREEN_H)
         )
 
-        card_path = os.path.join(ASSETS_DIR, "cigip.jpg")
-        self.card_texture = pygame.image.load(card_path).convert()
-
         # --- SCORE kepernyo uj retegei ---
         # A render() rteg-sorrendje: BACKGROUND -> MIDDLE_FRAME -> papirok
         # (inaktiv: baked CigSHADOW; aktiv: Bubik + PL_BOT glow + papir +
@@ -811,21 +780,15 @@ class ScoreGUI:
             name_bg_raw, (self.SCREEN_W, self.SCREEN_H)
         )
 
-        # --- FINAL_SCORES / PRESS_START assetek ---
-        # (a SUMMARY kepernyo mar a sima BGR3_Scoremode.png hatteret
-        # hasznalja, lasd render_summary - self.background2)
+        # --- PRESS_START hatter ---
+        # A "summary_bg" nev tortenelmi: a SUMMARY mar a BGR3_Scoremode.png-t
+        # hasznalja (self.background2), a FINAL_SCORES pedig a sajat
+        # multiplay_sum_bg.png-jet - ezt a kepet mar csak a PRESS_START keri.
         summary_bg_path = os.path.join(ASSETS_DIR, "bg640.png")
         summary_bg_raw = pygame.image.load(summary_bg_path).convert()
         self.summary_bg = pygame.transform.smoothscale(
             summary_bg_raw, (self.SCREEN_W, self.SCREEN_H)
         )
-
-        # frame640.png: level-keret, atlatszo (alpha=0) kozeppel, mar eleve
-        # pontosan 640x480 - nincs szukseg skalazasra. Legfelul kerul ra
-        # minden mas utan, hogy tenyleg ratakarjon a szovegre/particle-okra
-        # a szeleknel.
-        summary_frame_path = os.path.join(ASSETS_DIR, "frame640.png")
-        self.summary_frame = pygame.image.load(summary_frame_path).convert_alpha()
 
         # --- MULTIPLAYER FINAL_SCORES assetek ---
         # Kulon BG + frame reteg (Cheech & Chong leveles keret). Mindketto
@@ -1040,16 +1003,6 @@ class ScoreGUI:
             self._card_cache[player_num] = self._build_card_surface(player_num, state)
             self._card_cache_key[player_num] = cache_key
         return self._card_cache[player_num]
-
-    def _get_cached_card_shadow(self, player_num, rotated_card_surface):
-        cache_key = self._card_cache_key[player_num]
-        if self._card_shadow_cache_key[player_num] != cache_key:
-            self._card_shadow_cache[player_num] = build_drop_shadow(
-                rotated_card_surface, opacity=self.SHADOW_OPACITY,
-                blur_radius=self.SHADOW_BLUR_RADIUS
-            )
-            self._card_shadow_cache_key[player_num] = cache_key
-        return self._card_shadow_cache[player_num]
 
     def get_bounce_scale(self, t):
         """Egy egyszerű 'overshoot' (bounce) animáció."""
