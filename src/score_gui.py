@@ -294,7 +294,8 @@ class ScoreGUI:
     # lekerekitett folt: ha a papir vege kilog, novned az X-et; ha az oldalt
     # tul kover, csokkentsd az Y-t.
     SCORE_GLOW_SCALE = (1.1, 1.3)  # (X hossz, Y vastagsag)
-    SCORE_SHADOW_OFFSET = (-5, 5)   # a baked blur arnyek eltolasa az inaktiv papirok alatt (px)
+    SCORE_SHADOW_OFFSET = (15, -4)  # a baked blur arnyek eltolasa az inaktiv papirok alatt (px)
+    SCORE_SHADOW_SCALE = 0.9      # a baked arnyek merete a papirhoz kepest (1.0 = ugyanakkora)
     SCORE_BUBIK_OFFSET = (25, -175)  # a bubik-particle a papir kozeppontjahoz kepest (folfele)
     # A ket glow eltolasa a papir kozeppontjahoz kepest, KEPERNYO-terben
     # (+x = jobbra, +y = lefele). Alapbol a papir kozepere esnek; ezekkel
@@ -722,7 +723,8 @@ class ScoreGUI:
         # papirral azonos szogre forgatva, egyszer a betolteskor (nincs tobbe
         # futasidoju blur, ami ARM-on amugy is tiltott).
         shadow_raw = pygame.image.load(os.path.join(score_dir, "CigSHADOW.png")).convert_alpha()
-        shadow_scaled = scale_fn(shadow_raw, (self.CARD_WIDTH, self.CARD_HEIGHT))
+        shadow_scaled = scale_fn(shadow_raw, (int(self.CARD_WIDTH * self.SCORE_SHADOW_SCALE),
+                                              int(self.CARD_HEIGHT * self.SCORE_SHADOW_SCALE)))
         self.card_shadow = pygame.transform.rotate(shadow_scaled, card_angle)
 
         # Aktiv-jatekos animaciok (mappankent 60 frame, ~4-8 MB RAM). A
@@ -1121,9 +1123,13 @@ class ScoreGUI:
             offset_anim = self.card_animator.get_offset_y(slot)
             pos_x, pos_y = layout["pos"]
 
-            # Átlós mozgás: Y nő (+), X csökken (-)
-            actual_x = pos_x - offset_anim
-            actual_y = pos_y + offset_anim
+            # Átlós mozgás: Y nő (+), X csökken (-). KEREKITUNK (nem a pygame
+            # levagasara bizzuk): a becsuszas vegen az offset egy pici pozitiv
+            # szam (pl. 0.00004), amitol pos_x - offset = 7.99996 a levagas
+            # miatt 7-re esne, majd az utolso frame-en 0 offsettel visszaugrana
+            # 8-ra - ez volt az "1 pixel jobbra" ugras. A round() ezt megszunteti.
+            actual_x = round(pos_x - offset_anim)
+            actual_y = round(pos_y + offset_anim)
 
             # A forgatott papir kozeppontja - a glow/bubik/arnyek ehhez igazodik
             paper_center = (actual_x + rotated.get_width() / 2,
