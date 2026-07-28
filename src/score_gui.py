@@ -285,6 +285,41 @@ class ScoreGUI:
     CARD_WIDTH = 192   # 240 * 0.8
     CARD_HEIGHT = 80   # 100 * 0.8
 
+    # --- SCORE kepernyo uj retegei (BACKGROUND / MIDDLE_FRAME / papirok +
+    #     glow / TOP_FRAME). A pontos rteg-sorrend a render()-ben. ---
+    SCORE_ANIM_FPS = 30            # az aktiv-jatekos animaciok (60 frame) loop-tempoja -> 2 mp
+    # A glow merete a papirhoz kepest, KULON X es Y skalaval. A skalazas a
+    # FORGATAS ELOTT tortenik, ezert X = a papir HOSSZTENGELYE menten (a 45
+    # fokos papir hossza), Y = a papir VASTAGSAGA menten. A PL_BOT egy lagy,
+    # lekerekitett folt: ha a papir vege kilog, novned az X-et; ha az oldalt
+    # tul kover, csokkentsd az Y-t.
+    SCORE_GLOW_SCALE = (1.1, 1.3)  # (X hossz, Y vastagsag)
+    SCORE_SHADOW_OFFSET = (-5, 5)   # a baked blur arnyek eltolasa az inaktiv papirok alatt (px)
+    SCORE_BUBIK_OFFSET = (25, -175)  # a bubik-particle a papir kozeppontjahoz kepest (folfele)
+    # A ket glow eltolasa a papir kozeppontjahoz kepest, KEPERNYO-terben
+    # (+x = jobbra, +y = lefele). Alapbol a papir kozepere esnek; ezekkel
+    # tudod ratolni a papirra, ha a glow "lelog".
+    SCORE_GLOW_BOT_OFFSET = (0, 0)  # outer glow (Active PL_BOT / "low")
+    SCORE_GLOW_TOP_OFFSET = (0, 0)  # inner glow (Active PL_TOP)
+    # Az inner glow (PL_TOP) atlatszatlansaga: 0 = teljesen atlatszo,
+    # 255 = valtozatlan (teljes). Betolteskor egyszer skalazza a per-pixel
+    # alfat, futas kozben nincs tobblet-koltseg.
+    SCORE_GLOW_TOP_OPACITY = 128
+
+    # Fust a SCORE hatteren: a multiplayer-osszegzo Smoke2 animacioja, a
+    # hatter fole (a MIDDLE_FRAME ala) rajzolva. AE-ben 300%-ra skalazva,
+    # 15% opacityvel. A skala es az opacity betolteskor egyszer beegetodik.
+    SCORE_BG_SMOKE_SCALE = 3.0           # 300% (mint After Effects-ben)
+    SCORE_BG_SMOKE_OPACITY = 38          # 15% (0.15 * 255 ~ 38)
+    SCORE_BG_SMOKE_CENTER = (320, 300)   # a felskalazott fust kozeppontja a kepernyon
+
+    # Score-watchdog: ha valtozik a kozepso pontszam, a SCORE-betuk lukteto
+    # nagyitast kapnak SCORE_PULSE_DURATION_SEC-ig. Minden ujabb valtozas
+    # ujrainditja az idozitot, igy folyamatos pontszerzes alatt vegig luktet.
+    SCORE_PULSE_DURATION_SEC = 2.0   # ennyi ideig luktet egy valtozas utan
+    SCORE_PULSE_PERIOD_SEC = 0.5     # egy teljes le-fel ciklus (0.5s -> masodpercenkent 2x)
+    SCORE_PULSE_MAX_SCALE = 1.10     # a csucson 10%-kal nagyobb
+
     # --- HIGHSCORE képernyő layout ---
     # Ezek a koordináták a referencia képernyőkép (1111x829) alapján lettek
     # átszámolva 640x480-ra, hogy a szöveg pontosan a HiScoreBg.png keretére
@@ -506,6 +541,10 @@ class ScoreGUI:
         self._ball_label_cache_key = None
         self._main_score_cache = None
         self._main_score_cache_key = None
+        # Score-watchdog allapota (lasd render(): kozepso pontszam luktetese)
+        self._score_pulse_start = None   # a jelenlegi luktetes-sorozat kezdete
+        self._score_pulse_until = 0.0    # min. befejezes (utolso valtozas + duration)
+        self._score_pulse_prev_value = None
         self._active_player_cache = None
         self._active_player_cache_key = None
         self._press_start_cache = None
@@ -632,7 +671,8 @@ class ScoreGUI:
         self.active = True
 
     def _load_assets(self):
-        bg_path = os.path.join(ASSETS_DIR, "BGR1_Gamemode.png")
+        # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).
+        bg_path = os.path.join(ASSETS_DIR, "SCORE", "BACKGROUND.png")
         bg_raw = pygame.image.load(bg_path).convert()
         self.background = pygame.transform.smoothscale(
             bg_raw, (self.SCREEN_W, self.SCREEN_H)
@@ -654,6 +694,91 @@ class ScoreGUI:
 
         card_path = os.path.join(ASSETS_DIR, "cigip.jpg")
         self.card_texture = pygame.image.load(card_path).convert()
+
+        # --- SCORE kepernyo uj retegei ---
+        # A render() rteg-sorrendje: BACKGROUND -> MIDDLE_FRAME -> papirok
+        # (inaktiv: baked CigSHADOW; aktiv: Bubik + PL_BOT glow + papir +
+        # PL_TOP glow) -> TOP_FRAME -> kiirasok.
+        score_dir = os.path.join(ASSETS_DIR, "SCORE")
+        self.score_middle_frame = pygame.image.load(
+            os.path.join(score_dir, "MIDDLE_FRAME.png")
+        ).convert_alpha()
+        self.score_top_frame = pygame.image.load(
+            os.path.join(score_dir, "TOP_FRAME.png")
+        ).convert_alpha()
+
+        # Per-jatekos papir-texturak (CigP1..4) a regi kozos cigip.jpg helyett.
+        # A _build_card_surface skalazza CARD_WIDTH x CARD_HEIGHT-re es rajuk
+        # rendereli a szoveget.
+        self.cig_papers = {
+            n: pygame.image.load(os.path.join(score_dir, f"CigP{n}.png")).convert_alpha()
+            for n in range(1, 5)
+        }
+
+        scale_fn = pygame.transform.smoothscale if _smoothscale_supported() else pygame.transform.scale
+        card_angle = self.CARD_LAYOUT[0]["angle"]
+
+        # Baked blur arnyek (inaktiv jatekosok) - papir-meretre skalazva es a
+        # papirral azonos szogre forgatva, egyszer a betolteskor (nincs tobbe
+        # futasidoju blur, ami ARM-on amugy is tiltott).
+        shadow_raw = pygame.image.load(os.path.join(score_dir, "CigSHADOW.png")).convert_alpha()
+        shadow_scaled = scale_fn(shadow_raw, (self.CARD_WIDTH, self.CARD_HEIGHT))
+        self.card_shadow = pygame.transform.rotate(shadow_scaled, card_angle)
+
+        # Aktiv-jatekos animaciok (mappankent 60 frame, ~4-8 MB RAM). A
+        # glow-kat mar betolteskor a vegleges meretre (papir * SCORE_GLOW_SCALE)
+        # skalazzuk ES a papir szogere forgatjuk - futas kozben mar csak egy
+        # sima blit megy a kepernyore (nincs per-frame skalazas/forgatas es
+        # nincs SRCALPHA-ra kompozitalas, lasd az ARM Bus Error-t). A Bubik
+        # allo (nem forog), natif meretben marad.
+        glow_size = (int(self.CARD_WIDTH * self.SCORE_GLOW_SCALE[0]),
+                     int(self.CARD_HEIGHT * self.SCORE_GLOW_SCALE[1]))
+
+        def _load_score_anim(subparts, scale_to=None, rotate=0):
+            d = os.path.join(score_dir, *subparts)
+            frames = []
+            if os.path.isdir(d):
+                for fn in sorted(os.listdir(d)):
+                    if not fn.lower().endswith(".png"):
+                        continue
+                    s = pygame.image.load(os.path.join(d, fn)).convert_alpha()
+                    if scale_to:
+                        s = scale_fn(s, scale_to)
+                    if rotate:
+                        s = pygame.transform.rotate(s, rotate)
+                    frames.append(s)
+            return frames
+
+        self.score_bubik = _load_score_anim(["Active_Anim", "Bubik"])
+        self.score_glow_bot = _load_score_anim(["Active_Anim", "Active PL_BOT"], glow_size, card_angle)
+        self.score_glow_top = _load_score_anim(["Active_Anim", "Active PL_TOP"], glow_size, card_angle)
+
+        # Inner glow (PL_TOP) atlatszatlansag: a per-pixel alfat egyszer,
+        # betolteskor skalazzuk (BLEND_RGBA_MULT az RGB-t valtozatlanul hagyja,
+        # csak az alfat szorozza). 255-nel no-op, ezert csak akkor futtatjuk.
+        if self.SCORE_GLOW_TOP_OPACITY < 255:
+            for frame in self.score_glow_top:
+                frame.fill((255, 255, 255, self.SCORE_GLOW_TOP_OPACITY),
+                           special_flags=pygame.BLEND_RGBA_MULT)
+
+        # SCORE-hatter fust: ugyanaz a Smoke2 animacio, mint a multiplayer
+        # osszegzon, de SCORE_BG_SMOKE_SCALE-re nagyitva es SCORE_BG_SMOKE_OPACITY
+        # opacityvel - mindketto egyszer, betolteskor beegetve (futas kozben
+        # csak sima blit megy a kepernyore).
+        smoke2_dir = os.path.join(ASSETS_DIR, "Smoke2")
+        self.score_bg_smoke = []
+        if os.path.isdir(smoke2_dir):
+            for fn in sorted(os.listdir(smoke2_dir)):
+                if not fn.lower().endswith(".png"):
+                    continue
+                s = pygame.image.load(os.path.join(smoke2_dir, fn)).convert_alpha()
+                w, h = s.get_size()
+                s = scale_fn(s, (int(w * self.SCORE_BG_SMOKE_SCALE),
+                                 int(h * self.SCORE_BG_SMOKE_SCALE)))
+                if self.SCORE_BG_SMOKE_OPACITY < 255:
+                    s.fill((255, 255, 255, self.SCORE_BG_SMOKE_OPACITY),
+                           special_flags=pygame.BLEND_RGBA_MULT)
+                self.score_bg_smoke.append(s)
 
         # TOP3 levél ikon - a TrophyStar.png egy szürkeárnyalatos levél,
         # amit itt színezünk arany/ezüst/bronzra (multiply blend), ahogy
@@ -886,11 +1011,12 @@ class ScoreGUI:
             pass
 
     def _build_card_surface(self, player_num, state):
-        card_texture_scaled = pygame.transform.smoothscale(
-            self.card_texture, (self.CARD_WIDTH, self.CARD_HEIGHT)
-        )
+        # Per-jatekos papir-textura (CigP1..4). A papir mar tartalmazza a sajat
+        # alakjat (atlatszo szelekkel), ezert csak meretre skalazzuk.
+        paper_raw = self.cig_papers.get(player_num, self.cig_papers[1])
+        scale_fn = pygame.transform.smoothscale if _smoothscale_supported() else pygame.transform.scale
         card = pygame.Surface((self.CARD_WIDTH, self.CARD_HEIGHT), pygame.SRCALPHA)
-        card.blit(card_texture_scaled, (0, 0))
+        card.blit(scale_fn(paper_raw, (self.CARD_WIDTH, self.CARD_HEIGHT)), (0, 0))
 
         is_active = (player_num == state.current_player)
         text_color = self.COLOR_ACTIVE if is_active else self.COLOR_INACTIVE
@@ -964,27 +1090,26 @@ class ScoreGUI:
             return
 
         self.card_animator.set_active_count(state.active_player_count)
+
+        # 1. BG reteg
         self.screen.blit(self.background, (0, 0))
 
-        # "Ball: X" felirat pozíciója átszámolva a felhőhöz (190*0.8, 105*0.8 -> 152, 84)
-        if self._ball_label_cache_key != state.current_ball:
-            self._ball_label_cache = self.font_label.render(
-                f"Ball: {state.current_ball}", True, self.COLOR_ACTIVE
-            )
-            self._ball_label_cache_key = state.current_ball
-        ball_rect = self._ball_label_cache.get_rect(center=(135, 90))
-        self.screen.blit(self._ball_label_cache, ball_rect)
+        # 1b. Fust a hatter fole (a BG reteg resze), a MIDDLE_FRAME ala.
+        # Idoalapu, ugyanaz a loop-tempo, mint a tobbi score-animacio.
+        if self.score_bg_smoke:
+            smoke_idx = int(time.time() * self.SCORE_ANIM_FPS) % len(self.score_bg_smoke)
+            frame = self.score_bg_smoke[smoke_idx]
+            self.screen.blit(frame, frame.get_rect(center=self.SCORE_BG_SMOKE_CENTER))
 
-        # "player" felirat pozíciója átszámolva a felhőhöz (190*0.8, 105*0.8 -> 152, 84)
-        if self._active_player_cache_key != state.current_player:
-            self._active_player_cache = self.font_active_player.render(
-                f"Player: {state.current_player}", True, self.COLOR_ACTIVE
-            )
-            self._active_player_cache_key = state.current_player
-        active_player_rect = self._active_player_cache.get_rect(center=(515, 90))
-        self.screen.blit(self._active_player_cache, active_player_rect)
+        # 2. MIDDLE_FRAME (leveles keret a papirok mogott)
+        self.screen.blit(self.score_middle_frame, (0, 0))
 
-        # 4 kártya kirajzolása átlós animációval
+        # 3. Papirok jatekosonkent. Inaktivnal baked CigSHADOW (par px eltolva),
+        # aktivnal a harom animalt glow-reteg: Bubik (buborek) -> outer glow
+        # (PL_BOT) -> papir -> inner glow (PL_TOP). Kozos, idoalapu frame-index,
+        # hogy egy esetleges FPS-ingadozas ne valtoztassa a loop tempot es a
+        # retegek szinkronban maradjanak.
+        anim_idx = int(time.time() * self.SCORE_ANIM_FPS)
         for player_num, layout in zip(self.players_order(), self.CARD_LAYOUT):
             slot = player_num
             if not self.card_animator.is_slot_relevant(slot):
@@ -1000,15 +1125,56 @@ class ScoreGUI:
             actual_x = pos_x - offset_anim
             actual_y = pos_y + offset_anim
 
-            # Drop shadow kirajzolás
-            shadow = self._get_cached_card_shadow(player_num, rotated)
-            shadow_offset = 5 # Csökkentett offset a kisebb felbontás miatt (7 * 0.8 ≈ 5)
-            blur_correction = self.SHADOW_BLUR_RADIUS if _blur_supported() else 0
-            shadow_x = actual_x + shadow_offset - blur_correction
-            shadow_y = actual_y - blur_correction
-            self.screen.blit(shadow, (shadow_x, shadow_y))
+            # A forgatott papir kozeppontja - a glow/bubik/arnyek ehhez igazodik
+            paper_center = (actual_x + rotated.get_width() / 2,
+                            actual_y + rotated.get_height() / 2)
 
-            self.screen.blit(rotated, (actual_x, actual_y))
+            if player_num == state.current_player:
+                # Aktiv jatekos: animalt glow-stack a papir korul
+                if self.score_bubik:
+                    frame = self.score_bubik[anim_idx % len(self.score_bubik)]
+                    bubik_center = (paper_center[0] + self.SCORE_BUBIK_OFFSET[0],
+                                    paper_center[1] + self.SCORE_BUBIK_OFFSET[1])
+                    self.screen.blit(frame, frame.get_rect(center=bubik_center))
+                if self.score_glow_bot:
+                    frame = self.score_glow_bot[anim_idx % len(self.score_glow_bot)]
+                    glow_bot_center = (paper_center[0] + self.SCORE_GLOW_BOT_OFFSET[0],
+                                       paper_center[1] + self.SCORE_GLOW_BOT_OFFSET[1])
+                    self.screen.blit(frame, frame.get_rect(center=glow_bot_center))
+                self.screen.blit(rotated, (actual_x, actual_y))
+                if self.score_glow_top:
+                    frame = self.score_glow_top[anim_idx % len(self.score_glow_top)]
+                    glow_top_center = (paper_center[0] + self.SCORE_GLOW_TOP_OFFSET[0],
+                                       paper_center[1] + self.SCORE_GLOW_TOP_OFFSET[1])
+                    self.screen.blit(frame, frame.get_rect(center=glow_top_center))
+            else:
+                # Inaktiv jatekos: baked blur arnyek a papir alatt, par px eltolva
+                shadow_center = (paper_center[0] + self.SCORE_SHADOW_OFFSET[0],
+                                 paper_center[1] + self.SCORE_SHADOW_OFFSET[1])
+                self.screen.blit(self.card_shadow, self.card_shadow.get_rect(center=shadow_center))
+                self.screen.blit(rotated, (actual_x, actual_y))
+
+        # 4. TOP_FRAME (felhok + also levelek) - a papirok folott
+        self.screen.blit(self.score_top_frame, (0, 0))
+
+        # 5. Kiirasok legfelul, a TOP_FRAME felhoire / a keret fole
+        # "Ball: X" felirat a bal felhoben
+        if self._ball_label_cache_key != state.current_ball:
+            self._ball_label_cache = self.font_label.render(
+                f"Ball: {state.current_ball}", True, self.COLOR_ACTIVE
+            )
+            self._ball_label_cache_key = state.current_ball
+        ball_rect = self._ball_label_cache.get_rect(center=(135, 90))
+        self.screen.blit(self._ball_label_cache, ball_rect)
+
+        # "Player: X" felirat a jobb felhoben
+        if self._active_player_cache_key != state.current_player:
+            self._active_player_cache = self.font_active_player.render(
+                f"Player: {state.current_player}", True, self.COLOR_ACTIVE
+            )
+            self._active_player_cache_key = state.current_player
+        active_player_rect = self._active_player_cache.get_rect(center=(515, 90))
+        self.screen.blit(self._active_player_cache, active_player_rect)
 
         # Középső nagy pontszám elhelyezése és kézi igazítása
         main_score_value = state.players[state.current_player]
@@ -1019,17 +1185,47 @@ class ScoreGUI:
             )
             self._main_score_cache_key = main_score_value
 
+        # Score-watchdog: ha valtozott a pontszam (nem az elso rendernel),
+        # inditsuk/hosszabbitsuk a luktetest. A luktetes fazisat a SOROZAT
+        # KEZDETEHEZ kotjuk (nem abszolut idohoz), igy a hullam mindig 100%-rol
+        # indul es minden ciklus vegen visszaer 100%-ra.
+        now = time.time()
+        if (self._score_pulse_prev_value is not None
+                and main_score_value != self._score_pulse_prev_value):
+            if self._score_pulse_start is None:
+                self._score_pulse_start = now
+            self._score_pulse_until = now + self.SCORE_PULSE_DURATION_SEC
+        self._score_pulse_prev_value = main_score_value
+
         # KÉZI FINOMHANGOLÁS:
         # Ha balra/jobbra akarod tolni: változtasd a 0-t (pl. +20 vagy -20)
         # Ha feljebb/lejjebb akarod tolni: változtasd a -40-et
-        korrekcio_x = 0 
-        korrekcio_y = 15 
+        korrekcio_x = 0
+        korrekcio_y = 15
 
         center_x = (self.SCREEN_W // 2) + korrekcio_x
         center_y = (self.SCREEN_H // 2) + korrekcio_y
 
-        score_rect = self._main_score_cache.get_rect(center=(center_x, center_y))
-        self.screen.blit(self._main_score_cache, score_rect)
+        # Luktetes: 0.5s-enkent (masodpercenkent 2x) egy teljes 100% -> 110% ->
+        # 100% ciklus. NEM az idozitonel vagjuk el, hanem a kovetkezo ciklus-
+        # hatarnal, ahol a meret pont 100% - igy nincs csuf visszaugras a
+        # csucsrol. A ciklushatar mindig a SOROZAT kezdetehez kepest szamit.
+        pulse_scale = 1.0
+        if self._score_pulse_start is not None:
+            cycle = self.SCORE_PULSE_PERIOD_SEC
+            cycles = max(1, math.ceil((self._score_pulse_until - self._score_pulse_start) / cycle))
+            aligned_end = self._score_pulse_start + cycles * cycle
+            if now >= aligned_end:
+                self._score_pulse_start = None  # egesz ciklus vegen, 100%-nal allt le
+            else:
+                bump = 0.5 - 0.5 * math.cos(2 * math.pi * (now - self._score_pulse_start) / cycle)
+                pulse_scale = 1.0 + (self.SCORE_PULSE_MAX_SCALE - 1.0) * bump
+
+        if pulse_scale != 1.0:
+            self._blit_scaled_centered(self._main_score_cache, (center_x, center_y), pulse_scale)
+        else:
+            score_rect = self._main_score_cache.get_rect(center=(center_x, center_y))
+            self.screen.blit(self._main_score_cache, score_rect)
 
         
 
