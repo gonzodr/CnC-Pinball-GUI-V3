@@ -85,6 +85,10 @@ class MockInputController:
             elif key == pygame.K_k:
                 events.append(GameEvent("DEV_BEAT_SCORE", ()))
 
+            # Munchies Abduction fejlesztoi inditas (U = UFO/VUK).
+            elif key == pygame.K_u:
+                events.append(GameEvent("MUNCHIES_START", ()))
+
             # 2. Pontszerzés (W)
             elif key == pygame.K_w:
                 self._scores[self._player] += 1500

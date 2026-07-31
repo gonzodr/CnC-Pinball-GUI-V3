@@ -134,6 +134,13 @@ def main():
                 # (neveket beirni, stb.) anelkul, hogy a W/R/B/P/stb.
                 # tesztgombok veletlenul jatek-akciokat valtananak ki.
                 state.service_menu.handle_pygame_events(pygame_events)
+            elif state.state == AppState.MINIGAME:
+                # A minijatek nyomva-tartott iranyitast hasznal, ezert a
+                # KEYDOWN es KEYUP esemenyeket is nyersen kapja meg.
+                for pg_event in pygame_events:
+                    state.minigame.handle_event(pg_event)
+                if gui.has_quit_key_event(pygame_events):
+                    running = False
             else:
                 if gui.has_quit_key_event(pygame_events):
                     running = False
@@ -230,6 +237,8 @@ def main():
                 gui.render_special_thanks(state.thanks_manager.names)
             elif state.state == AppState.SERVICE_MENU:
                 gui.render_service_menu(state.service_menu)
+            elif state.state == AppState.MINIGAME and state.minigame is not None:
+                state.minigame.draw(gui.screen)
 
             # 5b. Folyamatban levo crossfade rarajzolasa, ha van (no-op, ha nincs)
             gui.draw_fade_overlay()

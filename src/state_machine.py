@@ -9,6 +9,7 @@ from score_manager import ScoreManager
 from name_entry import NameEntryController
 from thanks_names_manager import ThanksNamesManager
 from service_menu import ServiceMenuController
+from munchies_abduction import MunchiesAbductionGame
 
 class AppState(Enum):
     SCORE = auto()
@@ -22,6 +23,7 @@ class AppState(Enum):
     LOGO = auto()
     BEAT_SCORE = auto()
     SERVICE_MENU = auto()
+    MINIGAME = auto()
 
 class StateMachine:
     SUMMARY_DURATION_SEC = 8.0  # buvos 8 mp, mint a tobbi attract-kepernyonel - a reveal 4.6s-nal kesz, utana meg ~3.4s allva marad
@@ -125,6 +127,9 @@ class StateMachine:
         self.service_menu = ServiceMenuController(
             self.score_manager, self.thanks_manager, self.recent_events, self.serial_reader
         )
+        self.minigame = None
+        self.last_minigame_result = None
+        self._minigame_last_tick = 0.0
 
         # Indulaskor rogton az attract-loop fut (Press Play -> Special
         # Thanks -> Press Play -> Hiscore -> elolrol), amig Start ki nem
@@ -144,6 +149,14 @@ class StateMachine:
             # gomb" jellegu esemenyt naplozunk, a zajos SCORE_UPDATE/VIDEO-t nem.
             self.recent_events.append((time.time(), event.kind))
 
+        # A minijatek alatt a flipper/plunger hardveres el-es felengedes
+        # esemenyei kozvetlenul a jatekmenethez tartoznak.
+        if self.state == AppState.MINIGAME and self.minigame is not None and (
+            "FLIPPER" in event.kind or "PLUNGER" in event.kind or event.kind == "PLAYER_PRESS"
+        ):
+            self.minigame.handle_event(event)
+            return
+
         if event.kind == "SCORE_UPDATE":
             score, num_players, player, ball, bonus, bonusx = event.args
             self.players[player] = score
@@ -157,6 +170,7 @@ class StateMachine:
                 AppState.SUMMARY, AppState.HIGHSCORE, AppState.NAME_ENTRY,
                 AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO,
                 AppState.BEAT_SCORE, AppState.SERVICE_MENU,
+                AppState.MINIGAME,
                 # VIDEO is vedett: jatek kozben 350 ms-onkent jon score-uzenet,
                 # es e nelkul MINDEN videot azonnal lelott a kovetkezo update
                 # ("sotet villanas, majd vissza a GUI")!
@@ -276,6 +290,13 @@ class StateMachine:
             if self.state == AppState.SCORE:
                 self.state = AppState.BEAT_SCORE
 
+        elif event.kind == "MUNCHIES_START":
+            if self.state == AppState.SCORE:
+                self.minigame = MunchiesAbductionGame()
+                self._minigame_last_tick = time.monotonic()
+                self._in_attract_loop = False
+                self.state = AppState.MINIGAME
+
         elif event.kind == "VIDEO":
             video_name = event.args[0]
 
@@ -352,6 +373,23 @@ class StateMachine:
         self._attract_state_end_time = time.time() + duration
 
     def tick(self):
+        if self.state == AppState.MINIGAME and self.minigame is not None:
+            now = time.monotonic()
+            self.minigame.update(now - self._minigame_last_tick)
+            self._minigame_last_tick = now
+            if self.minigame.finished:
+                result = self.minigame.result_dict()
+                self.last_minigame_result = result
+                bonus = result["total_bonus"]
+                self.players[self.current_player] += bonus
+                if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
+                    # Firmware oldalon ez a sor adja hozza a fizikai gep
+                    # pontjahoz is ugyanazt a bonuszt.
+                    self.serial_reader.send_raw(f"MunchiesBonus,{bonus}")
+                self.minigame = None
+                self.state = AppState.SCORE
+            return
+
         # Attract-loop lepteto: barmelyik loop-kepernyon (LOGO, PRESS_START,
         # SPECIAL_THANKS, HIGHSCORE, BEAT_SCORE) ez donti el, mikor kell
         # tovabblepni a kovetkezo elemre - MEGELOZI az egyes allapotok sajat

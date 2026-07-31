@@ -42,8 +42,13 @@ def parse_line(line: str) -> Optional[GameEvent]:
                 return GameEvent("VIDEO_STOP")
             return GameEvent("VIDEO", (parts[1],))
 
+        elif cmd in ("MUNCHIES", "VUK_GAME"):
+            return GameEvent("MUNCHIES_START")
+
         elif cmd in ["MULTIBALL_ON", "MULTIBALL_OFF", "ATTRACT", "PLAYERCOUNT_NEXT",
-                     "START", "FLIPPER_LEFT", "FLIPPER_RIGHT", "PLAYER_PRESS"]:
+                     "START", "FLIPPER_LEFT", "FLIPPER_RIGHT", "PLAYER_PRESS", "PLUNGER",
+                     "FLIPPER_LEFT_DOWN", "FLIPPER_LEFT_UP", "FLIPPER_RIGHT_DOWN",
+                     "FLIPPER_RIGHT_UP", "PLUNGER_DOWN", "PLUNGER_UP"]:
             return GameEvent(cmd)
 
         else:
