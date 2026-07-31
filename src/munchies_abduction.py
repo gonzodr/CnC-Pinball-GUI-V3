@@ -542,30 +542,61 @@ class HUD:
 
 
 class ResultsOverlay:
+    """Vegeredmeny-overlay a minijatek utan.
+
+    FIGYELEM (32 bites ARM / Pi 3B+): ez a kepernyo NEM epithet egy kozos,
+    teljes kepernyos SRCALPHA "layer"-t, amire rakomponalja a szovegeket.
+    A szeles SRCALPHA->SRCALPHA blit `pygame_parachute: Bus Error`-ral
+    megoli a processzt ezen a gepen (armv7l, pygame-ce 2.5.7 / SDL 2.32.4) -
+    pontosan ez omlasztotta ossze a GUI-t a minijatek vegen. Helyette minden
+    elem KOZVETLENUL a kepernyore (a display surface-re) kerul: a rajzolo
+    primitivek (draw.rect/line) biztonsagosak, a szoveg-surface-ok pedig
+    kicsik, es cache-elve vannak, hogy frame-enkent csak blit maradjon.
+    Ugyanez a minta mukodik mar a score_gui.py PRESS_START/Special Thanks
+    kepernyoin is.
+    """
+
+    PANEL_RECT = (52, 86, 536, 326)
+
     def __init__(self):
         self.title, self.row, self.total = _font(55), _font(25), _font(48)
         self._cache_key = None
-        self._cached_surface = None
+        self._cached_text = None
+        # Attetszo sotetites: sima (NEM SRCALPHA) felulet + set_alpha(), amit
+        # kozvetlenul a kepernyore blittelunk - ez a biztonsagos technika
+        # ARM-on, szemben egy teljes kepernyos SRCALPHA felulettel.
+        self._wash = pygame.Surface((WIDTH, HEIGHT))
+        self._wash.fill((7, 0, 23))
+        self._wash.set_alpha(220)
 
     def draw(self, screen, result):
         cache_key = (result["collected_count"], result["combo_bonus"], result["total_bonus"])
         if cache_key != self._cache_key:
             self._cache_key = cache_key
-            layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            layer.fill((7, 0, 23, 220))
-            pygame.draw.rect(layer, (44, 7, 75), (52, 86, 536, 326), border_radius=30)
-            pygame.draw.rect(layer, (126, 34, 204), (52, 86, 536, 326), 6, border_radius=30)
-            title = _text(self.title, "MUNCHIES", (111, 255, 43), width=4); layer.blit(title, title.get_rect(center=(320, 75)))
-            sub = _text(self.row, "ABDUCTION RESULTS", (255, 88, 211)); layer.blit(sub, sub.get_rect(center=(320, 122)))
-            rows = (("FOOD COLLECTED", result["collected_count"]), ("COMBO BONUS", f'{result["combo_bonus"]:,}'))
-            for i, (label, value) in enumerate(rows):
-                y = 178 + i * 52
-                layer.blit(_text(self.row, label), (95, y)); val = _text(self.row, value, (255, 224, 63)); layer.blit(val, val.get_rect(right=545, top=y))
-            pygame.draw.line(layer, (158, 42, 221), (85, 282), (555, 282), 3)
-            total = _text(self.total, f'{result["total_bonus"]:,}', (255, 235, 70), width=3); layer.blit(total, total.get_rect(center=(320, 326)))
-            footer = _text(self.row, "WELL ABDUCTED!  RETURNING TO PINBALL...", (128, 255, 71)); layer.blit(footer, footer.get_rect(center=(320, 382)))
-            self._cached_surface = layer.convert_alpha()
-        screen.blit(self._cached_surface, (0, 0))
+            rows = (("FOOD COLLECTED", result["collected_count"]),
+                    ("COMBO BONUS", f'{result["combo_bonus"]:,}'))
+            self._cached_text = {
+                "title": _text(self.title, "MUNCHIES", (111, 255, 43), width=4),
+                "sub": _text(self.row, "ABDUCTION RESULTS", (255, 88, 211)),
+                "rows": [(_text(self.row, label), _text(self.row, value, (255, 224, 63)))
+                         for label, value in rows],
+                "total": _text(self.total, f'{result["total_bonus"]:,}', (255, 235, 70), width=3),
+                "footer": _text(self.row, "WELL ABDUCTED!  RETURNING TO PINBALL...", (128, 255, 71)),
+            }
+
+        cached = self._cached_text
+        screen.blit(self._wash, (0, 0))
+        pygame.draw.rect(screen, (44, 7, 75), self.PANEL_RECT, border_radius=30)
+        pygame.draw.rect(screen, (126, 34, 204), self.PANEL_RECT, 6, border_radius=30)
+        screen.blit(cached["title"], cached["title"].get_rect(center=(320, 75)))
+        screen.blit(cached["sub"], cached["sub"].get_rect(center=(320, 122)))
+        for i, (label_surface, value_surface) in enumerate(cached["rows"]):
+            y = 178 + i * 52
+            screen.blit(label_surface, (95, y))
+            screen.blit(value_surface, value_surface.get_rect(right=545, top=y))
+        pygame.draw.line(screen, (158, 42, 221), (85, 282), (555, 282), 3)
+        screen.blit(cached["total"], cached["total"].get_rect(center=(320, 326)))
+        screen.blit(cached["footer"], cached["footer"].get_rect(center=(320, 382)))
 
 
 class MunchiesAbductionGame:
