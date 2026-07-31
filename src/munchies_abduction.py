@@ -62,6 +62,17 @@ GOOD_VALUES = {
 BAD_KINDS = ("trash_lid", "trash", "police", "junk", "can", "boot")
 
 
+def _is_raspberry_pi():
+    override = os.environ.get("MUNCHIES_LOW_POWER")
+    if override is not None:
+        return override.strip().lower() not in ("", "0", "false", "no")
+    try:
+        return "raspberry pi" in Path("/proc/device-tree/model").read_text(
+            encoding="utf-8", errors="ignore").lower()
+    except OSError:
+        return False
+
+
 def _font(size: int) -> pygame.font.Font:
     path = os.path.join(os.path.dirname(__file__), "assets", "Modak.ttf")
     return pygame.font.Font(path if os.path.isfile(path) else None, size)
@@ -91,6 +102,11 @@ class StreamingBackground:
     OUTPUT_FPS = 15.0
     CACHE_SIZE = 60
     LOOK_BEHIND = 5
+    READY_SIZE = 8
+    # Converting several decoded RGBA frames in the same game tick creates a
+    # visible main-thread spike on a Raspberry Pi. One conversion per tick is
+    # enough to sustain the 15 FPS sequence while keeping frame time bounded.
+    CONVERTS_PER_TICK = 1
 
     def __init__(self):
         base = Path(__file__).resolve().parent / "assets" / "Minigame"
@@ -103,8 +119,14 @@ class StreamingBackground:
         self.playhead = 0.0
         self.current_index = 0
         self._output_accumulator = 0.0
+        self._last_speed = None
+        self._speed_acceleration = 0.0
         self._requests = queue.Queue(maxsize=self.CACHE_SIZE * 2)
-        self._ready = queue.Queue(maxsize=self.CACHE_SIZE)
+        # Decoded RGBA surfaces are roughly 1.2 MiB each. A 60-entry ready
+        # queue duplicated the 60-frame display cache and could consume about
+        # 145 MiB in total. A short queue still absorbs decoder jitter while
+        # avoiding memory pressure and needless CPU competition on the Pi.
+        self._ready = queue.Queue(maxsize=self.READY_SIZE)
         self._pending = set()
         self._desired = {0}
         self._pending_lock = threading.Lock()
@@ -161,6 +183,10 @@ class StreamingBackground:
             try:
                 decoded = pygame.image.load(str(self.paths[index]))
                 while not self._stop.is_set():
+                    with self._pending_lock:
+                        if index not in self._desired:
+                            self._pending.discard(index)
+                            break
                     try:
                         self._ready.put((index, decoded), timeout=.1)
                         break
@@ -171,27 +197,12 @@ class StreamingBackground:
                 with self._pending_lock:
                     self._pending.discard(index)
 
-    def _request(self, index):
-        if not self.paths:
-            return
-        index %= len(self.paths)
-        with self._pending_lock:
-            if index in self.cache or index in self._pending:
-                return
-            self._pending.add(index)
-        try:
-            self._requests.put_nowait(index)
-        except queue.Full:
-            with self._pending_lock:
-                self._pending.discard(index)
-
     def _request_window(self, speed):
         if not self.paths:
             return
         # Predict the actual 15 FPS output indices, not every source frame.
         # At 2x speed this naturally requests roughly every fourth PNG. Thus
         # acceleration does not multiply decoder workload.
-        source_step = self.SOURCE_FPS * speed / self.OUTPUT_FPS
         # Keep the currently displayed frame pinned even between two output
         # ticks; otherwise the continuously moving playhead could invalidate
         # its request before the worker finishes decoding it.
@@ -199,22 +210,58 @@ class StreamingBackground:
         slots = list(range(0, self.CACHE_SIZE - self.LOOK_BEHIND))
         slots.extend(range(-1, -self.LOOK_BEHIND - 1, -1))
         for slot in slots:
-            index = int(self.playhead + slot * source_step) % len(self.paths)
+            seconds_ahead = slot / self.OUTPUT_FPS
+            # The street accelerates throughout the minute. Constant-speed
+            # prediction drifts by several source frames at the far end of a
+            # 60-frame window, invalidating useful prefetched images. A local
+            # kinematic prediction tracks the curve closely enough to keep
+            # the current playhead inside the warmed cache.
+            source_offset = self.SOURCE_FPS * (
+                speed * seconds_ahead
+                + .5 * self._speed_acceleration * seconds_ahead ** 2
+            )
+            index = int(self.playhead + source_offset) % len(self.paths)
             if index not in desired:
                 desired.append(index)
         with self._pending_lock:
             self._desired = set(desired)
-        for index in desired:
-            self._request(index)
+            requested = [
+                index for index in desired
+                if index not in self.cache and index not in self._pending
+            ]
+            self._pending.update(requested)
+        # Queue the near frames first. Batch bookkeeping avoids taking the
+        # lock roughly 900 times per second while the road is moving.
+        for position, index in enumerate(requested):
+            try:
+                self._requests.put_nowait(index)
+            except queue.Full:
+                with self._pending_lock:
+                    self._pending.difference_update(requested[position:])
+                break
 
-    def _consume_ready(self, limit=6):
-        for _ in range(limit):
+    def _consume_ready(self, limit=None, scan_limit=8):
+        if limit is None:
+            limit = self.CONVERTS_PER_TICK
+        converted = inspected = 0
+        while converted < limit and inspected < scan_limit:
             try:
                 index, decoded = self._ready.get_nowait()
             except queue.Empty:
                 break
+            inspected += 1
+            with self._pending_lock:
+                still_useful = index in self._desired or index == self.current_index
+            if not still_useful:
+                # Speed changes continuously, so a far-ahead decoded frame
+                # can leave the prediction window before it reaches the main
+                # thread. Do not pay for an unnecessary 640x480 conversion.
+                with self._pending_lock:
+                    self._pending.discard(index)
+                continue
             try:
                 self.cache[index] = self._prepare_frame(decoded)
+                converted += 1
                 self.cache.move_to_end(index)
                 while len(self.cache) > self.CACHE_SIZE:
                     obsolete = next((key for key in self.cache if key not in self._desired), None)
@@ -226,10 +273,19 @@ class StreamingBackground:
                 with self._pending_lock:
                     self._pending.discard(index)
 
+    def prime(self):
+        """Move one decoded frame into video memory without moving the road."""
+        self._consume_ready()
+
     def update(self, dt, speed):
         self._consume_ready()
         if not self.paths:
             return
+        if self._last_speed is not None and dt > 1e-6:
+            measured = (speed - self._last_speed) / dt
+            measured = max(-.25, min(.25, measured))
+            self._speed_acceleration += (measured - self._speed_acceleration) * .25
+        self._last_speed = speed
         self.playhead = (self.playhead + self.SOURCE_FPS * speed * dt) % len(self.paths)
         self._output_accumulator += dt
         output_period = 1.0 / self.OUTPUT_FPS
@@ -437,37 +493,79 @@ class PlayerUFO:
 
 
 class HUD:
-    def __init__(self): self.label, self.value = _font(16), _font(27)
+    BOXES = ((8, 8, 155, "TIME LEFT"),
+             (174, 8, 292, "BONUS"),
+             (477, 8, 155, "MUNCHIES"))
+
+    def __init__(self):
+        self.label, self.value = _font(16), _font(27)
+        self.box_surfaces = []
+        for _, _, width, label in self.BOXES:
+            panel = pygame.Surface((width, 64), pygame.SRCALPHA)
+            pygame.draw.rect(panel, (14, 3, 29), (0, 0, width, 64), border_radius=13)
+            pygame.draw.rect(panel, (109, 15, 194), (0, 0, width, 64), 3, border_radius=13)
+            label_surface = _text(self.label, label, (170, 255, 62))
+            panel.blit(label_surface, label_surface.get_rect(center=(width // 2, 15)))
+            self.box_surfaces.append(panel.convert_alpha())
+        self._value_keys = [None] * len(self.BOXES)
+        self._value_surfaces = [None] * len(self.BOXES)
+        self._combo_key = None
+        self._combo_surface = None
+        self._flash_surfaces = {
+            "+1 SEC": _text(self.value, "+1 SEC", (120, 255, 60), width=3).convert_alpha(),
+            "-2 SEC": _text(self.value, "-2 SEC", (255, 78, 90), width=3).convert_alpha(),
+        }
+
+    def _value_surface(self, slot, value):
+        if value != self._value_keys[slot]:
+            self._value_keys[slot] = value
+            self._value_surfaces[slot] = _text(self.value, value).convert_alpha()
+        return self._value_surfaces[slot]
+
+    def flash_surface(self, value):
+        return self._flash_surfaces.get(value)
 
     def draw(self, screen, remaining, score, count, combo):
-        boxes = ((8, 8, 155, "TIME LEFT", f"{max(0, remaining):04.1f}"),
-                 (174, 8, 292, "BONUS", f"{score:,}"),
-                 (477, 8, 155, "MUNCHIES", f"{count:02d}/15"))
-        for x, y, w, label, value in boxes:
-            pygame.draw.rect(screen, (14, 3, 29), (x, y, w, 64), border_radius=13)
-            pygame.draw.rect(screen, (109, 15, 194), (x, y, w, 64), 3, border_radius=13)
-            ls = _text(self.label, label, (170, 255, 62)); screen.blit(ls, ls.get_rect(center=(x + w // 2, y + 15)))
-            vs = _text(self.value, value); screen.blit(vs, vs.get_rect(center=(x + w // 2, y + 43)))
+        values = (f"{max(0, remaining):04.1f}", f"{score:,}", f"{count:02d}/15")
+        for slot, ((x, y, width, _), panel, value) in enumerate(
+                zip(self.BOXES, self.box_surfaces, values)):
+            screen.blit(panel, (x, y))
+            value_surface = self._value_surface(slot, value)
+            screen.blit(value_surface, value_surface.get_rect(center=(x + width // 2, y + 43)))
         if combo > 1:
-            cs = _text(self.value, f"COMBO x{combo}", (255, 91, 213)); screen.blit(cs, (14, 82))
+            combo_key = f"COMBO x{combo}"
+            if combo_key != self._combo_key:
+                self._combo_key = combo_key
+                self._combo_surface = _text(
+                    self.value, combo_key, (255, 91, 213)).convert_alpha()
+            screen.blit(self._combo_surface, (14, 82))
 
 
 class ResultsOverlay:
-    def __init__(self): self.title, self.row, self.total = _font(55), _font(25), _font(48)
+    def __init__(self):
+        self.title, self.row, self.total = _font(55), _font(25), _font(48)
+        self._cache_key = None
+        self._cached_surface = None
 
     def draw(self, screen, result):
-        shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA); shade.fill((7, 0, 23, 220)); screen.blit(shade, (0, 0))
-        pygame.draw.rect(screen, (44, 7, 75), (52, 86, 536, 326), border_radius=30)
-        pygame.draw.rect(screen, (126, 34, 204), (52, 86, 536, 326), 6, border_radius=30)
-        title = _text(self.title, "MUNCHIES", (111, 255, 43), width=4); screen.blit(title, title.get_rect(center=(320, 75)))
-        sub = _text(self.row, "ABDUCTION RESULTS", (255, 88, 211)); screen.blit(sub, sub.get_rect(center=(320, 122)))
-        rows = (("FOOD COLLECTED", result["collected_count"]), ("COMBO BONUS", f'{result["combo_bonus"]:,}'))
-        for i, (label, value) in enumerate(rows):
-            y = 178 + i * 52
-            screen.blit(_text(self.row, label), (95, y)); val = _text(self.row, value, (255, 224, 63)); screen.blit(val, val.get_rect(right=545, top=y))
-        pygame.draw.line(screen, (158, 42, 221), (85, 282), (555, 282), 3)
-        total = _text(self.total, f'{result["total_bonus"]:,}', (255, 235, 70), width=3); screen.blit(total, total.get_rect(center=(320, 326)))
-        footer = _text(self.row, "WELL ABDUCTED!  RETURNING TO PINBALL...", (128, 255, 71)); screen.blit(footer, footer.get_rect(center=(320, 382)))
+        cache_key = (result["collected_count"], result["combo_bonus"], result["total_bonus"])
+        if cache_key != self._cache_key:
+            self._cache_key = cache_key
+            layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            layer.fill((7, 0, 23, 220))
+            pygame.draw.rect(layer, (44, 7, 75), (52, 86, 536, 326), border_radius=30)
+            pygame.draw.rect(layer, (126, 34, 204), (52, 86, 536, 326), 6, border_radius=30)
+            title = _text(self.title, "MUNCHIES", (111, 255, 43), width=4); layer.blit(title, title.get_rect(center=(320, 75)))
+            sub = _text(self.row, "ABDUCTION RESULTS", (255, 88, 211)); layer.blit(sub, sub.get_rect(center=(320, 122)))
+            rows = (("FOOD COLLECTED", result["collected_count"]), ("COMBO BONUS", f'{result["combo_bonus"]:,}'))
+            for i, (label, value) in enumerate(rows):
+                y = 178 + i * 52
+                layer.blit(_text(self.row, label), (95, y)); val = _text(self.row, value, (255, 224, 63)); layer.blit(val, val.get_rect(right=545, top=y))
+            pygame.draw.line(layer, (158, 42, 221), (85, 282), (555, 282), 3)
+            total = _text(self.total, f'{result["total_bonus"]:,}', (255, 235, 70), width=3); layer.blit(total, total.get_rect(center=(320, 326)))
+            footer = _text(self.row, "WELL ABDUCTED!  RETURNING TO PINBALL...", (128, 255, 71)); layer.blit(footer, footer.get_rect(center=(320, 382)))
+            self._cached_surface = layer.convert_alpha()
+        screen.blit(self._cached_surface, (0, 0))
 
 
 class MunchiesAbductionGame:
@@ -490,6 +588,22 @@ class MunchiesAbductionGame:
             value: _text(self.countdown_font, str(value), (181, 255, 74), width=5)
             for value in (3, 2, 1)
         }
+        self._countdown_shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self._countdown_shade.fill((8, 0, 28, 96))
+        self._countdown_shade = self._countdown_shade.convert_alpha()
+        self._countdown_label = _text(
+            self.countdown_label_font, "GET READY!", (255, 99, 220), width=3
+        ).convert_alpha()
+        # The beam only occupies a narrow horizontal strip, but previously a
+        # fresh full-screen alpha surface was allocated and blended every
+        # frame. Reuse it and touch/blit only the actual beam bounds.
+        self._beam_layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA).convert_alpha()
+        self._beam_dirty_rect = pygame.Rect(
+            0, BEAM_TOP_Y - 14, WIDTH, BEAM_BASE_Y - BEAM_TOP_Y + 32
+        )
+        self._beam_render_fps = 15.0 if _is_raspberry_pi() else float(FPS)
+        self._beam_render_tick = -1
+        self._beam_render_x = self.player.x
         self._music_active = False
         self.time_flash_text = ""
         self.time_flash_age = 0.0
@@ -576,6 +690,10 @@ class MunchiesAbductionGame:
             self.finished = self.results_elapsed >= RESULTS_SECONDS
             return
         if self.phase == "countdown":
+            # The road stays still, but decoded frames are moved into video
+            # memory one at a time. This turns the countdown into a free
+            # pre-roll buffer and prevents a conversion burst on "1" -> play.
+            self.assets.background.prime()
             self.countdown_elapsed += dt
             if self.countdown_elapsed >= COUNTDOWN_SECONDS - 1e-9:
                 self.countdown_elapsed = COUNTDOWN_SECONDS
@@ -702,10 +820,26 @@ class MunchiesAbductionGame:
 
     def _draw_beam(self, screen):
         """Soft, animated tractor beam inspired by the concept artwork."""
+        render_tick = int(self.elapsed * self._beam_render_fps + 1e-9)
+        if render_tick == self._beam_render_tick:
+            # On the Pi the expensive procedural field is refreshed at the
+            # same 15 FPS as the street sequence. Between refreshes the cached
+            # layer follows the UFO exactly, so steering never leaves the beam
+            # detached from its emitter.
+            x_shift = round(self.player.x - self._beam_render_x)
+            screen.blit(
+                self._beam_layer,
+                (self._beam_dirty_rect.left + x_shift, self._beam_dirty_rect.top),
+                self._beam_dirty_rect,
+            )
+            return
+        self._beam_render_tick = render_tick
+        self._beam_render_x = self.player.x
         pulse = (math.sin(self.elapsed * 11.0) + 1.0) * .5
         capture_flash = max((1.0 - age / .24 for age, _ in self.beam_shocks if age < .24), default=0.0)
         outer = self.player.beam_polygon()
-        beam = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        beam = self._beam_layer
+        beam.fill((0, 0, 0, 0), self._beam_dirty_rect)
 
         # Several translucent, borderless layers simulate a soft glow. Each
         # layer has a slightly different wave phase, avoiding the old rigid box.
@@ -833,12 +967,10 @@ class MunchiesAbductionGame:
                             (base_centre - base_width * .62, BEAM_BASE_Y - 8,
                              base_width * 1.24, 16))
 
-        screen.blit(beam, (0, 0))
+        screen.blit(beam, self._beam_dirty_rect.topleft, self._beam_dirty_rect)
 
     def _draw_countdown(self, screen):
-        shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        shade.fill((8, 0, 28, 96))
-        screen.blit(shade, (0, 0))
+        screen.blit(self._countdown_shade, (0, 0))
         number = self.countdown_number()
         centre = (WIDTH // 2, HEIGHT // 2 + 4)
         pulse = (math.sin((self.countdown_elapsed % .5) / .5 * math.pi) ** 2)
@@ -848,8 +980,8 @@ class MunchiesAbductionGame:
         pygame.draw.circle(screen, (94, 25, 170), centre, radius - 9, 3)
         number_surface = self.countdown_numbers[number]
         screen.blit(number_surface, number_surface.get_rect(center=centre))
-        label = _text(self.countdown_label_font, "GET READY!", (255, 99, 220), width=3)
-        screen.blit(label, label.get_rect(center=(WIDTH // 2, centre[1] + 105)))
+        screen.blit(self._countdown_label,
+                    self._countdown_label.get_rect(center=(WIDTH // 2, centre[1] + 105)))
 
     def countdown_number(self):
         # Tiny epsilon keeps exact 30 FPS boundaries at 15/30 and 30/30 from
@@ -879,9 +1011,9 @@ class MunchiesAbductionGame:
             self.hud.draw(screen, self.time_left, self.score + self.combo_bonus,
                           self.collected_count, self.combo_multiplier)
             if self.phase == "playing" and self.time_flash_age > 0:
-                color = (120, 255, 60) if self.time_flash_text.startswith("+") else (255, 78, 90)
-                flash = _text(self.hud.value, self.time_flash_text, color, width=3)
-                screen.blit(flash, flash.get_rect(center=(84, 91)))
+                flash = self.hud.flash_surface(self.time_flash_text)
+                if flash is not None:
+                    screen.blit(flash, flash.get_rect(center=(84, 91)))
             if self.phase == "countdown":
                 self._draw_countdown(screen)
         else:
