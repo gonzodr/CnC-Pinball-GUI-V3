@@ -37,7 +37,10 @@ TIME_REWARD_FADE_END = 140.0
 # The result screen normally lasts 4.5 seconds, but it may stay up a little
 # longer so a mission-result voice and its optional tag are never cut short.
 RESULTS_VOICE_MAX_SECONDS = 7.0
-COUNTDOWN_SECONDS = 1.5
+INTRO_TITLE_SECONDS = 1.0
+INTRO_POST_AUDIO_SECONDS = 0.0
+COUNTDOWN_SECONDS = 3.0
+COUNTDOWN_SLOT_SECONDS = COUNTDOWN_SECONDS / 3.0
 VOICE_DUCK_SFX_GAIN = .36
 VOICE_DUCK_ATTACK_SECONDS = .055
 VOICE_DUCK_RELEASE_SECONDS = .28
@@ -1406,7 +1409,15 @@ class MunchiesAbductionGame:
         self.best_streak, self.max_combo_multiplier = 0, 1
         self.combo_time_left = 0.0
         self._pending_combo_voices = []
-        self.phase, self.countdown_elapsed = "countdown", 0.0
+        self.phase, self.countdown_elapsed = "intro", 0.0
+        self.intro_elapsed = 0.0
+        self._intro_title_audio_started = False
+        self._intro_audio_end_time = INTRO_TITLE_SECONDS
+        self._intro_sounds = {}
+        self._intro_channels = []
+        self._countdown_sounds = {}
+        self._countdown_sound_channel = None
+        self._countdown_sound_number = None
         self.results_elapsed, self.finished = 0.0, False
         self.world_speed = .6
         self._background_closed = False
@@ -1423,6 +1434,8 @@ class MunchiesAbductionGame:
         self._countdown_label = _text(
             self.countdown_label_font, "GET READY!", (255, 99, 220), width=3
         ).convert_alpha()
+        (self._intro_background, self._intro_title,
+         self._intro_title_rect, self._intro_foreground) = self._load_intro_assets()
         # The beam only occupies a narrow horizontal strip, but previously a
         # fresh full-screen alpha surface was allocated and blended every
         # frame. Reuse it and touch/blit only the actual beam bounds.
@@ -1452,11 +1465,13 @@ class MunchiesAbductionGame:
         self._next_banter_at = self.rng.uniform(8.0, 12.0)
         self.time_flash_text = ""
         self.time_flash_age = 0.0
-        self._start_music()
         self._load_beam_sound()
         self._load_pickup_sounds()
         self._load_reaction_sounds()
         self.voices = CharacterVoiceDirector(self.portraits, self.rng)
+        self._load_intro_sounds()
+        self._load_countdown_sounds()
+        self._play_intro_sound("theremin")
         # Keep a spatially even pipeline across the 92.4 m road. Without
         # this, all eight objects would bunch up at the horizon on startup.
         for slot in range(8):
@@ -1465,7 +1480,133 @@ class MunchiesAbductionGame:
     def _sound(self, name):
         if self.sound_hook: self.sound_hook(name)
 
+    @staticmethod
+    def _load_intro_assets():
+        intro_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Intro"
+
+        def load(name, alpha, fallback_color=(0, 0, 0, 0)):
+            path = intro_dir / name
+            fallback = pygame.Surface(
+                (WIDTH, HEIGHT), pygame.SRCALPHA if alpha else 0
+            )
+            fallback.fill(fallback_color)
+            fallback = fallback.convert_alpha() if alpha else fallback.convert()
+            if not path.is_file():
+                print(f"[munchies] intro asset missing: Intro/{name}")
+                return fallback
+            try:
+                surface = pygame.image.load(str(path))
+                surface = surface.convert_alpha() if alpha else surface.convert()
+                if surface.get_size() != (WIDTH, HEIGHT):
+                    print(
+                        f"[munchies] intro asset should be {WIDTH}x{HEIGHT} "
+                        f"({name}: {surface.get_size()})"
+                    )
+                    surface = pygame.transform.smoothscale(
+                        surface, (WIDTH, HEIGHT)
+                    )
+                    surface = surface.convert_alpha() if alpha else surface.convert()
+                return surface
+            except pygame.error as exc:
+                print(f"[munchies] intro asset unavailable ({name}): {exc}")
+                return fallback
+
+        background = load("bgr.png", False, (4, 1, 14))
+        title_full = load("title.png", True)
+        foreground = load("foreGr.png", True)
+        title_rect = title_full.get_bounding_rect(min_alpha=1)
+        if title_rect.width and title_rect.height:
+            title = title_full.subsurface(title_rect).copy().convert_alpha()
+        else:
+            title_rect = pygame.Rect(WIDTH // 2, HEIGHT // 2, 1, 1)
+            title = pygame.Surface((1, 1), pygame.SRCALPHA).convert_alpha()
+        return background, title, title_rect, foreground
+
+    def _load_intro_sounds(self):
+        fx_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Sound" / "FX"
+        sound_specs = (
+            ("theremin", fx_dir / "Intro_theremin.wav", .78),
+            ("title", fx_dir / "munchies----abduction---.wav", 1.0),
+        )
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            pygame.mixer.set_num_channels(max(16, pygame.mixer.get_num_channels()))
+            for cue, path, volume in sound_specs:
+                if not path.is_file():
+                    print(f"[munchies] intro sound missing: Sound/FX/{path.name}")
+                    continue
+                sound = pygame.mixer.Sound(str(path))
+                sound.set_volume(volume)
+                self._intro_sounds[cue] = sound
+            self._intro_audio_end_time = max(
+                INTRO_TITLE_SECONDS,
+                self._intro_sounds.get("theremin").get_length()
+                if "theremin" in self._intro_sounds else 0.0,
+                INTRO_TITLE_SECONDS + self._intro_sounds.get("title").get_length()
+                if "title" in self._intro_sounds else INTRO_TITLE_SECONDS,
+            )
+        except pygame.error as exc:
+            self._intro_sounds.clear()
+            self._intro_audio_end_time = INTRO_TITLE_SECONDS
+            print(f"[munchies] intro sounds unavailable: {exc}")
+
+    def _play_intro_sound(self, cue):
+        sound = self._intro_sounds.get(cue)
+        if sound is None:
+            return
+        channel = sound.play()
+        if channel is not None:
+            self._intro_channels.append(channel)
+
+    def _load_countdown_sounds(self):
+        fx_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Sound" / "FX"
+        sound_files = {
+            "normal": fx_dir / "countdown.wav",
+            "final": fx_dir / "countdown2.wav",
+        }
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            for cue, path in sound_files.items():
+                if not path.is_file():
+                    print(f"[munchies] countdown sound missing: Sound/FX/{path.name}")
+                    continue
+                self._countdown_sounds[cue] = pygame.mixer.Sound(str(path))
+        except pygame.error as exc:
+            self._countdown_sounds.clear()
+            print(f"[munchies] countdown sounds unavailable: {exc}")
+
+    def _play_countdown_sound(self, number):
+        if number == self._countdown_sound_number:
+            return
+        self._countdown_sound_number = number
+        if self._countdown_sound_channel is not None:
+            self._countdown_sound_channel.stop()
+        cue = "final" if number == 1 else "normal"
+        sound = self._countdown_sounds.get(cue)
+        self._countdown_sound_channel = sound.play() if sound is not None else None
+        self._track_fx_channel(self._countdown_sound_channel)
+
+    def _stop_intro_audio(self):
+        for channel in self._intro_channels:
+            try:
+                channel.stop()
+            except pygame.error:
+                pass
+        self._intro_channels.clear()
+
+    def _begin_countdown(self):
+        self._stop_intro_audio()
+        self.phase = "countdown"
+        self.countdown_elapsed = 0.0
+        self._countdown_sound_number = None
+        self._start_music()
+        self._play_countdown_sound(3)
+
     def _start_music(self):
+        if self._music_active:
+            return
         music_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Music"
         tracks = []
         for pattern in ("*.mp3", "*.ogg", "*.wav"):
@@ -1831,6 +1972,22 @@ class MunchiesAbductionGame:
             (age + dt, start_t) for age, start_t in self.beam_shocks
             if age + dt < .55
         ]
+        if self.phase == "intro":
+            self._stop_beam_sound()
+            # Decode on the worker and convert one road frame per display tick.
+            # The eight-second intro plus countdown can therefore warm the full
+            # 60-frame LRU without ever blocking the first gameplay frame.
+            self.assets.background.prime()
+            self.intro_elapsed += dt
+            if (not self._intro_title_audio_started
+                    and self.intro_elapsed >= INTRO_TITLE_SECONDS - 1e-9):
+                self.intro_elapsed = max(self.intro_elapsed, INTRO_TITLE_SECONDS)
+                self._intro_title_audio_started = True
+                self._play_intro_sound("title")
+            intro_end = self._intro_audio_end_time + INTRO_POST_AUDIO_SECONDS
+            if self.intro_elapsed >= intro_end - 1e-9:
+                self._begin_countdown()
+            return
         if self.phase == "results":
             self._stop_beam_sound()
             self.results_elapsed += dt
@@ -1852,6 +2009,8 @@ class MunchiesAbductionGame:
                 self.countdown_elapsed = COUNTDOWN_SECONDS
                 self.phase = "playing"
                 self.voices.trigger("game_start")
+            else:
+                self._play_countdown_sound(self.countdown_number())
             return
         # Combo announcements are milestone events. If another line occupied
         # the channel at the exact pickup frame, play them as soon as it ends
@@ -2043,6 +2202,10 @@ class MunchiesAbductionGame:
             self.assets.background.close()
             self._background_closed = True
         self._stop_beam_sound()
+        self._stop_intro_audio()
+        if self._countdown_sound_channel is not None:
+            self._countdown_sound_channel.stop()
+            self._countdown_sound_channel = None
         self._stop_music()
         if self.finished:
             self.voices.stop()
@@ -2239,7 +2402,10 @@ class MunchiesAbductionGame:
         screen.blit(self._countdown_shade, (0, 0))
         number = self.countdown_number()
         centre = (WIDTH // 2, HEIGHT // 2 + 4)
-        pulse = (math.sin((self.countdown_elapsed % .5) / .5 * math.pi) ** 2)
+        slot_progress = (
+            self.countdown_elapsed % COUNTDOWN_SLOT_SECONDS
+        ) / COUNTDOWN_SLOT_SECONDS
+        pulse = math.sin(slot_progress * math.pi) ** 2
         radius = 77 + round(pulse * 8)
         pygame.draw.circle(screen, (28, 5, 52), centre, radius)
         pygame.draw.circle(screen, (115, 255, 50), centre, radius, 5)
@@ -2250,10 +2416,29 @@ class MunchiesAbductionGame:
                     self._countdown_label.get_rect(center=(WIDTH // 2, centre[1] + 105)))
 
     def countdown_number(self):
-        # Tiny epsilon keeps exact 30 FPS boundaries at 15/30 and 30/30 from
-        # being delayed one frame by binary floating-point representation.
-        slot = min(2, int((self.countdown_elapsed + 1e-9) / .5))
+        # Tiny epsilon keeps exact one-second boundaries from being delayed one
+        # frame by binary floating-point representation.
+        slot = min(2, int(
+            (self.countdown_elapsed + 1e-9) / COUNTDOWN_SLOT_SECONDS
+        ))
         return 3 - slot
+
+    def _draw_intro(self, screen):
+        screen.blit(self._intro_background, (0, 0))
+        title_progress = self._smoothstep(
+            self.intro_elapsed / INTRO_TITLE_SECONDS
+        )
+        if title_progress > 0.0:
+            width = max(1, round(self._intro_title.get_width() * title_progress))
+            height = max(1, round(self._intro_title.get_height() * title_progress))
+            if (width, height) == self._intro_title.get_size():
+                title = self._intro_title
+            else:
+                title = pygame.transform.smoothscale(
+                    self._intro_title, (width, height)
+                )
+            screen.blit(title, title.get_rect(center=self._intro_title_rect.center))
+        screen.blit(self._intro_foreground, (0, 0))
 
     def _draw_frame_overlay(self, screen):
         for surface, position in self.assets.ui_frame_parts:
@@ -2274,6 +2459,9 @@ class MunchiesAbductionGame:
                 )
 
     def draw(self, screen):
+        if self.phase == "intro":
+            self._draw_intro(screen)
+            return
         self.assets.background.draw(screen)
         if self.phase in ("playing", "countdown"):
             # The shadow belongs to the road, below every gameplay effect.
