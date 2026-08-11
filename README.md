@@ -4,7 +4,8 @@ Egyedi épített flippergép (Cheech & Chong témával) pontszám-kijelzőjének
 videólejátszásának szoftvere. Egy Teensy mikrovezérlő küldi a játék
 eseményeit (pontszám, gombnyomások, videó-triggerek) soros porton, ez a
 Python-os szoftver ebből épít fel egy teljes attract-mode + pontszám-kijelző
-GUI-t (pygame), és vezérli a témavideók lejátszását (mpv).
+GUI-t (pygame), vezérli a témavideók lejátszását (mpv), valamint futtatja a
+VUK/UFO által indított **Munchies Abduction** minijátékot.
 
 Fejlesztés PC-n (Windows/Linux) történik valódi hardver nélkül — egy
 billentyűzet-alapú mock input ugyanolyan eseményeket generál, mint amiket a
@@ -29,6 +30,7 @@ CnC Pinball GUI V3 Python/
     ├── mock_input.py             <- billentyűzet -> GameEvent (fejlesztői mód)
     ├── mpv_controller.py         <- mpv IPC vezérlés (videólejátszás)
     ├── score_gui.py              <- a teljes pygame GUI (minden képernyő)
+    ├── munchies_abduction.py     <- önálló Munchies Abduction minijáték-modul
     ├── score_manager.py          <- hiscores.json kezelése
     ├── thanks_names_manager.py   <- thanks_names.json kezelése
     ├── particle_settings.py      <- particle_settings.json kezelése (szerkeszthető effekt-szorzók)
@@ -40,6 +42,7 @@ CnC Pinball GUI V3 Python/
     ├── serial_port.json          <- legutóbb detektált Arduino port (a szerkesztőből mentve)
     └── assets/
         ├── bootimage.png         <- boot-splash kép (a splashscreen.service ezt jeleníti meg)
+        ├── Minigame/             <- pálya, sprite-ok, UI, zene, FX és karakterhangok
         └── ...                   <- egyéb képek, fontok, videók
 ```
 
@@ -68,6 +71,7 @@ loopja minden frame-ben lekérdez, és ez alapján dönt, mit rajzoljon ki a
 | `SPECIAL_THANKS` | Görgetett köszönet-lista |
 | `BEAT_SCORE` | "Beat This Score!" — a #1 rekord kihívása |
 | `SERVICE_MENU` | Titkos szerviz menü (lásd lent) |
+| `MINIGAME` | Munchies Abduction: VUK/UFO által indított, valós időben vezérelt minijáték |
 
 ### Attract-mode loop
 
@@ -90,7 +94,89 @@ SCORE --(NEXT/GAMEOVER)--> SUMMARY --(8s után)--> [FINAL_SCORES, ha 2+ játéko
                                                   --> attract-loop (ha se nem rekord, se nem GAMEOVER: vissza SCORE-ba)
 
 NAME_ENTRY --(kész)--> HIGHSCORE (5s) --> attract-loop
+
+SCORE --(MUNCHIES/VUK_GAME)--> MINIGAME --(Time's Up + eredmény)--> SCORE
 ```
+
+## Munchies Abduction minijáték
+
+A VUK/UFO találat egy 640×480-as, felülnézetes Cheech & Chong minijátékot
+indít. A játékos a két flippergombbal mozgatja az UFO-t, a
+Shoot/Player/Plunger gombbal pedig bekapcsolja a vonósugarat. A jó tárgyakat
+(kajákat) be kell szippantani, a junk tárgyakat érdemes elkerülni.
+
+Indítás:
+
+- firmware/soros protokoll: `MUNCHIES` vagy `VUK_GAME` sor;
+- PC-s fejlesztői mód: `U` billentyű a `SCORE` képernyőn;
+- a minijáték csak aktív flipperjáték közben, `SCORE` állapotból indul el.
+
+A teljes képernyős folyamat:
+
+```text
+INTRO → 3 / 2 / 1 → JÁTÉK → TIME'S UP → SUMSCREEN → SCORE
+```
+
+Az intro és a visszaszámlálás alatt a háttér-streamer előre feltölti a
+pályacache-t. Az idő lejártakor a játéktér kimerevedik, lefut a kétlépcsős
+Time's Up hang/animáció, majd az eredményképernyő és a két karakter lezáró
+párbeszéde. A végső bónusz bekerül az aktuális játékos flipperpontszámába,
+és hardveren a GUI `MunchiesBonus,<pont>` sort küld vissza a firmware-nek.
+
+### Játékszabályok és pontozás
+
+- Alapidő: **35 másodperc**; az első kb. 15 másodperc könnyebb tutorial
+  szakasz, utána fokozatosan nő a sebesség és a spawnnyomás.
+- Egy kaja felszedése névlegesen **+2 másodpercet** és típusfüggő alappontot
+  ad; a tényleges időjutalmat a lentebb leírt dinamikus csillapítás módosítja.
+- Egy junk tárgy **-2 másodpercet** és legfeljebb **-1500 pontot** jelent, valamint
+  megszakítja a kombót.
+- A kombószorzó 3/5/8/12 egymást követő kajánál `x2/x3/x4/x5`; a lánc
+  1,35 másodperc tétlenség után lejár.
+- Minden kajatípus külön `0/10` collectiont vezet. A tizedik darab után a
+  számláló újraindul, jár névlegesen **+5 másodperc** és **10 000 collection
+  bonus**.
+- Hosszú meneteknél az időjutalom fokozatosan gyengül, és a magas időtartalék
+  is csillapítja; nincs kemény pont- vagy időlimit, de a játék egyre nehezebb.
+
+A SumScreen végső képlete:
+
+```text
+TOTAL BONUS = MUNCHIES SCORE + COMBO BONUS + COLLECTION BONUS - JUNK PENALTY
+```
+
+Az eredményképernyő ezen felül mutatja a felszedett kaják számát, a teljes
+collection seteket, a legjobb streaket, a maximális kombót és a felszedett
+junk mennyiségét.
+
+### Minijáték assetstruktúra
+
+```text
+src/assets/Minigame/
+├── Level/                       # STREET_00000.png ... STREET_00599.png
+├── Intro/                       # bgr.png, title.png, foreGr.png
+├── Music/                       # loopolt háttérzene
+├── Sound/
+│   ├── FX/                      # intro, countdown, beam, pickup, reaction, Time's Up
+│   └── Voices/                  # VLxxx[_item][_speaker].wav karakterhangok
+├── Sprites/
+│   ├── Food/ és Junk/           # 100×100: *_sw (árnyék), *_gl (beam glow)
+│   ├── Characters/              # Cheech/Chong portré- és száj/pislogás-frame-ek
+│   └── UFO/                     # hajótest, futófény-sequence és stabil útárnyék
+└── UI/                          # Frame, HUD, Collect, SumScreen és Timesup elemek
+```
+
+A 600 pályakép **kötelezően 640×480-as, 8 bites RGB PNG legyen,
+alfacsatorna nélkül, a `Level_BG` háttérrel már összerenderelve**. A streamer
+30 FPS-en, 60 képes LRU cache-sel fut; Raspberry Pi-n két PNG-dekódoló szál
+dolgozik. A játék végén a logba írt `[munchies] background stream:` sor
+megmutatja a cache-találati arányt, a fallbackek számát és a legnagyobb
+frame-lemaradást.
+
+Az átlátszó vagy háttér nélküli STREET frame-eket a kompatibilitási útvonal
+cache-be helyezés előtt kénytelen összekomponálni a `Level_BG` képpel. Ez
+újra teljes képernyős munkát rakna a főszálra az előtöltés során, ezért új
+pályarendernél mindig ellenőrizni kell az RGB formátumot.
 
 ## Vezérlés (billentyűzet — mock input, fejlesztői teszteléshez)
 
@@ -107,9 +193,19 @@ sárga flipper); PC-n a billentyűzet szimulálja őket:
 | `B` | Labda leesik (ball drain) — NEXT vagy GAMEOVER, a játékos/labda számától függően |
 | `I` | Elindítja a teljes attract-loopot (`ATTRACT` esemény) |
 | `T` / `L` / `K` | Ideiglenes fejlesztői gombok: közvetlenül a Special Thanks / Logo / Beat This Score képernyőre ugrik (loopon kívül, gyors vizuális ellenőrzéshez) |
+| `U` | Munchies Abduction indítása a `SCORE` képernyőről |
 | `Esc` | Bárhonnan (amíg nem fut már az attract-loop) visszadob a loop elejére |
 | `Ctrl+M` | Titkos szerviz menü megnyitása (csak nyugalmi/attract állapotból) |
 | `Q` | Kilépés a programból a parancssorba (szerviz menün kívül) |
+
+A minijáték alatt a nyers `KEYDOWN` és `KEYUP` események közvetlenül a
+minijátékhoz kerülnek, így a gombok nyomva tarthatók:
+
+| Minijáték-gomb | Funkció |
+|---|---|
+| `←` / `A` | UFO balra |
+| `→` / `D` | UFO jobbra |
+| `Space` / `P` | Vonósugár bekapcsolása |
 
 ## Titkos szerviz menü (`Ctrl+M`)
 
@@ -356,6 +452,15 @@ megvan, a telepítés kész.
   `scale`-re / blur nélkülire vált ezeken a gépeken. Új scale/blur hívást
   mindig ezeken a helper függvényeken keresztül kell bekötni, közvetlen
   `pygame.transform.smoothscale`/`box_blur` hívás nélkül.
+- **A minijáték SumScreen/Time's Up rétegeit közvetlenül a display surface-re
+  kell blittelni.** A Pi 3B+-on egy teljes képernyős köztes `SRCALPHA`
+  kompozit, amelyre további alfa-surface-ek kerülnek, reprodukálható ARM Bus
+  Errort és service-újraindulást okoz. A `ResultsOverlay.draw()` direkt-blit
+  felépítését ezért nem szabad visszacserélni köztes alpha layerre.
+- A minijáték bezárásakor kiírt `[munchies] background stream:` diagnosztika
+  Pi-teszt után gyorsan megmutatja, hogy a PNG-dekóder/cache okozott-e
+  pályaakadást. Ideális esetben a találati arány közel 100%, a max gap pedig
+  0–2 frame.
 - **mpv videó beállítások, amiket NEM szabad visszaállítani:**
   `--hwdec=v4l2m2m` (NEM `-copy`), `--drm-mode=640x480@60`, `--ao=alsa`,
   `gpu_mem=128`. A zero-copy `--vo=gpu` korábban teljes rendszerfagyást
