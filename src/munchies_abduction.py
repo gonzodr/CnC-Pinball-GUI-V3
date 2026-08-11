@@ -30,10 +30,15 @@ import pygame
 
 WIDTH, HEIGHT, FPS = 640, 480, 30
 HORIZON_Y, ROAD_BOTTOM = 126, 480
-GAME_SECONDS, RESULTS_SECONDS = 60.0, 4.5
-TUTORIAL_SECONDS = 20.0
+GAME_SECONDS, RESULTS_SECONDS = 35.0, 4.5
+TUTORIAL_SECONDS = 15.0
+SPEED_RAMP_END_SECONDS = 45.0
 TIME_REWARD_FADE_START = 50.0
-TIME_REWARD_FADE_END = 140.0
+TIME_REWARD_FADE_END = 220.0
+TIME_BANK_FULL_REWARD_SECONDS = 15.0
+TIME_BANK_DAMPED_REWARD_SECONDS = 30.0
+TIME_BANK_MIN_REWARD_SCALE = .5
+MISSION_SUCCESS_FOOD = 12
 # The result screen normally lasts 4.5 seconds, but it may stay up a little
 # longer so a mission-result voice and its optional tag are never cut short.
 RESULTS_VOICE_MAX_SECONDS = 7.0
@@ -44,6 +49,7 @@ COUNTDOWN_SLOT_SECONDS = COUNTDOWN_SECONDS / 3.0
 VOICE_DUCK_SFX_GAIN = .36
 VOICE_DUCK_ATTACK_SECONDS = .055
 VOICE_DUCK_RELEASE_SECONDS = .28
+VOICE_LAUGH_SILENCE_SECONDS = 4.0
 TRACK_LENGTH_METERS = 92.4
 TRACK_FRAME_COUNT = 600.0
 METERS_PER_SOURCE_FRAME = TRACK_LENGTH_METERS / TRACK_FRAME_COUNT  # 0.154 m
@@ -93,6 +99,7 @@ COLLECT_TARGET = 10
 COLLECT_PANEL_SECONDS = 2.0
 COLLECTION_BONUS_POINTS = 10_000
 COLLECTION_TIME_BONUS_SECONDS = 5.0
+FOOD_TIME_BONUS_SECONDS = 2.0
 JUNK_SCORE_PENALTY = 1_500
 
 # Internal gameplay names -> (asset directory, filename stem).  The burrito
@@ -121,7 +128,7 @@ def _voice_ids(first, last):
 
 
 # Runtime pools distilled from munchies_abduction_voice_lines.xlsx. Audio is
-# discovered by ID, so dropping a newly recorded line into Characters/Voices
+# discovered by ID, so dropping a newly recorded line into Sound/Voices
 # is enough to enable it; missing IDs are silently ignored.
 VOICE_EVENT_IDS = {
     "game_start": _voice_ids(1, 8),
@@ -145,6 +152,7 @@ VOICE_EVENT_IDS = {
     "time_over": ("VL099",),
     "mission_complete": ("VL100", "VL104", "VL105", "VL106"),
     "mission_failed": ("VL110", "VL112"),
+    "silence_laugh": ("VL114", "VL115"),
 }
 VOICE_ENDING_TAG_IDS = {
     "mission_complete": ("VL107",),
@@ -174,7 +182,7 @@ VOICE_RULES = {
     "police_item:badge": VoiceRule(1.0, 1.2, 3, True),
     # Every missed food gets one attempt. The cooldown and busy check provide
     # the anti-spam behaviour; stacking another random gate made this event
-    # practically inaudible in a one-minute game.
+    # practically inaudible in a short arcade round.
     "valuable_missed": VoiceRule(.40, 3.5, 1),
     "idle": VoiceRule(.40, 5.0, 0),
     "time_10": VoiceRule(1.0, 0.0, 3, True),
@@ -182,6 +190,9 @@ VOICE_RULES = {
     "time_over": VoiceRule(1.0, 0.0, 3, True),
     "mission_complete": VoiceRule(1.0, 0.0, 3, True),
     "mission_failed": VoiceRule(1.0, 0.0, 3, True),
+    # Silence filler: never interrupts speech, ignores the ordinary chatter
+    # budget, and fires only after the dedicated four-second silence timer.
+    "silence_laugh": VoiceRule(1.0, 0.0, 3),
 }
 BANTER_CHANCE = .40
 
@@ -258,21 +269,27 @@ class StreamingBackground:
     """Asynchronously streams a long, numbered PNG sequence.
 
     Only the main thread calls ``convert_alpha`` and blits surfaces.  The
-    worker performs file IO/PNG decoding and keeps a bounded request queue;
+    workers perform file IO/PNG decoding and keep a bounded request queue;
     this avoids both display-thread races and loading hitches.  A 60-frame
     LRU window keeps memory usage independent from sequence length.
     """
 
     SOURCE_FPS = 30.0
     OUTPUT_FPS = 30.0
-    LOW_POWER_OUTPUT_FPS = 15.0
+    # The old Pi profile deliberately held each road frame for two display
+    # ticks. That protected a single PNG decoder, but the resulting 15 FPS road
+    # remained visibly jerky even when the rest of the game held a perfect 30.
+    LOW_POWER_OUTPUT_FPS = 30.0
+    LOW_POWER_LOADER_WORKERS = 2
+    DESKTOP_LOADER_WORKERS = 1
     CACHE_SIZE = 60
     LOOK_BEHIND = 5
     READY_SIZE = 8
-    # Converting several decoded RGBA frames in the same game tick creates a
-    # visible main-thread spike on a Raspberry Pi. One conversion per tick is
-    # enough to sustain the 15 FPS sequence while keeping frame time bounded.
-    CONVERTS_PER_TICK = 1
+    # At 30 FPS one conversion per tick can only feed the visible frame and can
+    # never rebuild look-ahead after acceleration. The new frames are opaque
+    # RGB, so a second display-format conversion is cheap enough to restore a
+    # safety margin without the former full-screen RGBA blend spike.
+    CONVERTS_PER_TICK = 2
 
     def __init__(self):
         base = Path(__file__).resolve().parent / "assets" / "Minigame"
@@ -284,8 +301,13 @@ class StreamingBackground:
         if not background_path.is_file():
             background_path = base / "Level_BG.png"
         self.static_background = self._load_static_background(background_path)
+        self._low_power = _is_raspberry_pi()
         self.output_fps = (
-            self.LOW_POWER_OUTPUT_FPS if _is_raspberry_pi() else self.OUTPUT_FPS
+            self.LOW_POWER_OUTPUT_FPS if self._low_power else self.OUTPUT_FPS
+        )
+        self.loader_worker_count = (
+            self.LOW_POWER_LOADER_WORKERS
+            if self._low_power else self.DESKTOP_LOADER_WORKERS
         )
         self.cache = OrderedDict()
         self.playhead = 0.0
@@ -303,7 +325,12 @@ class StreamingBackground:
         self._desired = {0}
         self._pending_lock = threading.Lock()
         self._stop = threading.Event()
-        self._worker = None
+        self._workers = []
+        self._draw_requests = 0
+        self._cache_misses = 0
+        self._fallback_gap_total = 0
+        self._fallback_gap_max = 0
+        self._closed = False
 
         # Guarantee a drawable first frame; the remaining window streams.
         if self.paths:
@@ -311,8 +338,14 @@ class StreamingBackground:
                 self.cache[0] = self._prepare_frame(pygame.image.load(str(self.paths[0])))
             except pygame.error as exc:
                 print(f"[munchies] first street frame load failed: {exc}")
-            self._worker = threading.Thread(target=self._loader, name="munchies-bg-loader", daemon=True)
-            self._worker.start()
+            for worker_index in range(self.loader_worker_count):
+                worker = threading.Thread(
+                    target=self._loader,
+                    name=f"munchies-bg-loader-{worker_index + 1}",
+                    daemon=True,
+                )
+                worker.start()
+                self._workers.append(worker)
             self._request_window(.6)
 
     @staticmethod
@@ -334,11 +367,17 @@ class StreamingBackground:
             print(f"[munchies] Level_BG load failed: {exc}")
         return canvas
 
-    @staticmethod
-    def _prepare_frame(surface):
+    def _prepare_frame(self, surface):
         if surface.get_size() != (WIDTH, HEIGHT):
             surface = pygame.transform.scale(surface, (WIDTH, HEIGHT))
-        return surface.convert_alpha() if surface.get_flags() & pygame.SRCALPHA else surface.convert()
+        if surface.get_flags() & pygame.SRCALPHA:
+            # Backwards-compatible path for an older transparent sequence:
+            # pay for the alpha blend once as it enters the cache, never on
+            # every display frame.
+            composite = self.static_background.copy()
+            composite.blit(surface.convert_alpha(), (0, 0))
+            return composite
+        return surface.convert()
 
     def _loader(self):
         while not self._stop.is_set():
@@ -372,9 +411,8 @@ class StreamingBackground:
     def _request_window(self, speed):
         if not self.paths:
             return
-        # Predict the actual output indices, not every source frame. On the Pi
-        # this is a 15 FPS stream; desktop uses the sequence's native 30 FPS.
-        # At higher world speed the predictor naturally skips source PNGs, so
+        # Predict the actual output indices, not every source frame. At higher
+        # world speed the predictor naturally skips source PNGs, so
         # acceleration does not multiply decoder workload.
         # Keep the currently displayed frame pinned even between two output
         # ticks; otherwise the continuously moving playhead could invalidate
@@ -468,32 +506,61 @@ class StreamingBackground:
             self._request_window(speed)
 
     def _nearest_cached(self, wanted):
+        self._draw_requests += 1
         if wanted in self.cache:
             self.cache.move_to_end(wanted)
             return self.cache[wanted]
+        self._cache_misses += 1
         if not self.cache:
             return None
         # Prefer the closest frame behind the playhead, so a slow storage
         # device never makes the street jump forward unexpectedly.
         count = len(self.paths)
         index = min(self.cache, key=lambda i: (wanted - i) % count)
+        fallback_gap = (wanted - index) % count
+        self._fallback_gap_total += fallback_gap
+        self._fallback_gap_max = max(self._fallback_gap_max, fallback_gap)
         self.cache.move_to_end(index)
         return self.cache[index]
 
     def draw(self, screen):
-        screen.blit(self.static_background, (0, 0))
         frame = self._nearest_cached(self.current_index)
         if frame is not None:
+            # New STREET frames already contain Level_BG and are opaque RGB.
+            # One display-format blit replaces the old background blit plus a
+            # full-screen per-pixel alpha blend.
             screen.blit(frame, (0, 0))
+        else:
+            screen.blit(self.static_background, (0, 0))
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         self._stop.set()
-        try:
-            self._requests.put_nowait(None)
-        except queue.Full:
-            pass
-        if self._worker and self._worker.is_alive():
-            self._worker.join(timeout=.5)
+        for _ in self._workers:
+            try:
+                self._requests.put_nowait(None)
+            except queue.Full:
+                break
+        deadline = time.monotonic() + .5
+        for worker in self._workers:
+            if worker.is_alive():
+                worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        if self._draw_requests:
+            hit_rate = 100.0 * (
+                self._draw_requests - self._cache_misses
+            ) / self._draw_requests
+            average_gap = (
+                self._fallback_gap_total / self._cache_misses
+                if self._cache_misses else 0.0
+            )
+            print(
+                "[munchies] background stream: "
+                f"{hit_rate:.1f}% cache hits, {self._cache_misses} fallbacks, "
+                f"average/max gap {average_gap:.1f}/{self._fallback_gap_max} frames, "
+                f"{self.loader_worker_count} decoder(s) @ {self.output_fps:g} FPS"
+            )
 
 
 class AssetBank:
@@ -860,10 +927,10 @@ class VoiceClip:
 class CharacterVoiceDirector:
     """Priority/cooldown-aware character voice player driven by XLSX IDs."""
 
-    # A strong run can now last up to 150 seconds. Thirty lines exhausted the
-    # entire dialogue budget around the one-minute mark and made the endgame
-    # feel dead, so retain the anti-spam cooldowns but allow a full long run.
-    MAX_LINES = 60
+    # A brutal run can now reach roughly three minutes. Retain the anti-spam
+    # cooldowns, but keep enough dialogue budget that the extended skill-run
+    # does not collapse into silence long before its soft ceiling.
+    MAX_LINES = 90
     SAME_LINE_LOCKOUT = 24.0
     BANTER_PAIRS = (
         ("VL116", "VL120"), ("VL117", "VL121"),
@@ -873,6 +940,7 @@ class CharacterVoiceDirector:
         self.portraits, self.rng = portraits, rng
         self.clips = {}
         self.clock = 0.0
+        self.voice_silence_elapsed = 0.0
         self.cooldown_until = 0.0
         self.played_count = 0
         self.last_played_at = {}
@@ -888,7 +956,7 @@ class CharacterVoiceDirector:
 
     def _load_clips(self):
         directory = (Path(__file__).resolve().parent / "assets" / "Minigame" /
-                     "Sprites" / "Characters" / "Voices")
+                     "Sound" / "Voices")
         paths = sorted(path for path in directory.iterdir()
                        if path.is_file() and path.suffix.lower() in (".wav", ".ogg")) \
             if directory.is_dir() else []
@@ -1012,6 +1080,7 @@ class CharacterVoiceDirector:
             self.active_item_kind = clip.item_kind
             self.last_speaker = speaker
             self.last_played_at[clip.variant_key] = self.clock
+            self.voice_silence_elapsed = 0.0
             self.played_count += 1
             self.cooldown_until = max(
                 self.cooldown_until,
@@ -1053,13 +1122,13 @@ class CharacterVoiceDirector:
         event_key = "mission_complete" if success else "mission_failed"
         if not self.trigger(event_key):
             return False
-        # The refreshed sheet marks the return-to-pinball line as an optional
-        # tag after the main result. Keep it out of the main random pool and
-        # append it half the time, preferably with the other character.
+        # Keep the return-to-pinball line out of the main random pool and
+        # always append it after the result, preferably with the other
+        # character. The paired exchange gives the summary screen its payoff.
         tag_candidates = self._candidate_clips(
             VOICE_ENDING_TAG_IDS[event_key], priority=3
         )
-        if tag_candidates and self.rng.random() < .50:
+        if tag_candidates:
             self.queued_reply = [.18, self.rng.choice(tag_candidates)]
         return True
 
@@ -1093,10 +1162,13 @@ class CharacterVoiceDirector:
                 self.queued_reply = None
                 self._play_clip(reply, 8.0)
         if self.channel is None and self.queued_reply is None:
+            self.voice_silence_elapsed += dt
             self._restore_music()
+        else:
+            self.voice_silence_elapsed = 0.0
         self.portraits.update(dt, self.active_speaker)
 
-    def stop(self):
+    def stop(self, release_reservation=True):
         if self.channel is not None:
             self.channel.stop()
         self.channel = None
@@ -1104,11 +1176,13 @@ class CharacterVoiceDirector:
         self.active_line_id = None
         self.active_item_kind = None
         self.queued_reply = None
+        self.voice_silence_elapsed = 0.0
         self._restore_music()
-        try:
-            pygame.mixer.set_reserved(0)
-        except pygame.error:
-            pass
+        if release_reservation:
+            try:
+                pygame.mixer.set_reserved(0)
+            except pygame.error:
+                pass
 
 
 @dataclass
@@ -1333,51 +1407,114 @@ class ResultsOverlay:
     kepernyoin is.
     """
 
-    PANEL_RECT = (52, 86, 536, 326)
+    ROW_Y = (151, 188, 222, 255)
+    STAT_Y = (357, 373, 389, 406, 422)
+    ROW_RIGHT = 528
+    TOTAL_RIGHT = 528
+    STAT_RIGHT = 454
 
     def __init__(self):
-        self.title, self.row, self.total = _font(55), _font(25), _font(48)
+        self.background = self._load_background()
+        self.value_fonts = tuple(_font(size) for size in (31, 29, 27, 25, 23, 21, 19))
+        self.total_fonts = tuple(_font(size) for size in (50, 46, 42, 38, 34, 30))
+        self.stat_fonts = tuple(_font(size) for size in (17, 16, 15, 14, 13))
         self._cache_key = None
         self._cached_text = None
-        # Attetszo sotetites: sima (NEM SRCALPHA) felulet + set_alpha(), amit
-        # kozvetlenul a kepernyore blittelunk - ez a biztonsagos technika
-        # ARM-on, szemben egy teljes kepernyos SRCALPHA felulettel.
-        self._wash = pygame.Surface((WIDTH, HEIGHT))
-        self._wash.fill((7, 0, 23))
-        self._wash.set_alpha(220)
+
+    @staticmethod
+    def _load_background():
+        path = (Path(__file__).resolve().parent / "assets" / "Minigame" /
+                "UI" / "SumScreen.png")
+        fallback = pygame.Surface((WIDTH, HEIGHT)).convert()
+        fallback.fill((8, 1, 25))
+        if not path.is_file():
+            print("[munchies] summary background missing: UI/SumScreen.png")
+            return fallback
+        try:
+            background = pygame.image.load(str(path)).convert()
+            if background.get_size() != (WIDTH, HEIGHT):
+                print(
+                    f"[munchies] SumScreen.png should be {WIDTH}x{HEIGHT}: "
+                    f"{background.get_size()}"
+                )
+                background = pygame.transform.smoothscale(
+                    background, (WIDTH, HEIGHT)
+                ).convert()
+            return background
+        except (pygame.error, OSError) as exc:
+            print(f"[munchies] summary background unavailable: {exc}")
+            return fallback
+
+    @staticmethod
+    def _fit_text(fonts, value, color, max_width, outline=(12, 5, 24), width=2):
+        surface = None
+        for font in fonts:
+            surface = _text(font, value, color, outline, width)
+            if surface.get_width() <= max_width:
+                return surface
+        if surface is not None and surface.get_width() > max_width:
+            height = max(1, round(surface.get_height() * max_width / surface.get_width()))
+            surface = pygame.transform.smoothscale(surface, (max_width, height))
+        return surface
 
     def draw(self, screen, result):
         cache_key = (
-            result["collected_count"], result["combo_bonus"],
-            result["collection_bonus"], result["total_bonus"],
+            result["munchies_score"], result["combo_bonus"],
+            result["collection_bonus"], result["junk_penalty"],
+            result["total_bonus"], result["collected_count"],
+            result["completed_food_sets"], result["best_streak"],
+            result["max_combo_multiplier"], result["junk_abducted"],
         )
         if cache_key != self._cache_key:
             self._cache_key = cache_key
-            rows = (("FOOD COLLECTED", result["collected_count"]),
-                    ("COMBO BONUS", f'{result["combo_bonus"]:,}'),
-                    ("COLLECTION BONUS", f'{result["collection_bonus"]:,}'))
+            junk_value = (
+                f'-{result["junk_penalty"]:,}' if result["junk_penalty"] else "0"
+            )
+            row_values = (
+                f'{result["munchies_score"]:,}',
+                f'{result["combo_bonus"]:,}',
+                f'{result["collection_bonus"]:,}',
+                junk_value,
+            )
+            stats = (
+                result["collected_count"],
+                result["completed_food_sets"],
+                result["best_streak"],
+                f'x{result["max_combo_multiplier"]}',
+                result["junk_abducted"],
+            )
             self._cached_text = {
-                "title": _text(self.title, "MUNCHIES", (111, 255, 43), width=4),
-                "sub": _text(self.row, "ABDUCTION RESULTS", (255, 88, 211)),
-                "rows": [(_text(self.row, label), _text(self.row, value, (255, 224, 63)))
-                         for label, value in rows],
-                "total": _text(self.total, f'{result["total_bonus"]:,}', (255, 235, 70), width=3),
-                "footer": _text(self.row, "WELL ABDUCTED!  RETURNING TO PINBALL...", (128, 255, 71)),
+                "rows": [
+                    self._fit_text(
+                        self.value_fonts, value,
+                        (255, 82, 105) if index == 3 else (250, 250, 244),
+                        184,
+                        (55, 3, 18) if index == 3 else (7, 20, 15),
+                        2,
+                    )
+                    for index, value in enumerate(row_values)
+                ],
+                "total": self._fit_text(
+                    self.total_fonts, f'{result["total_bonus"]:,}',
+                    (250, 245, 255), 184, (68, 10, 112), 3,
+                ),
+                "stats": [
+                    self._fit_text(
+                        self.stat_fonts, value, (248, 241, 255), 58,
+                        (21, 5, 39), 1,
+                    )
+                    for value in stats
+                ],
             }
 
         cached = self._cached_text
-        screen.blit(self._wash, (0, 0))
-        pygame.draw.rect(screen, (44, 7, 75), self.PANEL_RECT, border_radius=30)
-        pygame.draw.rect(screen, (126, 34, 204), self.PANEL_RECT, 6, border_radius=30)
-        screen.blit(cached["title"], cached["title"].get_rect(center=(320, 75)))
-        screen.blit(cached["sub"], cached["sub"].get_rect(center=(320, 122)))
-        for i, (label_surface, value_surface) in enumerate(cached["rows"]):
-            y = 164 + i * 46
-            screen.blit(label_surface, (95, y))
-            screen.blit(value_surface, value_surface.get_rect(right=545, top=y))
-        pygame.draw.line(screen, (158, 42, 221), (85, 306), (555, 306), 3)
-        screen.blit(cached["total"], cached["total"].get_rect(center=(320, 344)))
-        screen.blit(cached["footer"], cached["footer"].get_rect(center=(320, 392)))
+        screen.blit(self.background, (0, 0))
+        for surface, y in zip(cached["rows"], self.ROW_Y):
+            screen.blit(surface, surface.get_rect(midright=(self.ROW_RIGHT, y)))
+        total = cached["total"]
+        screen.blit(total, total.get_rect(midright=(self.TOTAL_RIGHT, 313)))
+        for surface, y in zip(cached["stats"], self.STAT_Y):
+            screen.blit(surface, surface.get_rect(midright=(self.STAT_RIGHT, y)))
 
 
 class MunchiesAbductionGame:
@@ -1400,6 +1537,7 @@ class MunchiesAbductionGame:
         self._slalom_side = self.rng.choice((-1.0, 1.0))
         self.time_left = float(duration)
         self.score = self.combo_bonus = self.collected_count = self.streak = 0
+        self.munchies_score = self.junk_penalty = self.junk_abducted = 0
         self.collection_bonus = 0
         self.food_counts = {kind: 0 for kind in GOOD_VALUES}
         self.completed_food_sets = {kind: 0 for kind in GOOD_VALUES}
@@ -1418,6 +1556,14 @@ class MunchiesAbductionGame:
         self._countdown_sounds = {}
         self._countdown_sound_channel = None
         self._countdown_sound_number = None
+        self.time_up_elapsed = 0.0
+        self._time_up_second_started = False
+        self._time_up_second_started_at = None
+        self._time_up_beam_visible = False
+        self._time_up_sounds = {}
+        self._time_up_channels = []
+        self._time_up_first_duration = 0.0
+        self._time_up_second_duration = 0.0
         self.results_elapsed, self.finished = 0.0, False
         self.world_speed = .6
         self._background_closed = False
@@ -1436,6 +1582,8 @@ class MunchiesAbductionGame:
         ).convert_alpha()
         (self._intro_background, self._intro_title,
          self._intro_title_rect, self._intro_foreground) = self._load_intro_assets()
+        (self._time_up_black, self._time_up_title,
+         self._time_up_title_rect) = self._load_time_up_assets()
         # The beam only occupies a narrow horizontal strip, but previously a
         # fresh full-screen alpha surface was allocated and blended every
         # frame. Reuse it and touch/blit only the actual beam bounds.
@@ -1471,6 +1619,7 @@ class MunchiesAbductionGame:
         self.voices = CharacterVoiceDirector(self.portraits, self.rng)
         self._load_intro_sounds()
         self._load_countdown_sounds()
+        self._load_time_up_sounds()
         self._play_intro_sound("theremin")
         # Keep a spatially even pipeline across the 92.4 m road. Without
         # this, all eight objects would bunch up at the horizon on startup.
@@ -1522,6 +1671,47 @@ class MunchiesAbductionGame:
             title = pygame.Surface((1, 1), pygame.SRCALPHA).convert_alpha()
         return background, title, title_rect, foreground
 
+    @staticmethod
+    def _load_time_up_assets():
+        ui_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "UI"
+
+        black_path = ui_dir / "Timesup_black.png"
+        black = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        black.fill((2, 0, 18, 106))
+        try:
+            if black_path.is_file():
+                black = pygame.image.load(str(black_path)).convert_alpha()
+                if black.get_size() != (WIDTH, HEIGHT):
+                    # The supplied veil is deliberately only 160x120. Expand it
+                    # once during setup instead of scaling it on every frame.
+                    black = pygame.transform.scale(black, (WIDTH, HEIGHT)).convert_alpha()
+            else:
+                print("[munchies] time-up asset missing: UI/Timesup_black.png")
+        except pygame.error as exc:
+            print(f"[munchies] time-up veil unavailable: {exc}")
+
+        title_path = ui_dir / "Timesup.png"
+        title_full = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA).convert_alpha()
+        try:
+            if title_path.is_file():
+                title_full = pygame.image.load(str(title_path)).convert_alpha()
+                if title_full.get_size() != (WIDTH, HEIGHT):
+                    title_full = pygame.transform.smoothscale(
+                        title_full, (WIDTH, HEIGHT)
+                    ).convert_alpha()
+            else:
+                print("[munchies] time-up asset missing: UI/Timesup.png")
+        except pygame.error as exc:
+            print(f"[munchies] time-up title unavailable: {exc}")
+
+        title_rect = title_full.get_bounding_rect(min_alpha=1)
+        if title_rect.width and title_rect.height:
+            title = title_full.subsurface(title_rect).copy().convert_alpha()
+        else:
+            title_rect = pygame.Rect(WIDTH // 2, HEIGHT // 2, 1, 1)
+            title = pygame.Surface((1, 1), pygame.SRCALPHA).convert_alpha()
+        return black, title, title_rect
+
     def _load_intro_sounds(self):
         fx_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Sound" / "FX"
         sound_specs = (
@@ -1558,6 +1748,49 @@ class MunchiesAbductionGame:
         channel = sound.play()
         if channel is not None:
             self._intro_channels.append(channel)
+
+    def _load_time_up_sounds(self):
+        fx_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Sound" / "FX"
+        sound_files = {
+            "first": fx_dir / "times up.wav",
+            "second": fx_dir / "time-s-up---.wav",
+        }
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+            pygame.mixer.set_num_channels(max(16, pygame.mixer.get_num_channels()))
+            for cue, path in sound_files.items():
+                if not path.is_file():
+                    print(f"[munchies] time-up sound missing: Sound/FX/{path.name}")
+                    continue
+                sound = pygame.mixer.Sound(str(path))
+                self._time_up_sounds[cue] = sound
+            first = self._time_up_sounds.get("first")
+            second = self._time_up_sounds.get("second")
+            self._time_up_first_duration = first.get_length() if first is not None else 0.0
+            self._time_up_second_duration = second.get_length() if second is not None else 0.0
+        except pygame.error as exc:
+            self._time_up_sounds.clear()
+            self._time_up_first_duration = 0.0
+            self._time_up_second_duration = 0.0
+            print(f"[munchies] time-up sounds unavailable: {exc}")
+
+    def _play_time_up_sound(self, cue):
+        sound = self._time_up_sounds.get(cue)
+        if sound is None:
+            return None
+        channel = sound.play()
+        if channel is not None:
+            self._time_up_channels.append(channel)
+        return channel
+
+    def _stop_time_up_audio(self):
+        for channel in self._time_up_channels:
+            try:
+                channel.stop()
+            except pygame.error:
+                pass
+        self._time_up_channels.clear()
 
     def _load_countdown_sounds(self):
         fx_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Sound" / "FX"
@@ -1604,6 +1837,61 @@ class MunchiesAbductionGame:
         self._start_music()
         self._play_countdown_sound(3)
 
+    def _begin_time_up(self):
+        self._time_up_beam_visible = bool(self.player.beam)
+        self.player.beam = False
+        self.phase = "time_up"
+        self.time_up_elapsed = 0.0
+        self._time_up_second_started = False
+        self._time_up_second_started_at = None
+
+        # Give the stinger an empty soundstage. Any pickup reaction that was
+        # waiting for its half-second delay is discarded with the frozen play.
+        self._stop_beam_sound()
+        self._stop_music(fade_ms=0)
+        for channel in self._fx_channels:
+            try:
+                channel.stop()
+            except pygame.error:
+                pass
+        self._fx_channels.clear()
+        self._pending_reactions.clear()
+        self.voices.stop(release_reservation=False)
+
+        # No background.update()/prime() call runs in this phase, so the road
+        # remains frozen. Keep the loader alive until the stinger is over to
+        # avoid a possible worker-join hitch on the very first overlay frame.
+        self._play_time_up_sound("first")
+
+    def _finish_time_up(self):
+        self._stop_time_up_audio()
+        self.phase = "results"
+        self.results_elapsed = 0.0
+        self._time_up_beam_visible = False
+        if not self.voices.trigger_ending(
+                self.collected_count >= MISSION_SUCCESS_FOOD):
+            self.voices.trigger("time_over")
+        self._sound("results")
+        self.close_background()
+
+    def _update_time_up(self, dt):
+        self.time_up_elapsed += dt
+        if (not self._time_up_second_started
+                and self.time_up_elapsed >= self._time_up_first_duration - 1e-9):
+            self.time_up_elapsed = max(
+                self.time_up_elapsed, self._time_up_first_duration
+            )
+            self._time_up_second_started = True
+            self._time_up_second_started_at = self.time_up_elapsed
+            self._play_time_up_sound("second")
+        second_elapsed = (
+            self.time_up_elapsed - self._time_up_second_started_at
+            if self._time_up_second_started_at is not None else 0.0
+        )
+        if (self._time_up_second_started
+                and second_elapsed >= self._time_up_second_duration - 1e-9):
+            self._finish_time_up()
+
     def _start_music(self):
         if self._music_active:
             return
@@ -1628,7 +1916,10 @@ class MunchiesAbductionGame:
         if not self._music_active:
             return
         try:
-            pygame.mixer.music.fadeout(fade_ms)
+            if fade_ms <= 0:
+                pygame.mixer.music.stop()
+            else:
+                pygame.mixer.music.fadeout(fade_ms)
         except pygame.error:
             pass
         self._music_active = False
@@ -1849,12 +2140,13 @@ class MunchiesAbductionGame:
         if self.elapsed <= TUTORIAL_SECONDS:
             t = self._smoothstep(self.elapsed / TUTORIAL_SECONDS)
             return .6 + .4 * t
-        if self.elapsed <= 60.0:
-            t = self._smoothstep((self.elapsed - TUTORIAL_SECONDS) / 40.0)
+        if self.elapsed <= SPEED_RAMP_END_SECONDS:
+            ramp_seconds = SPEED_RAMP_END_SECONDS - TUTORIAL_SECONDS
+            t = self._smoothstep((self.elapsed - TUTORIAL_SECONDS) / ramp_seconds)
             return 1.0 + 1.4 * t
         # Keep adding pressure without forcing the 600-frame PNG sequence
         # into visibly jerky 3-4-frame jumps on every display tick.
-        late = self.elapsed - 60.0
+        late = self.elapsed - SPEED_RAMP_END_SECONDS
         late_gain = .25 if getattr(self, "_low_power", False) else .35
         return 2.4 + late_gain * (1.0 - math.exp(-late / 50.0))
 
@@ -1901,6 +2193,18 @@ class MunchiesAbductionGame:
         )
         return remaining ** 1.35
 
+    def _time_bank_scale(self):
+        """Discourage safe time hoarding without imposing a hard cap."""
+        if self.time_left <= TIME_BANK_FULL_REWARD_SECONDS:
+            return 1.0
+        if self.time_left >= TIME_BANK_DAMPED_REWARD_SECONDS:
+            return TIME_BANK_MIN_REWARD_SCALE
+        span = TIME_BANK_DAMPED_REWARD_SECONDS - TIME_BANK_FULL_REWARD_SECONDS
+        progress = self._smoothstep(
+            (self.time_left - TIME_BANK_FULL_REWARD_SECONDS) / span
+        )
+        return 1.0 - (1.0 - TIME_BANK_MIN_REWARD_SCALE) * progress
+
     @staticmethod
     def _time_flash_label(seconds):
         rounded = round(seconds, 1)
@@ -1909,7 +2213,9 @@ class MunchiesAbductionGame:
         return f"+{rounded:.1f} SEC"
 
     def _award_time(self, nominal_seconds):
-        awarded = nominal_seconds * self._time_reward_scale()
+        awarded = (
+            nominal_seconds * self._time_reward_scale() * self._time_bank_scale()
+        )
         if awarded < .05:
             return 0.0
         self.time_left += awarded
@@ -1920,9 +2226,17 @@ class MunchiesAbductionGame:
     def _award_food_points(self, base, multiplier):
         base_award = base
         combo_award = base * (multiplier - 1)
+        self.munchies_score += base_award
         self.score += base_award
         self.combo_bonus += combo_award
         return base_award + combo_award
+
+    def _apply_junk_penalty(self):
+        self.junk_abducted += 1
+        deducted = min(JUNK_SCORE_PENALTY, self.score)
+        self.score -= deducted
+        self.junk_penalty += deducted
+        return deducted
 
     def _award_collection_points(self):
         awarded = COLLECTION_BONUS_POINTS
@@ -1965,6 +2279,12 @@ class MunchiesAbductionGame:
 
     def update(self, dt):
         dt = min(dt, .1)
+        if self.phase == "time_up":
+            # This phase intentionally advances only its own two-part stinger.
+            # Road, items, UFO, particles and portraits stay on the exact frame
+            # on which the clock reached zero.
+            self._update_time_up(dt)
+            return
         self._update_reaction_sounds(dt)
         self.voices.update(dt)
         self._update_voice_ducking(dt)
@@ -2041,9 +2361,8 @@ class MunchiesAbductionGame:
             self.voices.trigger("time_10")
         self.time_flash_age = max(0.0, self.time_flash_age - dt)
         self.collect_display_time = max(0.0, self.collect_display_time - dt)
-        # Twenty seconds of readable tutorial pacing, the familiar one-minute
-        # ramp, then a second acceleration instead of the old permanent 2.4x
-        # plateau that made extended runs feel endless.
+        # A readable 15-second tutorial, a compressed ramp to 45 seconds, then
+        # a second acceleration for the increasingly rare extended skill-run.
         self.world_speed = self._speed_for_elapsed()
         self.assets.background.update(dt, self.world_speed)
         self.player.update(dt)
@@ -2108,7 +2427,7 @@ class MunchiesAbductionGame:
                     base = GOOD_VALUES[item.kind]
                     self._award_food_points(base, mult)
                     self.collected_count += 1; self._sound("collect")
-                    self._award_time(1.0)
+                    self._award_time(FOOD_TIME_BONUS_SECONDS)
                     self._record_food_pickup(item.kind)
                     if mult > previous_multiplier:
                         self._sound("combo")
@@ -2135,7 +2454,7 @@ class MunchiesAbductionGame:
                         self.voices.trigger(voice_event)
                     self._next_idle_voice_at = self.elapsed + self.rng.uniform(4.0, 5.0)
                 else:
-                    self.score = max(0, self.score - JUNK_SCORE_PENALTY); self._reset_combo(); self.player.stun = .55; self._sound("bad_pickup")
+                    self._apply_junk_penalty(); self._reset_combo(); self.player.stun = .55; self._sound("bad_pickup")
                     self.time_left = max(0.0, self.time_left - 2.0)
                     self.time_flash_text, self.time_flash_age = "-2 SEC", .75
                     if item.kind in POLICE_BAD_KINDS:
@@ -2177,6 +2496,12 @@ class MunchiesAbductionGame:
             _, announced_item = min(callout_candidates, key=lambda candidate: candidate[0])
             announced_item.voice_spawn_checked = True
             self.voices.trigger("good_item_spawn", announced_item.kind)
+        if self.voices.voice_silence_elapsed >= VOICE_LAUGH_SILENCE_SECONDS:
+            if self.voices.trigger("silence_laugh"):
+                # Do not stack an ordinary idle line or a banter exchange right
+                # behind the laugh; both schedulers get a fresh natural gap.
+                self._next_idle_voice_at = self.elapsed + self.rng.uniform(5.0, 7.0)
+                self._next_banter_at = self.elapsed + self.rng.uniform(8.0, 13.0)
         if self.elapsed >= self._next_idle_voice_at:
             if self.voices.trigger("idle"):
                 self._idle_voice_count += 1
@@ -2188,14 +2513,7 @@ class MunchiesAbductionGame:
             interval = (6.0, 9.0) if self.elapsed >= 70.0 else (8.0, 13.0)
             self._next_banter_at = self.elapsed + self.rng.uniform(*interval)
         if self.time_left <= 0.0:
-            self._reset_combo()
-            if not self.voices.trigger_ending(self.collected_count >= 15):
-                self.voices.trigger("time_over")
-            # Show the summary immediately while the mission-result line plays.
-            # Keeping the voice alive in this phase also prevents the GUI from
-            # returning to the score screen before the line has finished.
-            self.phase = "results"; self.player.beam = False; self._sound("results")
-            self.close_background()
+            self._begin_time_up()
 
     def close_background(self):
         if not self._background_closed:
@@ -2203,6 +2521,7 @@ class MunchiesAbductionGame:
             self._background_closed = True
         self._stop_beam_sound()
         self._stop_intro_audio()
+        self._stop_time_up_audio()
         if self._countdown_sound_channel is not None:
             self._countdown_sound_channel.stop()
             self._countdown_sound_channel = None
@@ -2211,10 +2530,17 @@ class MunchiesAbductionGame:
             self.voices.stop()
 
     def result_dict(self):
-        return {"total_bonus": self.score + self.combo_bonus + self.collection_bonus,
+        total_bonus = (
+            self.munchies_score + self.combo_bonus
+            + self.collection_bonus - self.junk_penalty
+        )
+        return {"total_bonus": total_bonus,
                 "collected_count": self.collected_count,
                 "combo_bonus": self.combo_bonus, "base_score": self.score,
+                "munchies_score": self.munchies_score,
                 "collection_bonus": self.collection_bonus,
+                "junk_penalty": self.junk_penalty,
+                "junk_abducted": self.junk_abducted,
                 "completed_food_sets": sum(self.completed_food_sets.values()),
                 "best_streak": self.best_streak,
                 "max_combo_multiplier": self.max_combo_multiplier}
@@ -2440,6 +2766,30 @@ class MunchiesAbductionGame:
             screen.blit(title, title.get_rect(center=self._intro_title_rect.center))
         screen.blit(self._intro_foreground, (0, 0))
 
+    def _time_up_title_progress(self):
+        scale_seconds = self._time_up_first_duration * .5
+        if scale_seconds <= 1e-9:
+            return 1.0
+        return self._smoothstep(self.time_up_elapsed / scale_seconds)
+
+    def _draw_time_up(self, screen):
+        # Direct-to-display alpha blits keep this safe on the 32-bit Pi; the
+        # results overlay previously proved that full-screen alpha composition
+        # on an intermediate SRCALPHA surface can trigger an ARM Bus Error.
+        screen.blit(self._time_up_black, (0, 0))
+        title_progress = self._time_up_title_progress()
+        if title_progress <= 0.0:
+            return
+        width = max(1, round(self._time_up_title.get_width() * title_progress))
+        height = max(1, round(self._time_up_title.get_height() * title_progress))
+        if (width, height) == self._time_up_title.get_size():
+            title = self._time_up_title
+        else:
+            title = pygame.transform.smoothscale(
+                self._time_up_title, (width, height)
+            )
+        screen.blit(title, title.get_rect(center=self._time_up_title_rect.center))
+
     def _draw_frame_overlay(self, screen):
         for surface, position in self.assets.ui_frame_parts:
             screen.blit(surface, position)
@@ -2462,15 +2812,16 @@ class MunchiesAbductionGame:
         if self.phase == "intro":
             self._draw_intro(screen)
             return
-        self.assets.background.draw(screen)
-        if self.phase in ("playing", "countdown"):
+        if self.phase in ("playing", "countdown", "time_up"):
+            self.assets.background.draw(screen)
             # The shadow belongs to the road, below every gameplay effect.
             shadow = self.assets.ufo_shadow
             shadow_rect = shadow.get_rect(
                 center=(round(self.player.x), self.player.y + UFO_SHADOW_Y_OFFSET)
             )
             screen.blit(shadow, shadow_rect)
-            if self.phase == "playing" and self.player.beam:
+            if ((self.phase == "playing" and self.player.beam)
+                    or (self.phase == "time_up" and self._time_up_beam_visible)):
                 self._draw_beam(screen)
             # The Blender calibration renders the approaching object even
             # while it is geometrically behind the visible street horizon.
@@ -2509,9 +2860,10 @@ class MunchiesAbductionGame:
             # its title and live values are then drawn on top of the frame.
             self._draw_frame_overlay(screen)
             self._draw_game_hud(screen)
+            if self.phase == "time_up":
+                self._draw_time_up(screen)
         else:
             self.results.draw(screen, self.result_dict())
-            self._draw_frame_overlay(screen)
 
 
 def run_munchies_abduction(screen=None, input_provider=None, duration=GAME_SECONDS):
