@@ -69,10 +69,14 @@ class MockInputController:
             elif key == pygame.K_i:
                 events.append(GameEvent("ATTRACT", ()))
 
-            # 1e. IDEIGLENES teszt-gomb (T) a SPECIAL_THANKS attract-kepernyo
-            # elonezetehez - ugyanugy ideiglenes, mint az (I), amig a teljes
-            # attract-loop nincs osszerakva.
+            # 1e. PNG sequence videomotor tesztje. SCORE-bol veletlen klipet
+            # indit, futo PNG-videonal pedig azonnal masikra valt.
             elif key == pygame.K_t:
+                events.append(GameEvent("PNG_VIDEO_RANDOM", ()))
+
+            # A Special Thanks kozvetlen fejlesztoi elonezete a T helyett Y,
+            # mert a T mostantol a PNG-videomotore.
+            elif key == pygame.K_y:
                 events.append(GameEvent("DEV_THX", ()))
 
             # 1f. IDEIGLENES teszt-gomb (L) a LOGO attract-kepernyo

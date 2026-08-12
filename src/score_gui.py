@@ -1226,6 +1226,11 @@ class ScoreGUI:
         self._fade_snapshot = self.screen.copy()
         self._fade_start = time.time()
 
+    def cancel_fade_transition(self):
+        """Azonnal eldobja a folyamatban levo GUI crossfade-et."""
+        self._fade_snapshot = None
+        self._fade_start = None
+
     def draw_fade_overlay(self):
         """Ha van folyamatban levo crossfade, ratolja a regi kepernyokepet
         (csokkeno set_alpha-val) a mar kirajzolt uj tartalomra - NEM flip-el
@@ -1254,6 +1259,34 @@ class ScoreGUI:
         okozott."""
         if self.active:
             pygame.display.flip()
+
+    def render_loading(self, progress=0.0, status="LOADING"):
+        """Minimal boot screen used while synchronous Pi caches are built."""
+        if not self.active or self.screen is None:
+            return
+        progress = max(0.0, min(1.0, float(progress)))
+        self.screen.fill((5, 1, 18))
+
+        title = self.font_summary_title.render("LOADING...", True, (181, 255, 74))
+        self.screen.blit(title, title.get_rect(center=(self.SCREEN_W // 2, 205)))
+
+        outer = pygame.Rect(79, 266, 482, 34)
+        inner = outer.inflate(-8, -8)
+        pygame.draw.rect(self.screen, (91, 21, 153), outer, border_radius=12)
+        pygame.draw.rect(self.screen, (16, 4, 35), inner, border_radius=8)
+        fill_width = round(inner.width * progress)
+        if fill_width > 0:
+            fill = pygame.Rect(inner.x, inner.y, fill_width, inner.height)
+            pygame.draw.rect(self.screen, (116, 255, 65), fill, border_radius=8)
+
+        status_text = f"{status.upper()}  {round(progress * 100):d}%"
+        status_surface = self.font_small.render(
+            status_text, True, (225, 208, 245)
+        )
+        self.screen.blit(
+            status_surface,
+            status_surface.get_rect(center=(self.SCREEN_W // 2, 326)),
+        )
 
     # SUMMARY SCREEN RENDERING
     def render_summary(self, summary_data):
@@ -1772,6 +1805,7 @@ class ScoreGUI:
             "input_test": "INPUT / GOMB TESZT",
             "serial_monitor": "SERIAL MONITOR (RAW)",
             "particle_editor": "PARTICLE SZERKESZTO",
+            "minigame_difficulty": "MINIGAME DIFFICULTY",
             "light_test": "LIGHT TEST",
             "reset_confirm": "OSSZES HISCORE TORLESE",
             "version_info": "VERZIO INFO",
@@ -1801,6 +1835,12 @@ class ScoreGUI:
                 score_surf = self.font_service_item.render(f"{entry['score']:,}", True, color)
                 score_rect = score_surf.get_rect(right=self.SCREEN_W - 30, top=row_y)
                 self.screen.blit(score_surf, score_rect)
+            reset_index = len(controller.score_manager.scores)
+            self._draw_service_line(
+                "OSSZES HISCORE TORLESE",
+                y + reset_index * line_h,
+                controller.cursor == reset_index,
+            )
             hint = "Fel/Le: navigalas   Enter/Del: torles   Esc: kilepes attract modba"
 
         elif controller.screen == "hiscore_delete_confirm":
@@ -1891,6 +1931,58 @@ class ScoreGUI:
                 self._particle_editor_burst.draw(self.screen)
 
             hint = "Fel/Le: parameter   Bal/Jobb: ertek   R: alapertelmezett   Esc: vissza"
+
+        elif controller.screen == "minigame_difficulty":
+            settings = controller.minigame_settings
+            if settings is None:
+                self._draw_service_line("(minigame settings nem elerheto)", y, False)
+            else:
+                games = settings.GAMES
+                row_h = 92
+                bar_x = 46
+                bar_w = self.SCREEN_W - 92
+                bar_y_offset = 38
+                positions = settings.MAX_DIFFICULTY - settings.MIN_DIFFICULTY
+                for i, (game_id, game_label) in enumerate(games):
+                    row_y = y + i * row_h
+                    selected = i == controller.cursor
+                    color = (255, 230, 90) if selected else (220, 220, 225)
+                    level = settings.get_difficulty(game_id)
+                    level_label = settings.difficulty_label(game_id)
+                    name_surf = self.font_service_item.render(
+                        f"{'> ' if selected else '  '}{game_label}", True, color
+                    )
+                    self.screen.blit(name_surf, (30, row_y))
+                    value_surf = self.font_service_item.render(level_label, True, color)
+                    self.screen.blit(
+                        value_surf,
+                        value_surf.get_rect(right=self.SCREEN_W - 30, top=row_y),
+                    )
+
+                    bar_y = row_y + bar_y_offset
+                    pygame.draw.line(
+                        self.screen, (95, 95, 112),
+                        (bar_x, bar_y), (bar_x + bar_w, bar_y), 5,
+                    )
+                    for step in range(settings.MIN_DIFFICULTY, settings.MAX_DIFFICULTY + 1):
+                        fraction = (step - settings.MIN_DIFFICULTY) / positions
+                        tick_x = round(bar_x + bar_w * fraction)
+                        tick_color = (100, 210, 120) if step == 0 else (145, 145, 158)
+                        radius = 5
+                        if step == level:
+                            tick_color = color
+                            radius = 9
+                        pygame.draw.circle(self.screen, tick_color, (tick_x, bar_y), radius)
+                        pygame.draw.circle(self.screen, (20, 20, 30), (tick_x, bar_y), radius, 2)
+
+                    left = self.font_service_hint.render("ALMOST ENDLESS", True, (125, 185, 135))
+                    normal = self.font_service_hint.render("NORMAL", True, (150, 150, 165))
+                    right = self.font_service_hint.render("VERY HARD", True, (210, 130, 130))
+                    labels_y = bar_y + 14
+                    self.screen.blit(left, (bar_x, labels_y))
+                    self.screen.blit(normal, normal.get_rect(centerx=self.SCREEN_W // 2, top=labels_y))
+                    self.screen.blit(right, right.get_rect(right=bar_x + bar_w, top=labels_y))
+            hint = "Fel/Le: minigame   Bal/Jobb: difficulty   R: NORMAL   Esc: vissza"
 
         elif controller.screen == "light_test":
             effects = controller.light_effects

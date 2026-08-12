@@ -29,16 +29,20 @@ CnC Pinball GUI V3 Python/
     ├── firmware_update.py        <- önálló program: git pull + fordítás + feltöltés a Megára
     ├── mock_input.py             <- billentyűzet -> GameEvent (fejlesztői mód)
     ├── mpv_controller.py         <- mpv IPC vezérlés (videólejátszás)
+    ├── png_video_player.py       <- Pygame PNG-sequence videómotor
+    ├── video_asset_paths.py      <- külső sequence assetkönyvtár feloldása
     ├── score_gui.py              <- a teljes pygame GUI (minden képernyő)
     ├── munchies_abduction.py     <- önálló Munchies Abduction minijáték-modul
     ├── score_manager.py          <- hiscores.json kezelése
     ├── thanks_names_manager.py   <- thanks_names.json kezelése
     ├── particle_settings.py      <- particle_settings.json kezelése (szerkeszthető effekt-szorzók)
+    ├── minigame_settings.py      <- minigame difficulty mentése (-3..+3)
     ├── name_entry.py             <- hiscore névbeíró logika
     ├── service_menu.py           <- titkos szerviz menü (Ctrl+M) logika
     ├── hiscores.json             <- mentett high score-ok (top 10)
     ├── thanks_names.json         <- Special Thanks névlista
     ├── particle_settings.json    <- particle-effekt szorzók (a szerkesztőből mentve)
+    ├── minigame_settings.json    <- minigame difficulty (futás közben keletkezik)
     ├── serial_port.json          <- legutóbb detektált Arduino port (a szerkesztőből mentve)
     └── assets/
         ├── bootimage.png         <- boot-splash kép (a splashscreen.service ezt jeleníti meg)
@@ -46,7 +50,8 @@ CnC Pinball GUI V3 Python/
         └── ...                   <- egyéb képek, fontok, videók
 ```
 
-A `hiscores.json`, `thanks_names.json`, `particle_settings.json` és `serial_port.json` mind
+A `hiscores.json`, `thanks_names.json`, `particle_settings.json`, `minigame_settings.json`
+és `serial_port.json` mind
 futásidőben keletkező/frissülő adatfájlok — egy friss telepítésnél nem kell velük foglalkozni,
 a program magától létrehozza őket alapértékekkel, ha még nem léteznek.
 
@@ -62,6 +67,7 @@ loopja minden frame-ben lekérdez, és ez alapján dönt, mit rajzoljon ki a
 |---|---|
 | `SCORE` | Az aktív játék pontszám-kijelzője (kártyák, fő pontszám) |
 | `VIDEO` | Egy témavideó fut (mpv kapja a kijelzőt) |
+| `PNG_VIDEO` | Egy 30 FPS-es PNG sequence fut közvetlenül a Pygame kijelzőn |
 | `SUMMARY` | Egy labda/játékos bónusz-összegzője (PLAYER/SCORE/BONUS/TOTAL) |
 | `FINAL_SCORES` | Játék végi végeredmény, ha 2+ játékos volt (győztes kiemelve) |
 | `NAME_ENTRY` | Hiscore névbeírás (3 karakteres monogram) |
@@ -138,6 +144,10 @@ párbeszéde. A végső bónusz bekerül az aktuális játékos flipperpontszám
   bonus**.
 - Hosszú meneteknél az időjutalom fokozatosan gyengül, és a magas időtartalék
   is csillapítja; nincs kemény pont- vagy időlimit, de a játék egyre nehezebb.
+- A szervizmenü F8-as csúszkáján a `NORMAL` pontosan ezeket az értékeket
+  használja. A többi fokozat együtt hangolja a pályasebességet, az óra
+  fogyását és jutalmait, a sávszélességet, a slalom/choice mintákat, a junk
+  időbüntetését és a combo-ablakot; a junk tárgyak arányát nem növeli.
 
 A SumScreen végső képlete:
 
@@ -192,7 +202,8 @@ sárga flipper); PC-n a billentyűzet szimulálja őket:
 | `R` | Véletlen témavideó lejátszása |
 | `B` | Labda leesik (ball drain) — NEXT vagy GAMEOVER, a játékos/labda számától függően |
 | `I` | Elindítja a teljes attract-loopot (`ATTRACT` esemény) |
-| `T` / `L` / `K` | Ideiglenes fejlesztői gombok: közvetlenül a Special Thanks / Logo / Beat This Score képernyőre ugrik (loopon kívül, gyors vizuális ellenőrzéshez) |
+| `T` | Véletlen PNG-sequence videó indítása; lejátszás közben újabb `T` azonnal másik véletlen klipre vált |
+| `Y` / `L` / `K` | Ideiglenes fejlesztői gombok: közvetlenül a Special Thanks / Logo / Beat This Score képernyőre ugrik (loopon kívül, gyors vizuális ellenőrzéshez) |
 | `U` | Munchies Abduction indítása a `SCORE` képernyőről |
 | `Esc` | Bárhonnan (amíg nem fut már az attract-loop) visszadob a loop elejére |
 | `Ctrl+M` | Titkos szerviz menü megnyitása (csak nyugalmi/attract állapotból) |
@@ -214,7 +225,8 @@ karbantartó felület. Amíg aktív, a nyers billentyű-események közvetlenül
 menühöz mennek (nem a fenti mock input táblázathoz), úgyhogy szabadon lehet
 gépelni (pl. nevet beírni) ütközés nélkül.
 
-- **Hiscore szerkesztés/törlés** — egyesével törölhető bejegyzés, listából
+- **Hiscore szerkesztés/törlés** — egyesével törölhető bejegyzés; a lista
+  utolsó sora Y/N megerősítéssel a teljes táblát is nullázza
 - **Special Thanks nevek** — `A` új nevet ad hozzá (begépelve, automatikusan
   ABC sorrendbe rendezve mentéskor), `Delete` törli a kijelöltet
 - **Input/gomb teszt** — élőben mutatja az utóbbi (mock/soros) eseményeket
@@ -234,7 +246,10 @@ gépelni (pl. nevet beírni) ütközés nélkül.
   `git pull`-t, `arduino-cli compile`-t és `upload`-ot futtat a Mega
   firmware-jén, élő loggal; a végén automatikusan visszaadja a
   vezérlést a GUI-nak (lásd lent, "Firmware toolchain a Pi-n")
-- **Összes hiscore törlése** — Y/N megerősítéssel nullázza a táblát
+- **Minigame difficulty (F8)** — minijátékonként hétfokozatú csúszka:
+  `ALMOST ENDLESS` / `VERY EASY` / `EASY` / `NORMAL` / `HARD` / `HARDER` /
+  `VERY HARD`. `←`/`→` állítja, `R` visszaállítja Normalra; a választás
+  újraindítás után is megmarad
 - **Verzió info** — Python/pygame verzió + git commit hash
 
 Navigáció: `↑`/`↓` mozgás, `Enter` kiválaszt, `Esc` vissza/kilépés (a
@@ -337,6 +352,47 @@ After Effects exportot ffmpeg-gel konvertálhatod:
 ```bash
 ffmpeg -i input.mov -c:v libx264 -pix_fmt yuv420p -vf scale=640:480 output.mp4
 ```
+
+A külső lejátszó nélküli ág alapértelmezetten a repón kívüli
+`~/CnC-Pinball-Video-Assets/<klipnév>/` mappák számozott PNG-it játssza le
+(Windows alatt `%LOCALAPPDATA%/CnC-Pinball-Video-Assets`). Az útvonal a
+`CNC_PNG_VIDEO_ROOT` környezeti változóval felülírható. A régi
+`src/assets/Videos/Test/` csak átmeneti, ignorált fallback; új sequence már
+ne kerüljön normál Gitbe.
+
+A frame-ek legyenek 640×480-as, átlátszóság nélküli RGB PNG-k, nullákkal
+kitöltött sorszámmal (például `2500_00000.png`). A `T` csak `SCORE` vagy
+már futó `PNG_VIDEO` állapotban aktív; a klip végén automatikusan visszatér
+a `SCORE` képernyőre. A motor minden klip első frame-jét memóriában tartja,
+az aktív klipből pedig legfeljebb 60 konvertált frame-et és egy kisméretű
+dekódolási work queue-t tárol.
+
+A teljes, várhatóan több gigabájtos sequence-készlet GitHub Release assetként
+terjed. A csomagoló a kliphatárokat megtartva 2 GiB alatti ZIP-eket és
+SHA-256 manifestet készít:
+
+```bash
+python tools/package_video_assets.py \
+  --root /path/to/all/sequences \
+  --output /path/to/release-packages \
+  --asset-version v1 \
+  --release-base-url https://github.com/gonzodr/CnC-Pinball-GUI-V3/releases/download/video-assets-v1/ \
+  --manifest video_assets_manifest.json
+```
+
+A ZIP-ek és a manifest Release-re feltöltése után a Pi telepítője hash alapján
+ellenőriz, staging könyvtárba bont, majd csak teljes siker után, atomi
+könyvtárcserével aktiválja az új készletet:
+
+```bash
+cd ~/CnC-Pinball-GUI-V3
+venv/bin/python3 tools/update_video_assets.py \
+  --manifest https://github.com/gonzodr/CnC-Pinball-GUI-V3/releases/download/video-assets-v1/video_assets_manifest.json
+sudo systemctl restart cnc-pinball.service
+```
+
+Megszakadt letöltés vagy hibás SHA-256 esetén a működő régi assetkönyvtár
+érintetlen marad.
 
 ### 2.7 Boot-splash kép
 

@@ -13,3 +13,13 @@ env/
 .vscode/
 .idea/
 .DS_Storesrc/files.zip
+
+# Gepenkenti, a szerviz menubol mentett runtime beallitasok
+src/minigame_settings.json
+
+# A PNG-sequence videok kulso Release assetek; normal Gitben csak a motor,
+# manifest es telepito marad. A helyi legacy mappa is legyen biztonsagosan
+# figyelmen kivul hagyva, amig az exportok atkerulnek a kulso assettarba.
+src/assets/Videos/Test/
+video_assets/
+video_assets_downloads/

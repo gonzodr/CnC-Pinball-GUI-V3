@@ -1,4 +1,4 @@
-"""A fő állapotgép: SCORE <-> VIDEO <-> SUMMARY <-> NAME_ENTRY <-> HIGHSCORE váltás."""
+"""A fő állapotgép: GUI, videó, minijáték és eredményállapotok váltása."""
 
 import time
 from collections import deque
@@ -9,6 +9,7 @@ from score_manager import ScoreManager
 from name_entry import NameEntryController
 from thanks_names_manager import ThanksNamesManager
 from service_menu import ServiceMenuController
+from minigame_settings import MinigameSettingsManager
 from munchies_abduction import MunchiesAbductionGame
 
 class AppState(Enum):
@@ -24,6 +25,7 @@ class AppState(Enum):
     BEAT_SCORE = auto()
     SERVICE_MENU = auto()
     MINIGAME = auto()
+    PNG_VIDEO = auto()
 
 class StateMachine:
     SUMMARY_DURATION_SEC = 8.0  # buvos 8 mp, mint a tobbi attract-kepernyonel - a reveal 4.6s-nal kesz, utana meg ~3.4s allva marad
@@ -83,6 +85,7 @@ class StateMachine:
         self.serial_reader = serial_reader  # csak a szerviz menu Serial Monitor kepernyojehez
         self.score_manager = ScoreManager()
         self.thanks_manager = ThanksNamesManager()
+        self.minigame_settings = MinigameSettingsManager()
         self.state = AppState.SCORE
         self._previous_state = AppState.SCORE
         self.pending_video = None
@@ -125,16 +128,39 @@ class StateMachine:
         # menu input-teszt kepernyojehez (kapcsolo-teszt).
         self.recent_events = deque(maxlen=12)
         self.service_menu = ServiceMenuController(
-            self.score_manager, self.thanks_manager, self.recent_events, self.serial_reader
+            self.score_manager,
+            self.thanks_manager,
+            self.recent_events,
+            self.serial_reader,
+            minigame_settings=self.minigame_settings,
         )
         self.minigame = None
+        self._preloaded_minigame = None
         self.last_minigame_result = None
         self._minigame_last_tick = 0.0
+        # A Pygame-alapu PNG sequence motor a kijelzo letrehozasa utan
+        # kerul ide a main.py-bol (a Surface.convert() aktiv displayt ker).
+        self.png_video_player = None
 
         # Indulaskor rogton az attract-loop fut (Press Play -> Special
         # Thanks -> Press Play -> Hiscore -> elolrol), amig Start ki nem
         # lepteti SCORE-ba - nem a SCORE kepernyovel indulunk.
         self._enter_attract_loop()
+
+    def preload_minigame(self, progress_callback=None):
+        """Build the dormant VUK game after the display is available."""
+        if self._preloaded_minigame is not None or self.minigame is not None:
+            return
+        started = time.monotonic()
+        self._preloaded_minigame = MunchiesAbductionGame(
+            autoplay_intro=False,
+            progress_callback=progress_callback,
+            difficulty=self.minigame_settings.get_difficulty("munchies_abduction"),
+        )
+        print(
+            f"[munchies] preloaded in {time.monotonic() - started:.2f}s; "
+            "VUK trigger is armed"
+        )
 
     def _get_multiplier(self, bonusx_index):
         if bonusx_index == 1: return 2
@@ -171,6 +197,7 @@ class StateMachine:
                 AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO,
                 AppState.BEAT_SCORE, AppState.SERVICE_MENU,
                 AppState.MINIGAME,
+                AppState.PNG_VIDEO,
                 # VIDEO is vedett: jatek kozben 350 ms-onkent jon score-uzenet,
                 # es e nelkul MINDEN videot azonnal lelott a kovetkezo update
                 # ("sotet villanas, majd vissza a GUI")!
@@ -292,10 +319,39 @@ class StateMachine:
 
         elif event.kind == "MUNCHIES_START":
             if self.state == AppState.SCORE:
-                self.minigame = MunchiesAbductionGame()
+                if self._preloaded_minigame is not None:
+                    self.minigame = self._preloaded_minigame
+                    self._preloaded_minigame = None
+                    self.minigame.set_difficulty(
+                        self.minigame_settings.get_difficulty("munchies_abduction")
+                    )
+                    self.minigame.activate()
+                else:
+                    # Fallback for an early trigger if boot preloading failed
+                    # or was deliberately disabled.
+                    self.minigame = MunchiesAbductionGame(
+                        difficulty=self.minigame_settings.get_difficulty(
+                            "munchies_abduction"
+                        )
+                    )
                 self._minigame_last_tick = time.monotonic()
                 self._in_attract_loop = False
                 self.state = AppState.MINIGAME
+
+        elif event.kind == "PNG_VIDEO_RANDOM":
+            # Fejlesztoi PNG-videoag: nyugalmi SCORE-bol indulhat, egy mar
+            # futo PNG-videot pedig ugyanazzal a triggerrel azonnal lecserel.
+            # Mas allapot (summary, minijatek, menu, mpv-video) foglaltnak
+            # szamit, ott a trigger szandekosan nem csinal semmit.
+            if self.state in (AppState.SCORE, AppState.PNG_VIDEO) and self.png_video_player is not None:
+                selected = self.png_video_player.start_random()
+                if selected is not None:
+                    self._in_attract_loop = False
+                    self.state = AppState.PNG_VIDEO
+                elif self.state == AppState.PNG_VIDEO:
+                    # Ha egy hibas/mar eltunt sequence-re valtaskor nem tud
+                    # elindulni az uj klip, ne maradjunk fekete videostate-ben.
+                    self.state = AppState.SCORE
 
         elif event.kind == "VIDEO":
             video_name = event.args[0]
@@ -386,7 +442,19 @@ class StateMachine:
                     # Firmware oldalon ez a sor adja hozza a fizikai gep
                     # pontjahoz is ugyanazt a bonuszt.
                     self.serial_reader.send_raw(f"MunchiesBonus,{bonus}")
+                completed_game = self.minigame
                 self.minigame = None
+                # Reuse decoded sprites, portraits, fonts, UI and all voice/SFX
+                # samples. Re-arming only creates a fresh lightweight road
+                # streamer, so later VUK entries remain just as immediate.
+                completed_game.prepare_for_replay()
+                self._preloaded_minigame = completed_game
+                self.state = AppState.SCORE
+            return
+
+        if self.state == AppState.PNG_VIDEO and self.png_video_player is not None:
+            self.png_video_player.update()
+            if self.png_video_player.finished:
                 self.state = AppState.SCORE
             return
 

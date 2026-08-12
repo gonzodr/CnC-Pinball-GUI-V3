@@ -9,7 +9,8 @@ Kepernyok (self.screen):
 - "thanks_edit" / "thanks_add_input": Special Thanks nevlista szerkesztese
 - "input_test": az utobbi soros/mock esemenyek naploja (kapcsolo-teszt)
 - "serial_monitor": a soros porton beerkezo NYERS sorok (parse-olatlanul is)
-- "reset_confirm": osszes hiscore torlese, megerositessel
+- "reset_confirm": osszes hiscore torlese az F1-es szerkesztobol
+- "minigame_difficulty": minijatekonkenti hetfokozatu nehezseg
 - "version_info": szoftver/verzio info
 """
 
@@ -36,7 +37,7 @@ class ServiceMenuController:
         ("particle_editor", "F5 - Particle szerkeszto"),
         ("find_arduino", "F6 - Arduino keresese"),
         ("firmware_update", "F7 - Firmware update"),
-        ("reset_confirm", "F8 - OSSZES hiscore torlese"),
+        ("minigame_difficulty", "F8 - Minigame difficulty"),
         ("version_info", "F9 - Verzio info"),
         ("light_editor", "F10 - Light editor (fenyeffekt szerkeszto)"),
         ("light_test", "F11 - Light test (fenyeffekt teszt)"),
@@ -53,12 +54,15 @@ class ServiceMenuController:
         pygame.K_F11, pygame.K_F12,
     ]
 
-    def __init__(self, score_manager, thanks_manager, recent_events, serial_reader=None, particle_settings=None):
+    def __init__(self, score_manager, thanks_manager, recent_events,
+                 serial_reader=None, particle_settings=None,
+                 minigame_settings=None):
         self.score_manager = score_manager
         self.thanks_manager = thanks_manager
         self.recent_events = recent_events  # deque, csak olvassuk (input_test kepernyohoz)
         self.serial_reader = serial_reader  # csak olvassuk (serial_monitor kepernyohoz)
         self.particle_settings = particle_settings  # ParticleSettingsManager (particle_editor kepernyohoz)
+        self.minigame_settings = minigame_settings
 
         self.should_exit = False
         # main.py figyeli ezt a flaget - ha True, elengedi a kijelzot/soros
@@ -161,14 +165,21 @@ class ServiceMenuController:
             self.should_exit = True
 
     def _handle_hiscore_edit(self, event):
-        count = len(self.score_manager.scores)
+        # The final row is the full-table reset action.  This replaces the old
+        # dedicated F8 entry without hiding destructive behaviour behind a
+        # single blind shortcut.
+        score_count = len(self.score_manager.scores)
+        count = score_count + 1
         if event.key == pygame.K_UP:
             self.cursor = (self.cursor - 1) % count
         elif event.key == pygame.K_DOWN:
             self.cursor = (self.cursor + 1) % count
         elif event.key in (pygame.K_DELETE, pygame.K_RETURN):
-            self._pending_delete_index = self.cursor
-            self.screen = "hiscore_delete_confirm"
+            if self.cursor == score_count:
+                self.screen = "reset_confirm"
+            else:
+                self._pending_delete_index = self.cursor
+                self.screen = "hiscore_delete_confirm"
         elif event.key == pygame.K_ESCAPE:
             # Innen kozvetlenul kilep a teljes szerviz menubol (nem csak
             # a fomenube lep vissza), egyenesen az attract-loopba.
@@ -249,6 +260,30 @@ class ServiceMenuController:
         elif event.key == pygame.K_ESCAPE:
             self._go_main()
 
+    def _handle_minigame_difficulty(self, event):
+        if self.minigame_settings is None:
+            if event.key == pygame.K_ESCAPE:
+                self._go_main()
+            return
+        games = self.minigame_settings.GAMES
+        if event.key == pygame.K_UP:
+            self.cursor = (self.cursor - 1) % len(games)
+        elif event.key == pygame.K_DOWN:
+            self.cursor = (self.cursor + 1) % len(games)
+        elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+            game_id, _label = games[self.cursor]
+            direction = -1 if event.key == pygame.K_LEFT else 1
+            self.minigame_settings.adjust_difficulty(game_id, direction)
+            self.status_message = (
+                f"{self.minigame_settings.difficulty_label(game_id)} elmentve"
+            )
+        elif event.key == pygame.K_r:
+            game_id, _label = games[self.cursor]
+            self.minigame_settings.reset_normal(game_id)
+            self.status_message = "NORMAL visszaallitva"
+        elif event.key == pygame.K_ESCAPE:
+            self._go_main()
+
     # --- Light test (fenyeffekt teszt a gepen, soros LT parancsokkal) ---
 
     def _load_effect_list(self):
@@ -310,7 +345,8 @@ class ServiceMenuController:
         if event.key in (pygame.K_y, pygame.K_RETURN):
             self.score_manager.reset()
             self.status_message = "Az osszes hiscore torolve!"
-        self._go_main()
+        self.screen = "hiscore_edit"
+        self.cursor = len(self.score_manager.scores)
 
     def _handle_version_info(self, event):
         if event.key == pygame.K_ESCAPE:

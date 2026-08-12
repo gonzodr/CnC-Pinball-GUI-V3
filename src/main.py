@@ -20,6 +20,7 @@ import sys
 from serial_reader import SerialReader
 from state_machine import StateMachine, AppState
 from mpv_controller import MpvController
+from png_video_player import PngSequencePlayer
 from score_gui import ScoreGUI
 from mock_input import MockInputController
 from protocol import GameEvent
@@ -105,6 +106,32 @@ def main():
     gui.acquire_display()   # induláskor is a GUI kapja a kijelzőt (attract-loop, nem VIDEO)
     state.service_menu.particle_settings = gui.particle_settings  # particle_editor kepernyohoz
 
+    # The caches must be built synchronously because Pi pygame Surface
+    # creation is not thread-safe. Keep the player informed with a tiny real
+    # progress screen instead of leaving a frozen logo or a black display.
+    def show_loading(progress, status):
+        gui.render_loading(progress, status)
+        gui.flip_display()
+
+    show_loading(.04, "STARTING GUI")
+
+    # Aktiv Pygame display utan hozhato letre: a motor az elso frame-eket
+    # rogton a kijelzo formatumara konvertalja az azonnali triggerhez.
+    show_loading(.08, "VIDEO CACHE")
+    png_video = PngSequencePlayer()
+    state.png_video_player = png_video
+    show_loading(.23, "MINIGAME")
+
+    # Reserve ~88 MiB for the complete dormant minigame.  All sprite scales,
+    # UI, portraits and 169 voice/SFX samples are ready before the first VUK,
+    # making the trigger itself effectively instantaneous.
+    state.preload_minigame(
+        lambda progress, status: show_loading(
+            .23 + progress * .74, status
+        )
+    )
+    show_loading(1.0, "READY")
+
     mock_input = MockInputController()
 
     clock_interval = 1.0 / TARGET_FPS
@@ -175,13 +202,21 @@ def main():
                 old_state, new_state = transition
                 print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
 
-                if old_state != AppState.VIDEO and new_state != AppState.VIDEO:
+                video_states = (AppState.VIDEO, AppState.PNG_VIDEO)
+                if old_state not in video_states and new_state not in video_states:
                     # Pillanatkepet keszitunk az elozo allapot utolso
                     # kirajzolt kepebol, hogy a kovetkezo par frame-ben
                     # elhalvanyodjon az uj allapot tartalma fole (lasd
                     # draw_fade_overlay lejjebb). VIDEO-ba/-bol nem
                     # csinalunk fade-et, ott mpv veszi at a kijelzot.
                     gui.start_fade_transition()
+                else:
+                    # A videonak mar az elso trigger-frame-ben latszania kell;
+                    # egy korabbi GUI-fade se maradjon rajta.
+                    gui.cancel_fade_transition()
+
+                if old_state == AppState.PNG_VIDEO and new_state != AppState.PNG_VIDEO:
+                    png_video.stop()
 
                 if new_state == AppState.SUMMARY:
                     gui.summary_anim_start = None
@@ -239,6 +274,8 @@ def main():
                 gui.render_service_menu(state.service_menu)
             elif state.state == AppState.MINIGAME and state.minigame is not None:
                 state.minigame.draw(gui.screen)
+            elif state.state == AppState.PNG_VIDEO:
+                png_video.draw(gui.screen)
 
             # 5b. Folyamatban levo crossfade rarajzolasa, ha van (no-op, ha nincs)
             gui.draw_fade_overlay()
@@ -267,6 +304,7 @@ def main():
     finally:
         print("[main] takaritas...")
         serial_reader.stop()
+        png_video.close()
         gui.release_display()
         mpv.shutdown()
         sys.exit(exit_code)

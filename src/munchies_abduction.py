@@ -27,6 +27,19 @@ if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.env
 
 import pygame
 
+# Configure the mixer before ScoreGUI's first pygame.init().  Without this,
+# SDL opens ALSA with its small default buffer and the later minigame-specific
+# mixer.init() calls are already too late to change it.  2048 samples at
+# 44.1 kHz add roughly 46 ms of latency while giving the Pi 3 enough headroom
+# for PNG decoding/rendering spikes without starving the audio callback.
+MIXER_BUFFER_SAMPLES = 2048
+pygame.mixer.pre_init(
+    frequency=44100,
+    size=-16,
+    channels=2,
+    buffer=MIXER_BUFFER_SAMPLES,
+)
+
 
 WIDTH, HEIGHT, FPS = 640, 480, 30
 HORIZON_Y, ROAD_BOTTOM = 126, 480
@@ -101,6 +114,28 @@ COLLECTION_BONUS_POINTS = 10_000
 COLLECTION_TIME_BONUS_SECONDS = 5.0
 FOOD_TIME_BONUS_SECONDS = 2.0
 JUNK_SCORE_PENALTY = 1_500
+
+# Seven service-menu positions.  NORMAL (0) is deliberately all 1.0/0.0 so
+# selecting it preserves the exact pre-menu gameplay.  Harder modes add
+# pressure through speed, clock economy, wider lanes and choice patterns --
+# never by simply flooding the road with junk.  The -3 profile postpones the
+# late reward fade far enough to behave as an "almost endless" chill mode.
+DIFFICULTY_PROFILES = {
+    -3: {"speed": .82, "clock": .75, "reward": 1.70, "fade": .40,
+         "junk_time": .70, "combo_window": 1.35, "lane": -.10, "patterns": .65},
+    -2: {"speed": .88, "clock": .84, "reward": 1.40, "fade": .60,
+         "junk_time": .82, "combo_window": 1.20, "lane": -.06, "patterns": .78},
+    -1: {"speed": .94, "clock": .92, "reward": 1.18, "fade": .80,
+         "junk_time": .92, "combo_window": 1.10, "lane": -.03, "patterns": .90},
+     0: {"speed": 1.0, "clock": 1.0, "reward": 1.0, "fade": 1.0,
+         "junk_time": 1.0, "combo_window": 1.0, "lane": 0.0, "patterns": 1.0},
+     1: {"speed": 1.06, "clock": 1.04, "reward": .93, "fade": 1.07,
+         "junk_time": 1.08, "combo_window": .94, "lane": .02, "patterns": 1.08},
+     2: {"speed": 1.13, "clock": 1.09, "reward": .85, "fade": 1.14,
+         "junk_time": 1.16, "combo_window": .88, "lane": .04, "patterns": 1.17},
+     3: {"speed": 1.20, "clock": 1.15, "reward": .75, "fade": 1.22,
+         "junk_time": 1.25, "combo_window": .82, "lane": .06, "patterns": 1.28},
+}
 
 # Internal gameplay names -> (asset directory, filename stem).  The burrito
 # files intentionally use the supplied single-r "Burito" spelling.
@@ -330,23 +365,33 @@ class StreamingBackground:
         self._cache_misses = 0
         self._fallback_gap_total = 0
         self._fallback_gap_max = 0
+        self._started = False
         self._closed = False
 
-        # Guarantee a drawable first frame; the remaining window streams.
+        # Guarantee a drawable first frame.  Worker startup is deliberately
+        # deferred until the countdown: on the 32-bit Pi, running
+        # pygame.image.load() in these threads while the main thread creates
+        # the sprite scale cache can crash inside SDL with a Bus Error.
         if self.paths:
             try:
                 self.cache[0] = self._prepare_frame(pygame.image.load(str(self.paths[0])))
             except pygame.error as exc:
                 print(f"[munchies] first street frame load failed: {exc}")
-            for worker_index in range(self.loader_worker_count):
-                worker = threading.Thread(
-                    target=self._loader,
-                    name=f"munchies-bg-loader-{worker_index + 1}",
-                    daemon=True,
-                )
-                worker.start()
-                self._workers.append(worker)
-            self._request_window(.6)
+
+    def start(self):
+        """Start asynchronous decoding after all setup-time transforms."""
+        if self._started or self._closed or not self.paths:
+            return
+        self._started = True
+        for worker_index in range(self.loader_worker_count):
+            worker = threading.Thread(
+                target=self._loader,
+                name=f"munchies-bg-loader-{worker_index + 1}",
+                daemon=True,
+            )
+            worker.start()
+            self._workers.append(worker)
+        self._request_window(.6)
 
     @staticmethod
     def _load_static_background(path):
@@ -571,16 +616,31 @@ class AssetBank:
     # the visibly chunky 4-9 px jumps of the old 16-step cache.
     STEPS = ITEM_MAX_PIXELS - ITEM_MIN_PIXELS + 1
 
-    def __init__(self):
+    def __init__(self, progress_callback=None):
+        report = progress_callback or (lambda _progress, _status: None)
+        report(0.0, "ROAD CACHE")
         self.background = StreamingBackground()
+        report(0.08, "UFO")
         self.ufo_body, self.ufo_shadow, self.ufo_light_frames = self._load_ufo_assets()
+        report(0.15, "USER INTERFACE")
         (self.ui_frame_parts, self.ui_logo, self.ui_score_panel,
          self.ui_time_panel, self.ui_collect_panel, self.ui_collect_bars,
          self.ui_collect_icons) = self._load_ui_assets()
         self._sprite_files = self._index_sprite_files()
         self.item_base = {}
         self.item_scaled = {}
-        for kind in (*GOOD_VALUES, *BAD_KINDS):
+        # pygame-ce 2.5.7's ARM smoothscaler Bus Errors on very small RGBA
+        # targets (the 100x100 -> 3x3 cache entry is enough to reproduce it
+        # on the Pi 3).  These sprites move quickly and the result is cached,
+        # so the safe scaler is visually adequate on Pi; desktop keeps the
+        # higher-quality filter.
+        self._item_scaler = (
+            pygame.transform.scale
+            if _is_raspberry_pi()
+            else pygame.transform.smoothscale
+        )
+        item_kinds = (*GOOD_VALUES, *BAD_KINDS)
+        for kind_index, kind in enumerate(item_kinds):
             shadow = self._load_item(kind, "shadow")
             glow = self._load_item(kind, "glow", fallback=shadow)
             self.item_base[kind] = {"shadow": shadow, "glow": glow}
@@ -591,19 +651,20 @@ class AssetBank:
                 ]
                 for variant, sprite in self.item_base[kind].items()
             }
+            report(
+                0.20 + 0.80 * (kind_index + 1) / len(item_kinds),
+                f"SPRITES {kind_index + 1}/{len(item_kinds)}",
+            )
 
     @classmethod
     def _item_cache_size(cls, index):
         return ITEM_MIN_PIXELS + index
 
-    @staticmethod
-    def _scale_item(sprite, target_size):
+    def _scale_item(self, sprite, target_size):
         longest = max(sprite.get_width(), sprite.get_height())
         width = max(1, round(sprite.get_width() * target_size / longest))
         height = max(1, round(sprite.get_height() * target_size / longest))
-        # Built once during AssetBank initialisation, so the nicer filter has
-        # no per-frame cost and keeps the new painted sprites clean when tiny.
-        return pygame.transform.smoothscale(sprite, (width, height))
+        return self._item_scaler(sprite, (width, height))
 
     @staticmethod
     def _index_sprite_files():
@@ -819,6 +880,10 @@ class CharacterPortraits:
             speaker: self._load_frames(speaker, directory)
             for speaker, directory in directories.items()
         }
+        self.reset()
+
+    def reset(self):
+        """Reset animation state while retaining decoded portrait frames."""
         self.frame_index = {speaker: 0 for speaker in self.frames}
         self.frame_timer = {speaker: 0.0 for speaker in self.frames}
         self.blink_wait = {
@@ -936,7 +1001,7 @@ class CharacterVoiceDirector:
         ("VL116", "VL120"), ("VL117", "VL121"),
     )
 
-    def __init__(self, portraits, rng):
+    def __init__(self, portraits, rng, progress_callback=None):
         self.portraits, self.rng = portraits, rng
         self.clips = {}
         self.clock = 0.0
@@ -952,9 +1017,9 @@ class CharacterVoiceDirector:
         self.voice_channel = None
         self.queued_reply = None
         self._ducked_music_volume = None
-        self._load_clips()
+        self._load_clips(progress_callback)
 
-    def _load_clips(self):
+    def _load_clips(self, progress_callback=None):
         directory = (Path(__file__).resolve().parent / "assets" / "Minigame" /
                      "Sound" / "Voices")
         paths = sorted(path for path in directory.iterdir()
@@ -962,14 +1027,14 @@ class CharacterVoiceDirector:
             if directory.is_dir() else []
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             pygame.mixer.set_num_channels(max(16, pygame.mixer.get_num_channels()))
             # Keep channel 0 exclusively for dialogue. Sound.play() effects
             # cannot steal it, so a pickup burst never cuts a voice line off.
             pygame.mixer.set_reserved(1)
             self.voice_channel = pygame.mixer.Channel(0)
             self.voice_channel.set_volume(1.0, 1.0)
-            for path in paths:
+            for path_index, path in enumerate(paths):
                 parts = path.stem.split("_")
                 # Accept both canonical VL067 and the supplied VL67 spelling.
                 # Normalising here keeps the event tables consistently 3-digit.
@@ -1000,6 +1065,12 @@ class CharacterVoiceDirector:
                 self.clips.setdefault(line_id, []).append(
                     VoiceClip(line_id, speaker, item_kind, path.stem.lower(), sound)
                 )
+                if progress_callback is not None and (
+                        path_index % 8 == 7 or path_index + 1 == len(paths)):
+                    progress_callback(
+                        (path_index + 1) / max(1, len(paths)),
+                        f"VOICES {path_index + 1}/{len(paths)}",
+                    )
             if self.clips:
                 variants = sum(len(clips) for clips in self.clips.values())
                 print(f"[munchies] character voices loaded: {variants} files / {len(self.clips)} IDs")
@@ -1184,6 +1255,29 @@ class CharacterVoiceDirector:
             except pygame.error:
                 pass
 
+    def reset(self):
+        """Re-arm dialogue state without reloading the 169 sound assets."""
+        self.stop(release_reservation=False)
+        self.clock = 0.0
+        self.voice_silence_elapsed = 0.0
+        self.cooldown_until = 0.0
+        self.played_count = 0
+        self.last_played_at.clear()
+        self.last_speaker = None
+        self.active_speaker = None
+        self.active_line_id = None
+        self.active_item_kind = None
+        self.channel = None
+        self.queued_reply = None
+        self._ducked_music_volume = None
+        self.portraits.reset()
+        try:
+            pygame.mixer.set_reserved(1)
+            self.voice_channel = pygame.mixer.Channel(0)
+            self.voice_channel.set_volume(1.0, 1.0)
+        except pygame.error:
+            self.voice_channel = None
+
 
 @dataclass
 class RoadItem:
@@ -1309,18 +1403,19 @@ class HUD:
         cards = {}
         for kind, icon in icons.items():
             for count in range(1, COLLECT_TARGET + 1):
-                card = pygame.Surface(panel.get_size(), pygame.SRCALPHA).convert_alpha()
-                card.blit(panel, (0, 0))
-                card.blit(bars[count - 1], (0, 0))
-                card.blit(icon, (3, 1))
                 counter = _text(
                     self.collect_font,
                     f"{count}/{COLLECT_TARGET}",
                     (148, 255, 63),
                     width=2,
                 ).convert_alpha()
-                card.blit(counter, counter.get_rect(center=(125, 30)))
-                cards[(kind, count)] = card
+                # Do not precompose these layers onto an intermediate alpha
+                # surface.  pygame-ce's 32-bit ARM blitter can Bus Error on
+                # repeated SRCALPHA -> SRCALPHA compositions.  Shared layer
+                # tuples use less memory and are drawn directly to the display.
+                cards[(kind, count)] = (
+                    panel, bars[count - 1], icon, counter
+                )
         return cards
 
     @staticmethod
@@ -1343,7 +1438,12 @@ class HUD:
             count = max(1, min(COLLECT_TARGET, collect_count))
             card = self._collect_cards.get((collect_kind, count))
             if card is not None:
-                screen.blit(card, self.collect_pos)
+                panel, bar, icon, counter = card
+                x, y = self.collect_pos
+                screen.blit(panel, (x, y))
+                screen.blit(bar, (x, y))
+                screen.blit(icon, (x + 3, y + 1))
+                screen.blit(counter, counter.get_rect(center=(x + 125, y + 30)))
         screen.blit(self.logo, self.logo_pos)
         screen.blit(self.score_panel, self.score_pos)
         screen.blit(self.time_panel, self.time_pos)
@@ -1520,10 +1620,28 @@ class ResultsOverlay:
 class MunchiesAbductionGame:
     """Embeddable stateful game. `finished` becomes true after results."""
 
-    def __init__(self, duration=GAME_SECONDS, rng=None, sound_hook: Optional[Callable[[str], None]] = None):
+    def __init__(self, duration=GAME_SECONDS, rng=None,
+                 sound_hook: Optional[Callable[[str], None]] = None,
+                 autoplay_intro=True, progress_callback=None, difficulty=0):
         self.duration, self.rng, self.sound_hook = duration, rng or random.Random(), sound_hook
+        self.set_difficulty(difficulty)
+        self._activated = False
+        report = progress_callback or (lambda _progress, _status: None)
         self._low_power = _is_raspberry_pi()
-        self.assets, self.player, self.results = AssetBank(), PlayerUFO(), ResultsOverlay()
+        # ARM pygame-ce's smoothscaler crashes on the tiny first frames of
+        # scale-in animations. Keep the same dimensions/easing with SDL's
+        # safe nearest scaler on Pi; desktop retains smoothscale.
+        self._animation_scaler = (
+            pygame.transform.scale
+            if self._low_power
+            else pygame.transform.smoothscale
+        )
+        self.assets = AssetBank(
+            lambda progress, status: report(progress * .58, status)
+        )
+        report(.61, "RESULTS SCREEN")
+        self.player, self.results = PlayerUFO(), ResultsOverlay()
+        report(.66, "HUD")
         self.hud = HUD(
             self.assets.ui_logo,
             self.assets.ui_score_panel,
@@ -1532,6 +1650,7 @@ class MunchiesAbductionGame:
             self.assets.ui_collect_bars,
             self.assets.ui_collect_icons,
         )
+        report(.72, "CHARACTERS")
         self.portraits = CharacterPortraits(self.rng)
         self.items, self.elapsed, self.spawn_timer = [], 0.0, 0.25
         self._slalom_side = self.rng.choice((-1.0, 1.0))
@@ -1613,16 +1732,114 @@ class MunchiesAbductionGame:
         self._next_banter_at = self.rng.uniform(8.0, 12.0)
         self.time_flash_text = ""
         self.time_flash_age = 0.0
+        report(.78, "SOUND EFFECTS")
         self._load_beam_sound()
         self._load_pickup_sounds()
         self._load_reaction_sounds()
-        self.voices = CharacterVoiceDirector(self.portraits, self.rng)
+        self.voices = CharacterVoiceDirector(
+            self.portraits,
+            self.rng,
+            lambda progress, status: report(.80 + progress * .16, status),
+        )
+        report(.97, "INTRO AUDIO")
         self._load_intro_sounds()
         self._load_countdown_sounds()
         self._load_time_up_sounds()
-        self._play_intro_sound("theremin")
         # Keep a spatially even pipeline across the 92.4 m road. Without
         # this, all eight objects would bunch up at the horizon on startup.
+        for slot in range(8):
+            self._spawn((slot + 1) * ITEM_APPROACH_FRAMES / 9.0)
+        report(1.0, "READY")
+        if autoplay_intro:
+            self.activate()
+
+    def activate(self):
+        """Start an already preloaded session without touching its assets."""
+        if self._activated:
+            return
+        self._activated = True
+        self._play_intro_sound("theremin")
+
+    def set_difficulty(self, difficulty):
+        """Apply a persisted service setting without rebuilding any assets."""
+        try:
+            difficulty = int(difficulty)
+        except (TypeError, ValueError):
+            difficulty = 0
+        self.difficulty_level = max(-3, min(3, difficulty))
+        self.difficulty = DIFFICULTY_PROFILES[self.difficulty_level]
+
+    def prepare_for_replay(self):
+        """Reset mutable session state while retaining all heavy resources.
+
+        The sprite scale cache, UI, fonts, portraits and decoded sounds stay
+        resident.  Only the lightweight road streamer and gameplay counters
+        are renewed, so the next VUK trigger can start immediately.
+        """
+        self.close_background()
+        for channel in self._fx_channels:
+            try:
+                channel.stop()
+            except pygame.error:
+                pass
+
+        self.assets.background = StreamingBackground()
+        self.player = PlayerUFO()
+        self.portraits.reset()
+        self.voices.reset()
+
+        self.items, self.elapsed, self.spawn_timer = [], 0.0, 0.25
+        self._slalom_side = self.rng.choice((-1.0, 1.0))
+        self.time_left = float(self.duration)
+        self.score = self.combo_bonus = self.collected_count = self.streak = 0
+        self.munchies_score = self.junk_penalty = self.junk_abducted = 0
+        self.collection_bonus = 0
+        self.food_counts = {kind: 0 for kind in GOOD_VALUES}
+        self.completed_food_sets = {kind: 0 for kind in GOOD_VALUES}
+        self.collect_display_kind = None
+        self.collect_display_count = 0
+        self.collect_display_time = 0.0
+        self.best_streak, self.max_combo_multiplier = 0, 1
+        self.combo_time_left = 0.0
+        self._pending_combo_voices.clear()
+
+        self.phase, self.countdown_elapsed = "intro", 0.0
+        self.intro_elapsed = 0.0
+        self._intro_title_audio_started = False
+        self._intro_channels.clear()
+        self._countdown_sound_channel = None
+        self._countdown_sound_number = None
+        self.time_up_elapsed = 0.0
+        self._time_up_second_started = False
+        self._time_up_second_started_at = None
+        self._time_up_beam_visible = False
+        self._time_up_channels.clear()
+        self.results_elapsed, self.finished = 0.0, False
+        self.world_speed = .6
+        self._background_closed = False
+        self.beam_shocks.clear()
+
+        self._beam_layer.fill((0, 0, 0, 0), self._beam_dirty_rect)
+        self._beam_render_tick = -1
+        self._beam_render_x = self.player.x
+        self._music_active = False
+        self._beam_sound_channel = None
+        self._beam_sound_fading = False
+        self._last_pickup_sound_variant = None
+        self._pending_reactions.clear()
+        self._last_reaction_sound = {"good": None, "bad": None}
+        self._fx_channels.clear()
+        self._voice_duck_gain = 1.0
+        self._time_10_voice_fired = False
+        self._time_5_voice_fired = False
+        self._idle_voice_count = 0
+        self._next_idle_voice_at = self.rng.uniform(4.0, 5.0)
+        self._banter_count = 0
+        self._next_banter_at = self.rng.uniform(8.0, 12.0)
+        self.time_flash_text = ""
+        self.time_flash_age = 0.0
+        self._activated = False
+
         for slot in range(8):
             self._spawn((slot + 1) * ITEM_APPROACH_FRAMES / 9.0)
 
@@ -1720,7 +1937,7 @@ class MunchiesAbductionGame:
         )
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             pygame.mixer.set_num_channels(max(16, pygame.mixer.get_num_channels()))
             for cue, path, volume in sound_specs:
                 if not path.is_file():
@@ -1757,7 +1974,7 @@ class MunchiesAbductionGame:
         }
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             pygame.mixer.set_num_channels(max(16, pygame.mixer.get_num_channels()))
             for cue, path in sound_files.items():
                 if not path.is_file():
@@ -1800,7 +2017,7 @@ class MunchiesAbductionGame:
         }
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             for cue, path in sound_files.items():
                 if not path.is_file():
                     print(f"[munchies] countdown sound missing: Sound/FX/{path.name}")
@@ -1834,6 +2051,10 @@ class MunchiesAbductionGame:
         self.phase = "countdown"
         self.countdown_elapsed = 0.0
         self._countdown_sound_number = None
+        # The animated intro title is the last setup-time smoothscale.  From
+        # here the Pi workers may decode safely while the three-second
+        # countdown fills the road cache in the background.
+        self.assets.background.start()
         self._start_music()
         self._play_countdown_sound(3)
 
@@ -1858,9 +2079,11 @@ class MunchiesAbductionGame:
         self._pending_reactions.clear()
         self.voices.stop(release_reservation=False)
 
-        # No background.update()/prime() call runs in this phase, so the road
-        # remains frozen. Keep the loader alive until the stinger is over to
-        # avoid a possible worker-join hitch on the very first overlay frame.
+        # The Time's Up title uses smoothscale.  Stop the PNG workers before
+        # that transform begins; concurrent pygame image decoding and
+        # transforms are unsafe on the Pi's 32-bit SDL build.  The frozen
+        # street frame remains in the cache and stays drawable.
+        self.close_background()
         self._play_time_up_sound("first")
 
     def _finish_time_up(self):
@@ -1903,7 +2126,7 @@ class MunchiesAbductionGame:
             return
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             pygame.mixer.music.load(str(tracks[0]))
             pygame.mixer.music.set_volume(.85)
             pygame.mixer.music.play(-1)
@@ -1937,7 +2160,7 @@ class MunchiesAbductionGame:
             return
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             self._beam_sound = pygame.mixer.Sound(str(path))
             self._beam_sound.set_volume(.58)
         except pygame.error as exc:
@@ -1953,7 +2176,7 @@ class MunchiesAbductionGame:
         )
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             pygame.mixer.set_num_channels(max(12, pygame.mixer.get_num_channels()))
             for label, paths in variants:
                 if not all(path.is_file() for path in paths):
@@ -1993,7 +2216,7 @@ class MunchiesAbductionGame:
         } if fx_dir.is_dir() else {}
         try:
             if pygame.mixer.get_init() is None:
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=MIXER_BUFFER_SAMPLES)
             for kind in ("good", "bad"):
                 directory = directories.get(kind)
                 paths = sorted(
@@ -2121,7 +2344,12 @@ class MunchiesAbductionGame:
             good = self.rng.random() < good_chance
             kind = self.rng.choice(tuple(GOOD_VALUES) if good else BAD_KINDS)
         if world_x is None:
-            lane_limit = .68 if self.elapsed < TUTORIAL_SECONDS else .88
+            tutorial_blend = self._smoothstep(self.elapsed / TUTORIAL_SECONDS)
+            base_lane_limit = .68 if self.elapsed < TUTORIAL_SECONDS else .88
+            lane_limit = max(
+                .58,
+                min(.96, base_lane_limit + self.difficulty["lane"] * tutorial_blend),
+            )
             world_x = self.rng.uniform(-lane_limit, lane_limit)
         progress = travelled_frames / ITEM_APPROACH_FRAMES
         item = RoadItem(
@@ -2139,25 +2367,39 @@ class MunchiesAbductionGame:
     def _speed_for_elapsed(self):
         if self.elapsed <= TUTORIAL_SECONDS:
             t = self._smoothstep(self.elapsed / TUTORIAL_SECONDS)
-            return .6 + .4 * t
-        if self.elapsed <= SPEED_RAMP_END_SECONDS:
+            base_speed = .6 + .4 * t
+            # Every mode begins with the same readable first seconds.  Its
+            # selected pressure fades in smoothly across the tutorial.
+            difficulty_blend = t
+        elif self.elapsed <= SPEED_RAMP_END_SECONDS:
             ramp_seconds = SPEED_RAMP_END_SECONDS - TUTORIAL_SECONDS
             t = self._smoothstep((self.elapsed - TUTORIAL_SECONDS) / ramp_seconds)
-            return 1.0 + 1.4 * t
-        # Keep adding pressure without forcing the 600-frame PNG sequence
-        # into visibly jerky 3-4-frame jumps on every display tick.
-        late = self.elapsed - SPEED_RAMP_END_SECONDS
-        late_gain = .25 if getattr(self, "_low_power", False) else .35
-        return 2.4 + late_gain * (1.0 - math.exp(-late / 50.0))
+            base_speed = 1.0 + 1.4 * t
+            difficulty_blend = 1.0
+        else:
+            # Keep adding pressure without forcing the 600-frame PNG sequence
+            # into visibly jerky 3-4-frame jumps on every display tick.
+            late = self.elapsed - SPEED_RAMP_END_SECONDS
+            late_gain = .25 if getattr(self, "_low_power", False) else .35
+            base_speed = 2.4 + late_gain * (1.0 - math.exp(-late / 50.0))
+            difficulty_blend = 1.0
+        multiplier = 1.0 + (self.difficulty["speed"] - 1.0) * difficulty_blend
+        return base_speed * multiplier
 
     def _spawn_wave(self):
         capacity = 8 - len(self.items)
         if capacity <= 0:
             return 0
         late = max(0.0, min(1.0, (self.elapsed - 45.0) / 85.0))
-        choice_chance = .10 + .38 * late
+        pattern_pressure = self.difficulty["patterns"]
+        choice_chance = min(.82, (.10 + .38 * late) * pattern_pressure)
         if self.elapsed >= 45.0 and capacity >= 2 and self.rng.random() < choice_chance:
-            triple = self.elapsed >= 105.0 and capacity >= 3 and self.rng.random() < .38
+            triple_chance = min(.62, .38 * pattern_pressure)
+            triple = (
+                self.elapsed >= 105.0
+                and capacity >= 3
+                and self.rng.random() < triple_chance
+            )
             lanes = (-.82, 0.0, .82) if triple else (-.78, .78)
             for lane in lanes:
                 self._spawn(
@@ -2167,7 +2409,7 @@ class MunchiesAbductionGame:
                 )
             return len(lanes)
 
-        slalom_chance = .16 + .48 * late
+        slalom_chance = min(.88, (.16 + .48 * late) * pattern_pressure)
         if self.elapsed >= 35.0 and self.rng.random() < slalom_chance:
             self._slalom_side *= -1.0
             kind_pool = tuple(GOOD_VALUES) if self.rng.random() < .86 else BAD_KINDS
@@ -2183,12 +2425,13 @@ class MunchiesAbductionGame:
         return base * self.rng.uniform(.8, 1.15)
 
     def _time_reward_scale(self):
-        if self.elapsed <= TIME_REWARD_FADE_START:
+        effective_elapsed = self.elapsed * self.difficulty["fade"]
+        if effective_elapsed <= TIME_REWARD_FADE_START:
             return 1.0
-        if self.elapsed >= TIME_REWARD_FADE_END:
+        if effective_elapsed >= TIME_REWARD_FADE_END:
             return 0.0
         remaining = 1.0 - (
-            (self.elapsed - TIME_REWARD_FADE_START)
+            (effective_elapsed - TIME_REWARD_FADE_START)
             / (TIME_REWARD_FADE_END - TIME_REWARD_FADE_START)
         )
         return remaining ** 1.35
@@ -2214,7 +2457,10 @@ class MunchiesAbductionGame:
 
     def _award_time(self, nominal_seconds):
         awarded = (
-            nominal_seconds * self._time_reward_scale() * self._time_bank_scale()
+            nominal_seconds
+            * self.difficulty["reward"]
+            * self._time_reward_scale()
+            * self._time_bank_scale()
         )
         if awarded < .05:
             return 0.0
@@ -2348,7 +2594,7 @@ class MunchiesAbductionGame:
                 # current speaker. Otherwise long clips would erase combos.
                 self._reset_combo(clear_pending=False)
         self.elapsed += dt
-        self.time_left = max(0.0, self.time_left - dt)
+        self.time_left = max(0.0, self.time_left - dt * self.difficulty["clock"])
         if self.time_left <= 5.0:
             # A -2 second junk penalty can jump across both thresholds in one
             # update. In that case play only the more urgent warning.
@@ -2420,7 +2666,9 @@ class MunchiesAbductionGame:
                 if item.good:
                     previous_multiplier = self.combo_multiplier
                     self.streak += 1
-                    self.combo_time_left = COMBO_TIMEOUT_SECONDS
+                    self.combo_time_left = (
+                        COMBO_TIMEOUT_SECONDS * self.difficulty["combo_window"]
+                    )
                     mult = self.combo_multiplier
                     self.best_streak = max(self.best_streak, self.streak)
                     self.max_combo_multiplier = max(self.max_combo_multiplier, mult)
@@ -2455,8 +2703,14 @@ class MunchiesAbductionGame:
                     self._next_idle_voice_at = self.elapsed + self.rng.uniform(4.0, 5.0)
                 else:
                     self._apply_junk_penalty(); self._reset_combo(); self.player.stun = .55; self._sound("bad_pickup")
-                    self.time_left = max(0.0, self.time_left - 2.0)
-                    self.time_flash_text, self.time_flash_age = "-2 SEC", .75
+                    time_penalty = 2.0 * self.difficulty["junk_time"]
+                    self.time_left = max(0.0, self.time_left - time_penalty)
+                    rounded_penalty = round(time_penalty, 1)
+                    if abs(rounded_penalty - round(rounded_penalty)) < .05:
+                        penalty_label = f"-{int(round(rounded_penalty))} SEC"
+                    else:
+                        penalty_label = f"-{rounded_penalty:.1f} SEC"
+                    self.time_flash_text, self.time_flash_age = penalty_label, .75
                     if item.kind in POLICE_BAD_KINDS:
                         badge_event = "police_item:badge"
                         voice_event = (
@@ -2760,7 +3014,7 @@ class MunchiesAbductionGame:
             if (width, height) == self._intro_title.get_size():
                 title = self._intro_title
             else:
-                title = pygame.transform.smoothscale(
+                title = self._animation_scaler(
                     self._intro_title, (width, height)
                 )
             screen.blit(title, title.get_rect(center=self._intro_title_rect.center))
@@ -2785,7 +3039,7 @@ class MunchiesAbductionGame:
         if (width, height) == self._time_up_title.get_size():
             title = self._time_up_title
         else:
-            title = pygame.transform.smoothscale(
+            title = self._animation_scaler(
                 self._time_up_title, (width, height)
             )
         screen.blit(title, title.get_rect(center=self._time_up_title_rect.center))
