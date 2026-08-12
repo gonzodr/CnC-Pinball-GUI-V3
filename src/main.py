@@ -123,7 +123,7 @@ def main():
     show_loading(.23, "MINIGAME")
 
     # Reserve ~88 MiB for the complete dormant minigame.  All sprite scales,
-    # UI, portraits and 169 voice/SFX samples are ready before the first VUK,
+    # UI, portraits and voice/SFX samples are ready before the first VUK,
     # making the trigger itself effectively instantaneous.
     state.preload_minigame(
         lambda progress, status: show_loading(

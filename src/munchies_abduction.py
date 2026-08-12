@@ -188,6 +188,7 @@ VOICE_EVENT_IDS = {
     "mission_complete": ("VL100", "VL104", "VL105", "VL106"),
     "mission_failed": ("VL110", "VL112"),
     "silence_laugh": ("VL114", "VL115"),
+    "collection_complete": _voice_ids(126, 135),
 }
 VOICE_ENDING_TAG_IDS = {
     "mission_complete": ("VL107",),
@@ -225,6 +226,10 @@ VOICE_RULES = {
     "time_over": VoiceRule(1.0, 0.0, 3, True),
     "mission_complete": VoiceRule(1.0, 0.0, 3, True),
     "mission_failed": VoiceRule(1.0, 0.0, 3, True),
+    # Full-set lines are deliberately longer payoff moments. Priority 4 sits
+    # above the ordinary critical tier, so warnings/police/random chatter
+    # cannot cut one off after it has started.
+    "collection_complete": VoiceRule(1.0, 0.0, 4, True),
     # Silence filler: never interrupts speech, ignores the ordinary chatter
     # budget, and fires only after the dedicated four-second silence timer.
     "silence_laugh": VoiceRule(1.0, 0.0, 3),
@@ -1013,6 +1018,7 @@ class CharacterVoiceDirector:
         self.active_speaker = None
         self.active_line_id = None
         self.active_item_kind = None
+        self.active_priority = 0
         self.channel = None
         self.voice_channel = None
         self.queued_reply = None
@@ -1084,6 +1090,7 @@ class CharacterVoiceDirector:
             self.active_speaker = None
             self.active_line_id = None
             self.active_item_kind = None
+            self.active_priority = 0
 
     @property
     def busy(self):
@@ -1136,7 +1143,7 @@ class CharacterVoiceDirector:
             pass
         self._ducked_music_volume = None
 
-    def _play_clip(self, clip, cooldown):
+    def _play_clip(self, clip, cooldown, priority):
         try:
             channel = self.voice_channel or pygame.mixer.find_channel(True)
             if channel is None:
@@ -1149,6 +1156,7 @@ class CharacterVoiceDirector:
             self.active_speaker = speaker
             self.active_line_id = clip.line_id
             self.active_item_kind = clip.item_kind
+            self.active_priority = priority
             self.last_speaker = speaker
             self.last_played_at[clip.variant_key] = self.clock
             self.voice_silence_elapsed = 0.0
@@ -1176,18 +1184,28 @@ class CharacterVoiceDirector:
         if self.busy:
             if not rule.interrupt:
                 return False
+            blocking_priority = (
+                self.active_priority
+                if self.channel is not None
+                else self.queued_reply[2]
+            )
+            if rule.priority < blocking_priority:
+                return False
             if self.channel is not None:
                 self.channel.stop()
             self.channel = None
             self.active_speaker = None
             self.active_line_id = None
             self.active_item_kind = None
+            self.active_priority = 0
             self.queued_reply = None
         if rule.priority < 3:
             if ((not ignore_cooldown and self.clock < self.cooldown_until)
                     or self.played_count >= self.MAX_LINES):
                 return False
-        return self._play_clip(self.rng.choice(candidates), rule.cooldown)
+        return self._play_clip(
+            self.rng.choice(candidates), rule.cooldown, rule.priority
+        )
 
     def trigger_ending(self, success):
         event_key = "mission_complete" if success else "mission_failed"
@@ -1200,7 +1218,7 @@ class CharacterVoiceDirector:
             VOICE_ENDING_TAG_IDS[event_key], priority=3
         )
         if tag_candidates:
-            self.queued_reply = [.18, self.rng.choice(tag_candidates)]
+            self.queued_reply = [.18, self.rng.choice(tag_candidates), 3]
         return True
 
     def trigger_banter(self):
@@ -1218,9 +1236,9 @@ class CharacterVoiceDirector:
         first_id, reply_id = self.rng.choice(available_pairs)
         first = self.rng.choice(self._candidate_clips((first_id,), 1))
         reply = self.rng.choice(self._candidate_clips((reply_id,), 1))
-        if not self._play_clip(first, 0.0):
+        if not self._play_clip(first, 0.0, 1):
             return False
-        self.queued_reply = [.2, reply]
+        self.queued_reply = [.2, reply, 1]
         return True
 
     def update(self, dt):
@@ -1229,9 +1247,9 @@ class CharacterVoiceDirector:
         if self.channel is None and self.queued_reply is not None:
             self.queued_reply[0] -= dt
             if self.queued_reply[0] <= 0.0:
-                _, reply = self.queued_reply
+                _, reply, priority = self.queued_reply
                 self.queued_reply = None
-                self._play_clip(reply, 8.0)
+                self._play_clip(reply, 8.0, priority)
         if self.channel is None and self.queued_reply is None:
             self.voice_silence_elapsed += dt
             self._restore_music()
@@ -1246,6 +1264,7 @@ class CharacterVoiceDirector:
         self.active_speaker = None
         self.active_line_id = None
         self.active_item_kind = None
+        self.active_priority = 0
         self.queued_reply = None
         self.voice_silence_elapsed = 0.0
         self._restore_music()
@@ -1256,7 +1275,7 @@ class CharacterVoiceDirector:
                 pass
 
     def reset(self):
-        """Re-arm dialogue state without reloading the 169 sound assets."""
+        """Re-arm dialogue state without reloading the voice assets."""
         self.stop(release_reservation=False)
         self.clock = 0.0
         self.voice_silence_elapsed = 0.0
@@ -1267,6 +1286,7 @@ class CharacterVoiceDirector:
         self.active_speaker = None
         self.active_line_id = None
         self.active_item_kind = None
+        self.active_priority = 0
         self.channel = None
         self.queued_reply = None
         self._ducked_music_volume = None
@@ -1722,6 +1742,8 @@ class MunchiesAbductionGame:
         self._reaction_sounds = {"good": [], "bad": []}
         self._pending_reactions = []
         self._last_reaction_sound = {"good": None, "bad": None}
+        self._collection_complete_chimes = []
+        self._collection_complete_bite = None
         self._fx_channels = []
         self._voice_duck_gain = 1.0
         self._time_10_voice_fired = False
@@ -1736,6 +1758,7 @@ class MunchiesAbductionGame:
         self._load_beam_sound()
         self._load_pickup_sounds()
         self._load_reaction_sounds()
+        self._load_collection_complete_sounds()
         self.voices = CharacterVoiceDirector(
             self.portraits,
             self.rng,
@@ -2233,6 +2256,46 @@ class MunchiesAbductionGame:
             self._reaction_sounds = {"good": [], "bad": []}
             print(f"[munchies] reaction sounds unavailable: {exc}")
 
+    def _load_collection_complete_sounds(self):
+        fx_dir = Path(__file__).resolve().parent / "assets" / "Minigame" / "Sound" / "FX"
+        chime_paths = (
+            fx_dir / "collcomp_chime1.wav",
+            fx_dir / "collcomp_chime2.wav",
+        )
+        bite_path = fx_dir / "collcomp_bite.wav"
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(
+                    frequency=44100, size=-16, channels=2,
+                    buffer=MIXER_BUFFER_SAMPLES,
+                )
+            pygame.mixer.set_num_channels(max(12, pygame.mixer.get_num_channels()))
+            self._collection_complete_chimes = [
+                pygame.mixer.Sound(str(path))
+                for path in chime_paths if path.is_file()
+            ]
+            self._collection_complete_bite = (
+                pygame.mixer.Sound(str(bite_path))
+                if bite_path.is_file() else None
+            )
+            if len(self._collection_complete_chimes) != len(chime_paths):
+                print("[munchies] one or more collection-complete chimes are missing")
+            if self._collection_complete_bite is None:
+                print("[munchies] collection-complete bite is missing")
+        except pygame.error as exc:
+            self._collection_complete_chimes.clear()
+            self._collection_complete_bite = None
+            print(f"[munchies] collection-complete sounds unavailable: {exc}")
+
+    def _play_collection_complete_sounds(self):
+        # Start both layers in the same update tick. SDL assigns separate mixer
+        # channels, so the bite transient sits on top of either random chime.
+        if self._collection_complete_chimes:
+            chime = self.rng.choice(self._collection_complete_chimes)
+            self._track_fx_channel(chime.play())
+        if self._collection_complete_bite is not None:
+            self._track_fx_channel(self._collection_complete_bite.play())
+
     def _schedule_reaction_sound(self, good):
         self._pending_reactions.append([.5, "good" if good else "bad"])
 
@@ -2520,6 +2583,8 @@ class MunchiesAbductionGame:
         self.completed_food_sets[kind] += 1
         self._award_collection_points()
         self._award_time(COLLECTION_TIME_BONUS_SECONDS)
+        self._play_collection_complete_sounds()
+        self.voices.trigger("collection_complete")
         self._sound("collection_complete")
         return True
 
