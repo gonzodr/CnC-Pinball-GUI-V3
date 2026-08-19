@@ -1,0 +1,20 @@
+{
+  "name": "cnc-pinball-after-effects-bridge",
+  "version": "0.1.8",
+  "private": true,
+  "type": "module",
+  "description": "Local MCP and ExtendScript bridge between Codex and Adobe After Effects.",
+  "scripts": {
+    "start": "node src/server.js",
+    "cli": "node scripts/bridge-cli.mjs",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/server.js && node --check src/bridge-client.js && node --check scripts/bridge-cli.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "zod": "^3.25.76"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
