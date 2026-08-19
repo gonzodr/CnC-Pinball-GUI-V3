@@ -22,7 +22,9 @@ def default_external_root() -> Path:
 
 
 def legacy_sequence_root() -> Path:
-    return Path(__file__).resolve().parent / "assets" / "Videos" / "Test"
+    # A klipek kozvetlenul az assets/Videos alatt vannak (a korabbi
+    # Videos/Test almappa megszunt, es az mp4-ek is kikerultek innen).
+    return Path(__file__).resolve().parent / "assets" / "Videos"
 
 
 def resolve_sequence_root(explicit_root: Path | str | None = None) -> Path:

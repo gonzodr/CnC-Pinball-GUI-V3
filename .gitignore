@@ -16,10 +16,11 @@ env/
 
 # Gepenkenti, a szerviz menubol mentett runtime beallitasok
 src/minigame_settings.json
+src/serial_port.json
 
 # A PNG-sequence videok kulso Release assetek; normal Gitben csak a motor,
 # manifest es telepito marad. A helyi legacy mappa is legyen biztonsagosan
 # figyelmen kivul hagyva, amig az exportok atkerulnek a kulso assettarba.
-src/assets/Videos/Test/
+src/assets/Videos/
 video_assets/
 video_assets_downloads/
