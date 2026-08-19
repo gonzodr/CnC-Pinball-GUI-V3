@@ -1806,7 +1806,9 @@ class ScoreGUI:
             "serial_monitor": "SERIAL MONITOR (RAW)",
             "particle_editor": "PARTICLE SZERKESZTO",
             "minigame_difficulty": "MINIGAME DIFFICULTY",
+            "diagnostics": "DIAGNOSZTIKA",
             "light_test": "LIGHT TEST",
+            "analog_test": "ANALOG BEMENET-TESZT",
             "reset_confirm": "OSSZES HISCORE TORLESE",
             "version_info": "VERZIO INFO",
         }
@@ -1821,7 +1823,7 @@ class ScoreGUI:
         if controller.screen == "main":
             for i, (_, label) in enumerate(controller.MAIN_ITEMS):
                 self._draw_service_line(label, y + i * line_h, i == controller.cursor)
-            hint = "Fel/Le + Enter vagy F1-F11: kivalaszt   Esc: kilepes"
+            hint = "Fel/Le + Enter vagy F1-F10: kivalaszt   Esc: kilepes"
 
         elif controller.screen == "hiscore_edit":
             for i, entry in enumerate(controller.score_manager.scores):
@@ -1984,6 +1986,49 @@ class ScoreGUI:
                     self.screen.blit(right, right.get_rect(right=bar_x + bar_w, top=labels_y))
             hint = "Fel/Le: minigame   Bal/Jobb: difficulty   R: NORMAL   Esc: vissza"
 
+        elif controller.screen == "diagnostics":
+            for i, (_, label) in enumerate(controller.DIAGNOSTIC_ITEMS):
+                self._draw_service_line(label, y + i * line_h, i == controller.cursor)
+            hint = "Fel/Le + Enter: kivalaszt   Esc: vissza a fomenube"
+
+        elif controller.screen == "analog_test":
+            names = controller.analog_names
+            values = controller.analog_values
+            thresholds = controller.analog_thresholds
+            if not names:
+                self._draw_service_line("Varakozas a firmware valaszara...", y, False)
+                self._draw_service_line(
+                    "(a teszt csak attract modban indul - ha jatek megy, eloszor fejezd be)",
+                    y + line_h * 2, False,
+                )
+            else:
+                # Fejlec
+                self._draw_service_line(
+                    f"{'Szenzor':<14}{'Mert':>7}{'Kuszob':>9}   Allapot",
+                    y, False,
+                )
+                for i, name in enumerate(names):
+                    value = values[i] if i < len(values) else None
+                    thr = thresholds[i] if i < len(thresholds) else None
+                    value_text = f"{value:>7}" if value is not None else f"{'-':>7}"
+                    thr_text = f"{thr:>9}" if thr is not None else f"{'-':>9}"
+                    # A firmware FORDITOTT logikat hasznal: a kuszob ALATT van golyo.
+                    if value is not None and thr is not None:
+                        state = "GOLYO" if value < thr else "ures"
+                    else:
+                        state = "?"
+                    self._draw_service_line(
+                        f"{name:<14}{value_text}{thr_text}   {state}",
+                        y + (i + 1) * line_h, i == controller.cursor,
+                    )
+                stale = time.time() - controller.analog_last_update
+                if controller.analog_last_update and stale > 2.0:
+                    self._draw_service_line(
+                        f"(nincs friss adat {stale:.0f} mp-e - a firmware leallt?)",
+                        y + (len(names) + 2) * line_h, False,
+                    )
+            hint = "Bal/Jobb: +-1   PgUp/PgDn: +-10   Enter: mert ertek fole   Esc: stop + vissza"
+
         elif controller.screen == "light_test":
             effects = controller.light_effects
             if not effects:
@@ -1993,7 +2038,7 @@ class ScoreGUI:
                 for i, (eid, name) in enumerate(effects):
                     selected = i == controller.cursor
                     self._draw_service_line(f"ID {eid:<3} {name}", y + i * line_h, selected)
-            hint = "Bal/Jobb: valt effekt   Esc: stop + vissza"
+            hint = "Bal/Jobb: valt effekt   Esc: stop + vissza a diagnosztikaba"
 
         elif controller.screen == "reset_confirm":
             self._draw_service_line("Biztosan torlod az OSSZES hiscore-t?", y, False)

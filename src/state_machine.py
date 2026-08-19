@@ -152,7 +152,19 @@ class StateMachine:
         if bonusx_index == 4: return 8
         return 1
 
+    ANALOG_TEST_EVENTS = (
+        "ANALOG_INFO", "ANALOG_VALUES", "ANALOG_THRESHOLDS",
+        "ANALOG_SAVED", "ANALOG_ERROR", "ANALOG_STOPPED",
+    )
+
     def handle_event(self, event: GameEvent):
+        # Az analog teszt valaszai kizarolag a szerviz menue: ~5 Hz-en jonnek,
+        # ezert nem naplozzuk oket a recent_events-be (elmosnak minden mast),
+        # es nincs jatek-allapotra gyakorolt hatasuk sem.
+        if event.kind in self.ANALOG_TEST_EVENTS:
+            self.service_menu.handle_analog_event(event)
+            return
+
         if event.kind not in ("SCORE_UPDATE", "VIDEO", "VIDEO_STOP"):
             # Kapcsolo-teszthez (szerviz menu / input_test) - minden "valodi
             # gomb" jellegu esemenyt naplozunk, a zajos SCORE_UPDATE/VIDEO-t nem.

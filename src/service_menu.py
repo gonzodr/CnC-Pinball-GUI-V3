@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import pygame
 
@@ -32,16 +33,24 @@ class ServiceMenuController:
     MAIN_ITEMS = [
         ("hiscore_edit", "F1 - Hiscore szerkesztes / torles"),
         ("thanks_edit", "F2 - Special Thanks nevek"),
-        ("input_test", "F3 - Input / gomb teszt"),
-        ("serial_monitor", "F4 - Serial Monitor (raw)"),
-        ("particle_editor", "F5 - Particle szerkeszto"),
-        ("find_arduino", "F6 - Arduino keresese"),
-        ("firmware_update", "F7 - Firmware update"),
-        ("minigame_difficulty", "F8 - Minigame difficulty"),
-        ("version_info", "F9 - Verzio info"),
-        ("light_editor", "F10 - Light editor (fenyeffekt szerkeszto)"),
-        ("light_test", "F11 - Light test (fenyeffekt teszt)"),
-        ("exit", "F12 - Kilepes"),
+        ("diagnostics", "F3 - Diagnosztika (teszt-kepernyok)"),
+        ("particle_editor", "F4 - Particle szerkeszto"),
+        ("find_arduino", "F5 - Arduino keresese"),
+        ("firmware_update", "F6 - Firmware update"),
+        ("minigame_difficulty", "F7 - Minigame difficulty"),
+        ("version_info", "F8 - Verzio info"),
+        ("light_editor", "F9 - Light editor (fenyeffekt szerkeszto)"),
+        ("exit", "F10 - Kilepes"),
+    ]
+
+    # A negy teszt-kepernyo egy helyen. Mindegyik "nezd meg, mit csinal a
+    # gep" jellegu, ezert kerultek ossze - a fomenu igy rovidebb, es marad
+    # hely uj menupontoknak.
+    DIAGNOSTIC_ITEMS = [
+        ("input_test", "Input / gomb teszt (feldolgozott esemenyek)"),
+        ("serial_monitor", "Serial Monitor (nyers sorok)"),
+        ("light_test", "Light test (fenyeffektek)"),
+        ("analog_test", "Analog bemenet-teszt (infra szenzorok)"),
     ]
 
     # F-billentyu -> fomenu menupont, sorrendben (F1 = elso menupont...).
@@ -83,8 +92,18 @@ class ServiceMenuController:
         # Light test kepernyo: (id, nev) parok az effect_data.h-bol.
         self.light_effects = []
 
+        # Analog teszt kepernyo. A nevek/kuszobok a firmware-tol jonnek
+        # (AT_INFO / AT_THR), az ertekek ~5 Hz-en frissulnek (AT_VAL) -
+        # igy uj szenzor felvetelehez itt nem kell hozzanyulni semmihez.
+        self.analog_names = []
+        self.analog_values = []
+        self.analog_thresholds = []
+        self.analog_last_update = 0.0
+        self.analog_streaming = False
+
     def reset(self):
         """Minden belepeskor (Ctrl+M) a fomenurol indulunk ujra."""
+        self._leave_analog_test_if_needed()
         self.should_exit = False
         self.screen = "main"
         self.cursor = 0
@@ -116,6 +135,7 @@ class ServiceMenuController:
         # Ha a light-test kepernyorol lepunk ki egy F-gombbal, allitsuk le
         # a firmware loopjat (kulonben a gepen tovabb menne az effekt).
         self._leave_light_test_if_needed()
+        self._leave_analog_test_if_needed()
         self.screen = "main"
         self.cursor = idx
         self._activate_main_item()
@@ -135,8 +155,6 @@ class ServiceMenuController:
             self.should_launch_light_editor = True
         elif target == "find_arduino":
             self._handle_find_arduino()
-        elif target == "light_test":
-            self._enter_light_test()
         else:
             self.screen = target
             self.cursor = 0
@@ -163,6 +181,125 @@ class ServiceMenuController:
             self._activate_main_item()
         elif event.key == pygame.K_ESCAPE:
             self.should_exit = True
+
+    def _handle_diagnostics(self, event):
+        count = len(self.DIAGNOSTIC_ITEMS)
+        if event.key == pygame.K_ESCAPE:
+            self._go_main()
+        elif event.key == pygame.K_UP:
+            self.cursor = (self.cursor - 1) % count
+        elif event.key == pygame.K_DOWN:
+            self.cursor = (self.cursor + 1) % count
+        elif event.key == pygame.K_RETURN:
+            self._activate_diagnostic_item()
+
+    def _activate_diagnostic_item(self):
+        target, _ = self.DIAGNOSTIC_ITEMS[self.cursor]
+        if target == "light_test":
+            self._enter_light_test()
+        elif target == "analog_test":
+            self._enter_analog_test()
+        else:
+            self.screen = target
+            self.cursor = 0
+
+    def _go_diagnostics(self):
+        """Vissza az almenube (nem a fomenube) - a teszt-kepernyokrol ESC."""
+        self.screen = "diagnostics"
+        self.cursor = 0
+
+    # --- Analog bemenet-teszt -------------------------------------------
+    # A firmware csak attractban engedi (AT_ERR,BUSY kulonben), es magatol
+    # leall, ha a gep jatekba lep - lasd h_analog_test.ino.
+
+    def _enter_analog_test(self):
+        self.screen = "analog_test"
+        self.cursor = 0
+        self.analog_names = []
+        self.analog_values = []
+        self.analog_thresholds = []
+        self.analog_last_update = 0.0
+        self.analog_streaming = False
+        if self.serial_reader is None:
+            self.status_message = "Nincs soros kapcsolat"
+            return
+        self.serial_reader.send_raw("AT,START\n")
+        self.analog_streaming = True
+        self.status_message = "Kapcsolodas a firmware-hez..."
+
+    def _leave_analog_test_if_needed(self):
+        if self.screen == "analog_test" and self.analog_streaming:
+            if self.serial_reader is not None:
+                self.serial_reader.send_raw("AT,STOP\n")
+            self.analog_streaming = False
+
+    def handle_analog_event(self, event):
+        """A firmware AT_* valaszai (a state_machine iranyitja ide)."""
+        kind = event.kind
+        if kind == "ANALOG_INFO":
+            self.analog_names = list(event.args[0])
+            self.status_message = f"{len(self.analog_names)} szenzor"
+        elif kind == "ANALOG_VALUES":
+            self.analog_values = list(event.args[0])
+            self.analog_last_update = time.time()
+        elif kind == "ANALOG_THRESHOLDS":
+            self.analog_thresholds = list(event.args[0])
+        elif kind == "ANALOG_SAVED":
+            idx, val = event.args
+            if 0 <= idx < len(self.analog_thresholds):
+                self.analog_thresholds[idx] = val
+            self.status_message = f"Kuszob mentve az EEPROM-ba: {val}"
+        elif kind == "ANALOG_ERROR":
+            reason = event.args[0] if event.args else "?"
+            if reason == "BUSY":
+                self.status_message = "A gep nem attractban van - eloszor fejezd be a jatekot"
+            elif reason == "RANGE":
+                self.status_message = "Ervenytelen ertek (0-1023)"
+            else:
+                self.status_message = f"Firmware hiba: {reason}"
+        elif kind == "ANALOG_STOPPED":
+            self.analog_streaming = False
+
+    def _adjust_analog_threshold(self, delta):
+        if not self.analog_thresholds or self.serial_reader is None:
+            return
+        idx = self.cursor
+        if not 0 <= idx < len(self.analog_thresholds):
+            return
+        new_value = max(0, min(1023, self.analog_thresholds[idx] + delta))
+        if new_value == self.analog_thresholds[idx]:
+            return
+        # Optimista frissites: a firmware AT_OK-ja ugyis felulirja.
+        self.analog_thresholds[idx] = new_value
+        self.serial_reader.send_raw(f"AT,SET,{idx},{new_value}\n")
+
+    def _handle_analog_test(self, event):
+        count = max(len(self.analog_names), len(self.analog_thresholds))
+        if event.key == pygame.K_ESCAPE:
+            self._leave_analog_test_if_needed()
+            self._go_diagnostics()
+        elif not count:
+            return
+        elif event.key == pygame.K_UP:
+            self.cursor = (self.cursor - 1) % count
+        elif event.key == pygame.K_DOWN:
+            self.cursor = (self.cursor + 1) % count
+        elif event.key == pygame.K_LEFT:
+            self._adjust_analog_threshold(-1)
+        elif event.key == pygame.K_RIGHT:
+            self._adjust_analog_threshold(1)
+        elif event.key == pygame.K_PAGEDOWN:
+            self._adjust_analog_threshold(-10)
+        elif event.key == pygame.K_PAGEUP:
+            self._adjust_analog_threshold(10)
+        elif event.key == pygame.K_RETURN:
+            # A jelenlegi mert ertek koze allitas: gyors "tanitas" - a mert
+            # ertek es a kuszob kozotti felezopontot veszi at.
+            if self.cursor < len(self.analog_values) and self.cursor < len(self.analog_thresholds):
+                measured = self.analog_values[self.cursor]
+                target = max(0, min(1023, measured + 40))
+                delta = target - self.analog_thresholds[self.cursor]
+                self._adjust_analog_threshold(delta)
 
     def _handle_hiscore_edit(self, event):
         # The final row is the full-table reset action.  This replaces the old
@@ -226,7 +363,7 @@ class ServiceMenuController:
 
     def _handle_input_test(self, event):
         if event.key == pygame.K_ESCAPE:
-            self._go_main()
+            self._go_diagnostics()
 
     def _handle_find_arduino(self):
         """Nem sub-screen, hanem egy azonnali akcio: lefuttatja az
@@ -242,7 +379,7 @@ class ServiceMenuController:
 
     def _handle_serial_monitor(self, event):
         if event.key == pygame.K_ESCAPE:
-            self._go_main()
+            self._go_diagnostics()
 
     def _handle_particle_editor(self, event):
         keys = self.particle_settings.keys_in_order()
@@ -329,7 +466,7 @@ class ServiceMenuController:
         count = len(self.light_effects)
         if event.key == pygame.K_ESCAPE:
             self._send_light_stop()
-            self._go_main()
+            self._go_diagnostics()
         elif count:
             if event.key in (pygame.K_LEFT, pygame.K_UP):
                 self.cursor = (self.cursor - 1) % count
