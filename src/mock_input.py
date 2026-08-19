@@ -102,10 +102,11 @@ class MockInputController:
                     self._bonusx += 1
                 events.append(self._generate_score_event())
 
-            # 3. Videó trigger (R)
+            # 3. Masodik videoteszt-trigger (R). Ugyanazt a teljes, tenylegesen
+            # indexelt sequence-keszletet hasznalja, mint a T; nincs kulon
+            # elavulo, hardcode-olt mpv lista.
             elif key == pygame.K_r:
-                videos = ["Drift", "Danger", "5000", "BEEEER3", "BEEEER2", "BEEEER1"]
-                events.append(GameEvent("VIDEO", (random.choice(videos),)))
+                events.append(GameEvent("PNG_VIDEO_RANDOM", ()))
 
             # 4. Labda leesik (B) - EZ A KULCS
             elif key == pygame.K_b:

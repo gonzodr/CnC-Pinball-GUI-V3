@@ -32,6 +32,7 @@ class SerialReader:
         # egyszeru, egy-irou/egy-olvaso esetben.
         self.raw_log = deque(maxlen=self.RAW_LOG_MAXLEN)
         self._ser = None  # az elo kapcsolat (send_raw hasznalja; a szal kezeli)
+        self._write_lock = threading.Lock()
 
     def start(self):
         self._stop_flag.clear()
@@ -107,14 +108,25 @@ class SerialReader:
             print(f"[serial] send_raw('{text}') kihagyva - nincs elo kapcsolat")
             return False
         try:
-            ser.write(text.encode("utf-8"))
-            ser.flush()
-            print(f"[serial] kuldve: {text}")
-            self.raw_log.append((time.time(), f"[KULDVE] {text}"))
+            with self._write_lock:
+                ser.write(text.encode("utf-8"))
+                ser.flush()
+            display_text = text.rstrip("\r\n")
+            print(f"[serial] kuldve: {display_text}")
+            self.raw_log.append((time.time(), f"[KULDVE] {display_text}"))
             return True
         except (serial.SerialException, OSError) as e:
             print(f"[serial] send_raw hiba: {e}")
             return False
+
+    def send_line(self, text: str) -> bool:
+        """Ujsoros, nem blokkolo firmware-protokoll parancs kuldese.
+
+        A regi hiscore ``Exit`` uzenetek miatt a :meth:`send_raw` viselkedeset
+        nem valtoztatjuk meg. Az MG_* protokoll viszont mindig sorhataros, igy
+        az Arduino karakterenkenti parserenek nem kell timeoutra varnia.
+        """
+        return self.send_raw(text.rstrip("\r\n") + "\n")
 
     def poll_events(self):
         """Nem-blokkoló: visszaadja az összes várakozó eventet."""

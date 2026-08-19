@@ -101,7 +101,7 @@ SCORE --(NEXT/GAMEOVER)--> SUMMARY --(8s után)--> [FINAL_SCORES, ha 2+ játéko
 
 NAME_ENTRY --(kész)--> HIGHSCORE (5s) --> attract-loop
 
-SCORE --(MUNCHIES/VUK_GAME)--> MINIGAME --(Time's Up + eredmény)--> SCORE
+SCORE --(MG_START,<session>)--> MINIGAME --(MG_DONE/ACK)--> SCORE
 ```
 
 ## Munchies Abduction minijáték
@@ -113,9 +113,11 @@ Shoot/Player/Plunger gombbal pedig bekapcsolja a vonósugarat. A jó tárgyakat
 
 Indítás:
 
-- firmware/soros protokoll: `MUNCHIES` vagy `VUK_GAME` sor;
+- firmware/soros protokoll: `MG_START,<session>` sor (`MUNCHIES` és
+  `VUK_GAME` legacy triggerként továbbra is elfogadott);
 - PC-s fejlesztői mód: `U` billentyű a `SCORE` képernyőn;
-- a minijáték csak aktív flipperjáték közben, `SCORE` állapotból indul el.
+- a minijáték aktív flipperjáték közben indul; egy még futó videót vagy
+  PNG-sequence-t a VUK trigger azonnal megszakít.
 
 A teljes képernyős folyamat:
 
@@ -127,7 +129,40 @@ Az intro és a visszaszámlálás alatt a háttér-streamer előre feltölti a
 pályacache-t. Az idő lejártakor a játéktér kimerevedik, lefut a kétlépcsős
 Time's Up hang/animáció, majd az eredményképernyő és a két karakter lezáró
 párbeszéde. A végső bónusz bekerül az aktuális játékos flipperpontszámába,
-és hardveren a GUI `MunchiesBonus,<pont>` sort küld vissza a firmware-nek.
+és hardveren a GUI `MG_DONE,<session>,<pont>` sort küld vissza. Ezt ACK-ig
+250 ms-onként újraküldi, így egy elveszett sor nem nyeli el a pontot és nem
+hagyja a golyót a VUK-ban.
+
+### Arduino–Pi minijáték-protokoll
+
+A protokoll 115200 baudon, újsorral lezárt ASCII üzenetekkel fut. A firmware
+minden VUK-belépéshez új 16 bites session ID-t generál; más sessionből maradt
+inputot vagy eredményt mindkét oldal eldob.
+
+```text
+Arduino                         Pi / GUI
+   |--- MG_START,sid ----------->|
+   |<-- MG_READY,sid ------------|
+   |--- MG_INPUT,sid,seq,mask --->|  változáskor azonnal + 50 ms heartbeat
+   |<-- MG_ALIVE,sid ------------|  500 ms heartbeat
+   |<-- MG_PICKUP,sid,GOOD/BAD ---|
+   |<-- MG_COLLECTION,sid --------|
+   |<-- MG_DONE,sid,bonus --------|
+   |--- MG_ACK,sid -------------->|
+```
+
+Az input bitmask: bit 0 = bal flipper, bit 1 = jobb flipper, bit 2 =
+Shoot/Plunger. A snapshotok nemcsak gyorsak, hanem öngyógyítók is: ha egy
+állapotváltozás elveszne, a következő 50 ms-os csomag helyreállítja a valós
+gombállapotot. A firmware READY nélkül 3 másodperc, Pi-heartbeat nélkül 5
+másodperc, abszolút pedig 230 másodperc után megszakítja a módot és kidobja a
+golyót. A minijáték alatt a normál játékmenet és a flippertekercsek szünetelnek,
+a megszakításos tekercsvédelem végig aktív.
+
+A pálya ilyenkor közel sötét alapfényt kap. Jó pickupnál az összes fény zölden
+villan, junknál kétszer pirosan, collection complete-nél egy kb. egy másodperces
+folyamatos zöld hullám fut végig. Minden effekt `millis()`-al időzített,
+`delay()` nélküli réteg.
 
 ### Játékszabályok és pontozás
 
@@ -527,11 +562,11 @@ megvan, a telepítés kész.
 
 ## Ismert nyitott pontok
 
-- A valódi Teensy hardver soros bekötése még nincs teljesen végigtesztelve
-  — a `main.py`-ban a `serial_reader.poll_events()` -> `state.handle_event()`
-  útvonal jelenleg ki van kommentezve (a `SerialReader` háttérszála viszont
-  fut, és a nyers adatot a szerviz menü Serial Monitor képernyőjén már most
-  is lehet nézni).
+- A teljes VUK-session protokoll Mega + fizikai golyóval még bench tesztet
+  igényel. Telepítéskor először a GUI-t frissítsd (az új GUI érti a legacy
+  triggereket is), és csak utána a firmware-t. A soros útvonal aktív:
+  `serial_reader.poll_events()` → `state.handle_event()` minden GUI frame-ben
+  lefut, maga a blokkoló portolvasás külön szálon történik.
 - A `mock_input.py` billentyű-leképezése ideiglenes/fejlesztői célú — valós
   gombok bekötésekor az esemény-fajták (`GameEvent.kind`) már stimmelnek,
   a `state_machine.py`/`score_gui.py` nem igényel változtatást.

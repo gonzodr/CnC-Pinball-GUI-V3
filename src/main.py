@@ -1,7 +1,7 @@
 """Cheech & Chong Pinball - Raspberry Pi GUI/video vezerlo.
 
 A teljes szoftver belepesi pontja: osszekoti a soros olvasot,
-az allapotgepet, az mpv vezerlot es a pontszam-GUI-t egyetlen
+az allapotgepet, a PNG-sequence motort es a pontszam-GUI-t egyetlen
 futo event loopba.
 
 FEJLESZTOI MOD: a billentyuzet a MockInputController-en keresztul
@@ -19,7 +19,6 @@ import sys
 
 from serial_reader import SerialReader
 from state_machine import StateMachine, AppState
-from mpv_controller import MpvController
 from png_video_player import PngSequencePlayer
 from score_gui import ScoreGUI
 from mock_input import MockInputController
@@ -46,7 +45,7 @@ def run_firmware_update(gui, serial_reader):
     kijelzot es a soros portot, majd MEGVARJA a kulon firmware_update.py
     programot (sajat pygame ablak, git pull + arduino-cli compile/upload),
     utana ujra magahoz veszi mindkettot es folytatja a GUI-t onnan, ahol
-    abbahagyta - ugyanaz a minta, mint a VIDEO allapotnal az mpv-nek."""
+    abbahagyta."""
     print("[main] firmware update inditasa...")
     gui.release_display()
     serial_reader.stop()
@@ -94,13 +93,10 @@ def run_light_editor(gui, serial_reader):
 def main():
     print("[main] inditas...")
 
-    mpv = MpvController()
-    mpv.start()
-
     serial_reader = SerialReader(SERIAL_PORT, SERIAL_BAUDRATE)
     serial_reader.start()
 
-    state = StateMachine(mpv, serial_reader)
+    state = StateMachine(serial_reader)
 
     gui = ScoreGUI()
     gui.acquire_display()   # induláskor is a GUI kapja a kijelzőt (attract-loop, nem VIDEO)
@@ -202,13 +198,13 @@ def main():
                 old_state, new_state = transition
                 print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
 
-                video_states = (AppState.VIDEO, AppState.PNG_VIDEO)
+                video_states = (AppState.PNG_VIDEO,)
                 if old_state not in video_states and new_state not in video_states:
                     # Pillanatkepet keszitunk az elozo allapot utolso
                     # kirajzolt kepebol, hogy a kovetkezo par frame-ben
                     # elhalvanyodjon az uj allapot tartalma fole (lasd
-                    # draw_fade_overlay lejjebb). VIDEO-ba/-bol nem
-                    # csinalunk fade-et, ott mpv veszi at a kijelzot.
+                    # draw_fade_overlay lejjebb). PNG_VIDEO-ba/-bol nem
+                    # csinalunk fade-et, hogy az elso frame azonnal latszodjon.
                     gui.start_fade_transition()
                 else:
                     # A videonak mar az elso trigger-frame-ben latszania kell;
@@ -236,21 +232,6 @@ def main():
                 elif new_state == AppState.BEAT_SCORE:
                     gui.beat_score_start = None
 
-                elif new_state == AppState.VIDEO:
-                    gui.release_display()
-                    mpv.play(state.pending_video)
-                    state.pending_video = None
-                elif new_state == AppState.SCORE:
-                    try:
-                        gui.acquire_display()
-                    except RuntimeError:
-                        # Az mpv nem engedte el a kijelzot (ritka teardown-
-                        # beragadas) - a process ujrainditasa garantaltan
-                        # felszabaditja, utana a visszavetel mar sikerul.
-                        print("[main] a kijelzo nem szabadult fel - mpv hard reset")
-                        mpv.hard_reset()
-                        gui.acquire_display()
-                    
             # 5. Rajzolas, ha SCORE allapotban vagyunk
             if state.state == AppState.SCORE:
                 gui.render(state)
@@ -306,7 +287,6 @@ def main():
         serial_reader.stop()
         png_video.close()
         gui.release_display()
-        mpv.shutdown()
         sys.exit(exit_code)
 
 

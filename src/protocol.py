@@ -43,7 +43,36 @@ def parse_line(line: str) -> Optional[GameEvent]:
             return GameEvent("VIDEO", (parts[1],))
 
         elif cmd in ("MUNCHIES", "VUK_GAME"):
+            # Regi, session-azonosito nelkuli VUK trigger. Az ures args
+            # szandekos: igy a friss GUI a regi firmware-rel is hasznalhato.
             return GameEvent("MUNCHIES_START")
+
+        elif cmd == "MG_START" and len(parts) == 2:
+            session = int(parts[1])
+            if not 1 <= session <= 0xFFFF:
+                return None
+            return GameEvent("MUNCHIES_START", (session,))
+
+        elif cmd == "MG_INPUT" and len(parts) == 4:
+            # MG_INPUT,<session>,<sequence>,<bitmask>
+            # bit0 = bal flipper, bit1 = jobb flipper, bit2 = kilovo/sugar
+            session, sequence, mask = map(int, parts[1:4])
+            if not 1 <= session <= 0xFFFF or not 0 <= sequence <= 0xFFFF:
+                return None
+            if not 0 <= mask <= 7:
+                return None
+            return GameEvent("MUNCHIES_INPUT", (
+                session, sequence, mask
+            ))
+
+        elif cmd == "MG_ACK" and len(parts) == 2:
+            session = int(parts[1])
+            if not 1 <= session <= 0xFFFF:
+                return None
+            return GameEvent("MUNCHIES_ACK", (session,))
+
+        elif cmd == "MG_ABORT" and len(parts) >= 2:
+            return GameEvent("MUNCHIES_ABORT", tuple(parts[1:]))
 
         elif cmd in ["MULTIBALL_ON", "MULTIBALL_OFF", "ATTRACT", "PLAYERCOUNT_NEXT",
                      "START", "FLIPPER_LEFT", "FLIPPER_RIGHT", "PLAYER_PRESS", "PLUNGER",
@@ -56,7 +85,7 @@ def parse_line(line: str) -> Optional[GameEvent]:
             # és az nem a fenti parancsok egyike, akkor az egy VIDEÓ / EFFEKT trigger!
             # KIVÉVE az ismert nem-videó üzeneteket (a "Zero" a játékindítás jelzése,
             # sosem volt hozzá videófájl).
-            if len(parts) == 1 and cmd not in ("ZERO",):
+            if len(parts) == 1 and cmd not in ("ZERO",) and not cmd.startswith("MG_"):
                 return GameEvent("VIDEO", (parts[0],))
 
     except (ValueError, IndexError):

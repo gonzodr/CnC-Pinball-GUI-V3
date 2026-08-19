@@ -2393,6 +2393,20 @@ class MunchiesAbductionGame:
         elif event.key in (pygame.K_RIGHT, pygame.K_d): self.player.right = down
         elif event.key in (pygame.K_SPACE, pygame.K_p): self.player.beam = down
 
+    def set_hardware_input(self, mask):
+        """Apply one authoritative Arduino button-state snapshot.
+
+        Snapshots repair a missed edge automatically, so a lost serial packet
+        can never leave steering or the tractor beam stuck down.
+        """
+        try:
+            mask = int(mask) & 0x07
+        except (TypeError, ValueError):
+            return
+        self.player.left = bool(mask & 0x01)
+        self.player.right = bool(mask & 0x02)
+        self.player.beam = bool(mask & 0x04)
+
     def _spawn(self, travelled_frames=0.0, kind=None, world_x=None,
                optional_choice=False):
         if kind is None:

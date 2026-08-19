@@ -4,17 +4,16 @@ import time
 from collections import deque
 from enum import Enum, auto
 from protocol import GameEvent
-from mpv_controller import MpvController
 from score_manager import ScoreManager
 from name_entry import NameEntryController
 from thanks_names_manager import ThanksNamesManager
 from service_menu import ServiceMenuController
 from minigame_settings import MinigameSettingsManager
 from munchies_abduction import MunchiesAbductionGame
+from video_catalog import resolve_serial_video_name
 
 class AppState(Enum):
     SCORE = auto()
-    VIDEO = auto()
     SUMMARY = auto()
     NAME_ENTRY = auto()
     HIGHSCORE = auto()
@@ -51,45 +50,24 @@ class StateMachine:
     )
 
     # A titkos szerviz menu (Ctrl+M) csak ezekbol az allapotokbol nyithato
-    # meg - jatek kozben (SUMMARY/NAME_ENTRY/FINAL_SCORES/VIDEO) nem, hogy
+    # meg - jatek kozben (SUMMARY/NAME_ENTRY/FINAL_SCORES/PNG_VIDEO) nem, hogy
     # ne szakithassa felbe veletlenul egy elo kort.
     SERVICE_MENU_ALLOWED_STATES = (
         AppState.SCORE, AppState.LOGO, AppState.PRESS_START,
         AppState.SPECIAL_THANKS, AppState.HIGHSCORE, AppState.BEAT_SCORE,
     )
 
-    # Firmware-parancs -> tenyleges videofajl nev (a Videos mappa valodi
-    # fajlnevei alapjan, 2026-07-10; reszletek: firmware repo VIDEO_MAP.md).
-    # Ami nincs a tablaban, annal a fajlnev = a parancs neve (pl. Drift,
-    # Weed, Danger, Tilt, Jackpot2..6, ChongC1..3, CheechC1..3, Ufo1..5...).
-    VIDEO_NAME_REMAP = {
-        "Ufo6": "Ufofuck", "Ufo7": "Ufo6",  # Unity-korszakos elcsuszas
-        "Point1": "2500", "Point2": "5000", "Point3": "7500", "Point4": "10000",
-        "Point5": "15000", "Point6": "20000", "Point7": "25000", "Point8": "30000",
-        "Beer1": "BEEEER1", "Beer2": "BEEEER2", "Beer3": "BEEEER3",
-        "Bonus1": "Bonus2", "Bonus2": "Bonus4", "Bonus3": "Bonus6", "Bonus4": "Bonus8",
-        "Combo1": "Combo2500", "Combo2": "Combo5000", "Combo3": "Combo7500",
-        "Combo4": "Combo10000", "Combo5": "Combo15000", "Combo6": "Combo20000",
-        "Jackpot1": "PsyJackpot",
-        "Multiball1": "Michokan", "Multiball2": "Acapulco Gold",
-        "Multiball3": "Thai Stick", "Multiball4": "Labrador",
-        "ExtraB": "Extraball",
-    }
+    MINIGAME_HEARTBEAT_SEC = 0.50
+    MINIGAME_DONE_RETRY_SEC = 0.25
+    MINIGAME_DONE_RETRY_WINDOW_SEC = 3.0
 
-    # VIDEO watchdog: ennel tovabb egyetlen video sem tarthat - ha megis
-    # (beragadt mpv/IPC), kenyszerrel visszaterunk a SCORE kepernyore.
-    VIDEO_MAX_DURATION_SEC = 45.0
-
-    def __init__(self, mpv: MpvController, serial_reader=None):
-        self.mpv = mpv
+    def __init__(self, serial_reader=None):
         self.serial_reader = serial_reader  # csak a szerviz menu Serial Monitor kepernyojehez
         self.score_manager = ScoreManager()
         self.thanks_manager = ThanksNamesManager()
         self.minigame_settings = MinigameSettingsManager()
         self.state = AppState.SCORE
         self._previous_state = AppState.SCORE
-        self.pending_video = None
-        self._video_started_at = 0.0  # a VIDEO watchdoghoz
         
         self.players = {1: 0, 2: 0, 3: 0, 4: 0}
         self.current_player = 1
@@ -138,6 +116,10 @@ class StateMachine:
         self._preloaded_minigame = None
         self.last_minigame_result = None
         self._minigame_last_tick = 0.0
+        self._minigame_session = None
+        self._minigame_last_input_seq = None
+        self._minigame_next_heartbeat = 0.0
+        self._minigame_pending_done = None
         # A Pygame-alapu PNG sequence motor a kijelzo letrehozasa utan
         # kerul ide a main.py-bol (a Surface.convert() aktiv displayt ker).
         self.png_video_player = None
@@ -156,6 +138,7 @@ class StateMachine:
             autoplay_intro=False,
             progress_callback=progress_callback,
             difficulty=self.minigame_settings.get_difficulty("munchies_abduction"),
+            sound_hook=self._handle_minigame_sound,
         )
         print(
             f"[munchies] preloaded in {time.monotonic() - started:.2f}s; "
@@ -174,6 +157,46 @@ class StateMachine:
             # Kapcsolo-teszthez (szerviz menu / input_test) - minden "valodi
             # gomb" jellegu esemenyt naplozunk, a zajos SCORE_UPDATE/VIDEO-t nem.
             self.recent_events.append((time.time(), event.kind))
+
+        if event.kind == "MUNCHIES_ACK":
+            session = event.args[0] if event.args else None
+            if self._minigame_pending_done is not None:
+                pending_session = self._minigame_pending_done[0]
+                if session == pending_session:
+                    print(f"[munchies] firmware ACK, session={session}")
+                    self._minigame_pending_done = None
+            return
+
+        if event.kind == "MUNCHIES_INPUT":
+            if self.state != AppState.MINIGAME or self.minigame is None:
+                return
+            session, sequence, mask = event.args
+            if session != self._minigame_session:
+                return
+            # Soros vonalon sorrendtartoak a csomagok. A modulo-16 bites
+            # vizsgalat a sequence atfordulasat is helyesen kezeli.
+            if self._minigame_last_input_seq is not None:
+                delta = (sequence - self._minigame_last_input_seq) & 0xFFFF
+                if delta == 0 or delta >= 0x8000:
+                    return
+            self._minigame_last_input_seq = sequence
+            self.minigame.set_hardware_input(mask)
+            return
+
+        if event.kind == "MUNCHIES_ABORT":
+            session = None
+            if event.args:
+                try:
+                    session = int(event.args[0])
+                except (TypeError, ValueError):
+                    pass
+            if (
+                self.state == AppState.MINIGAME
+                and (session is None or session == self._minigame_session)
+            ):
+                print(f"[munchies] firmware megszakitas, session={session}")
+                self._abort_minigame()
+            return
 
         # A minijatek alatt a flipper/plunger hardveres el-es felengedes
         # esemenyei kozvetlenul a jatekmenethez tartoznak.
@@ -198,10 +221,6 @@ class StateMachine:
                 AppState.BEAT_SCORE, AppState.SERVICE_MENU,
                 AppState.MINIGAME,
                 AppState.PNG_VIDEO,
-                # VIDEO is vedett: jatek kozben 350 ms-onkent jon score-uzenet,
-                # es e nelkul MINDEN videot azonnal lelott a kovetkezo update
-                # ("sotet villanas, majd vissza a GUI")!
-                AppState.VIDEO,
             ):
                 self.state = AppState.SCORE
                 self._in_attract_loop = False
@@ -318,7 +337,18 @@ class StateMachine:
                 self.state = AppState.BEAT_SCORE
 
         elif event.kind == "MUNCHIES_START":
-            if self.state == AppState.SCORE:
+            session = event.args[0] if event.args else None
+
+            # A firmware a READY megjoveteleig ujrakuldi a START-ot. Egy mar
+            # futo, azonos sessionre ezert csak megismetli a valaszt.
+            if self.state == AppState.MINIGAME and self.minigame is not None:
+                if session is not None and session == self._minigame_session:
+                    self._send_minigame_line(f"MG_READY,{session}")
+                return
+
+            # Az UFO elsobbseget kap egy eppen futo klippel szemben: a golyo
+            # mar fizikailag a VUK-ban all, nem varhat egy video vegere.
+            if self.state in (AppState.SCORE, AppState.PNG_VIDEO):
                 if self._preloaded_minigame is not None:
                     self.minigame = self._preloaded_minigame
                     self._preloaded_minigame = None
@@ -332,16 +362,26 @@ class StateMachine:
                     self.minigame = MunchiesAbductionGame(
                         difficulty=self.minigame_settings.get_difficulty(
                             "munchies_abduction"
-                        )
+                        ),
+                        sound_hook=self._handle_minigame_sound,
                     )
+                self._minigame_session = session
+                self._minigame_last_input_seq = None
+                self._minigame_pending_done = None
+                now = time.monotonic()
+                self._minigame_next_heartbeat = now + self.MINIGAME_HEARTBEAT_SEC
                 self._minigame_last_tick = time.monotonic()
                 self._in_attract_loop = False
                 self.state = AppState.MINIGAME
+                if session is not None:
+                    self._send_minigame_line(f"MG_READY,{session}")
+            elif session is not None:
+                self._send_minigame_line(f"MG_BUSY,{session}")
 
         elif event.kind == "PNG_VIDEO_RANDOM":
             # Fejlesztoi PNG-videoag: nyugalmi SCORE-bol indulhat, egy mar
             # futo PNG-videot pedig ugyanazzal a triggerrel azonnal lecserel.
-            # Mas allapot (summary, minijatek, menu, mpv-video) foglaltnak
+            # Mas allapot (summary, minijatek, menu) foglaltnak
             # szamit, ott a trigger szandekosan nem csinal semmit.
             if self.state in (AppState.SCORE, AppState.PNG_VIDEO) and self.png_video_player is not None:
                 selected = self.png_video_player.start_random()
@@ -354,30 +394,40 @@ class StateMachine:
                     self.state = AppState.SCORE
 
         elif event.kind == "VIDEO":
-            video_name = event.args[0]
+            requested_name = str(event.args[0])
 
             # Ufo10..13 = az UFO "pontlopas" nyeremenye: a firmware a
             # KIRABOLT jatekos pontjabol vont le 10000-et, de a score
             # uzenetben mindig csak az aktualis jatekos pontja jon -
             # itt szinkronizaljuk a kijelzett pontszamot is (0-nal nem
             # megy lejjebb, ugyanugy, ahogy a firmware-ben).
-            if video_name in ("Ufo10", "Ufo11", "Ufo12", "Ufo13"):
-                victim = int(video_name[3:]) - 9  # Ufo10 -> 1 ... Ufo13 -> 4
+            if requested_name.casefold() in ("ufo10", "ufo11", "ufo12", "ufo13"):
+                victim = int(requested_name[3:]) - 9  # Ufo10 -> 1 ... Ufo13 -> 4
                 self.players[victim] = max(0, self.players[victim] - 10000)
 
-            # A Unity-korszakbol orokolt elcsuszas (lasd a firmware repo
-            # VIDEO_MAP.md-jet): a "Ufo6" trigger a Ufofuck.mp4-et, a
-            # "Ufo7" pedig az Ufo6.mp4-et jelenti - Ufo7.mp4 nem letezik!
-            video_name = self.VIDEO_NAME_REMAP.get(video_name, video_name)
-
-            if self.state == AppState.SCORE:
-                self.pending_video = video_name
-                self._video_started_at = time.time()  # a VIDEO watchdoghoz
-                self.state = AppState.VIDEO
+            # Minden platform ugyanazt a Pygame PNG-sequence motort hasznalja.
+            # Egy uj soros trigger a mar futo klipet is azonnal lecsereli.
+            if self.state in (AppState.SCORE, AppState.PNG_VIDEO):
+                if self.png_video_player is None:
+                    print(f"[png-video] trigger kihagyva, a motor meg nincs kesz: {requested_name}")
+                    return
+                video_name = resolve_serial_video_name(
+                    requested_name,
+                    self.png_video_player.clip_names,
+                )
+                if video_name is None:
+                    print(
+                        f"[png-video] nincs sequence a soros parancshoz: "
+                        f"{requested_name}"
+                    )
+                    return
+                if self.png_video_player.start(video_name):
+                    self._in_attract_loop = False
+                    self.state = AppState.PNG_VIDEO
 
         elif event.kind == "VIDEO_STOP":
-            if self.state == AppState.VIDEO:
-                self.mpv.stop()
+            if self.state == AppState.PNG_VIDEO and self.png_video_player is not None:
+                self.png_video_player.stop()
                 self.state = AppState.SCORE
 
     def _send_exit_to_firmware(self, variant: str):
@@ -387,6 +437,64 @@ class StateMachine:
         (intmon == 2) ragadna minden jatek utan!"""
         if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
             self.serial_reader.send_raw(variant)
+
+    def _send_minigame_line(self, text: str) -> bool:
+        if self.serial_reader is None:
+            return False
+        if hasattr(self.serial_reader, "send_line"):
+            return self.serial_reader.send_line(text)
+        # Minimal fake/older SerialReader compatibility for tests and local
+        # tools. A real recent reader always takes the send_line branch.
+        if hasattr(self.serial_reader, "send_raw"):
+            return self.serial_reader.send_raw(text + "\n")
+        return False
+
+    def _handle_minigame_sound(self, name: str):
+        """Forward gameplay outcomes to the cabinet light controller."""
+        session = self._minigame_session
+        if session is None or self.state != AppState.MINIGAME:
+            return
+        if name == "collect":
+            self._send_minigame_line(f"MG_PICKUP,{session},GOOD")
+        elif name == "bad_pickup":
+            self._send_minigame_line(f"MG_PICKUP,{session},BAD")
+        elif name == "collection_complete":
+            self._send_minigame_line(f"MG_COLLECTION,{session}")
+
+    def _abort_minigame(self):
+        if self.minigame is None:
+            return
+        aborted = self.minigame
+        self.minigame = None
+        aborted.prepare_for_replay()
+        self._preloaded_minigame = aborted
+        self._minigame_session = None
+        self._minigame_last_input_seq = None
+        self.state = AppState.SCORE
+
+    def _service_minigame_protocol(self, now: float):
+        session = self._minigame_session
+        if (
+            session is not None
+            and self.state == AppState.MINIGAME
+            and now >= self._minigame_next_heartbeat
+        ):
+            self._send_minigame_line(f"MG_ALIVE,{session}")
+            self._minigame_next_heartbeat = now + self.MINIGAME_HEARTBEAT_SEC
+
+        pending = self._minigame_pending_done
+        if pending is None:
+            return
+        done_session, bonus, deadline, next_send = pending
+        if now >= deadline:
+            print(f"[munchies] firmware ACK timeout, session={done_session}")
+            self._minigame_pending_done = None
+        elif now >= next_send:
+            self._send_minigame_line(f"MG_DONE,{done_session},{bonus}")
+            self._minigame_pending_done = (
+                done_session, bonus, deadline,
+                now + self.MINIGAME_DONE_RETRY_SEC,
+            )
 
     def _start_summary(self):
         self._summary_end_time = time.time() + self.SUMMARY_DURATION_SEC
@@ -429,8 +537,11 @@ class StateMachine:
         self._attract_state_end_time = time.time() + duration
 
     def tick(self):
+        protocol_now = time.monotonic()
+        self._service_minigame_protocol(protocol_now)
+
         if self.state == AppState.MINIGAME and self.minigame is not None:
-            now = time.monotonic()
+            now = protocol_now
             self.minigame.update(now - self._minigame_last_tick)
             self._minigame_last_tick = now
             if self.minigame.finished:
@@ -438,9 +549,14 @@ class StateMachine:
                 self.last_minigame_result = result
                 bonus = result["total_bonus"]
                 self.players[self.current_player] += bonus
-                if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
-                    # Firmware oldalon ez a sor adja hozza a fizikai gep
-                    # pontjahoz is ugyanazt a bonuszt.
+                if self._minigame_session is not None:
+                    session = self._minigame_session
+                    deadline = now + self.MINIGAME_DONE_RETRY_WINDOW_SEC
+                    self._minigame_pending_done = (session, bonus, deadline, now)
+                    # Az elso DONE ne varjon a kovetkezo GUI frame-ig.
+                    self._service_minigame_protocol(now)
+                elif self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
+                    # Regi, session nelkuli firmware kompatibilitasa.
                     self.serial_reader.send_raw(f"MunchiesBonus,{bonus}")
                 completed_game = self.minigame
                 self.minigame = None
@@ -449,6 +565,8 @@ class StateMachine:
                 # streamer, so later VUK entries remain just as immediate.
                 completed_game.prepare_for_replay()
                 self._preloaded_minigame = completed_game
+                self._minigame_session = None
+                self._minigame_last_input_seq = None
                 self.state = AppState.SCORE
             return
 
@@ -471,17 +589,7 @@ class StateMachine:
                 self._advance_attract_loop()
             return
 
-        if self.state == AppState.VIDEO:
-            # Vedohalo: ha az mpv/IPC barmiert beragad (halott socket,
-            # kijelzo-problema), ne ragadjunk orokre a VIDEO allapotban.
-            timed_out = time.time() - self._video_started_at > self.VIDEO_MAX_DURATION_SEC
-            if timed_out:
-                print("[state] VIDEO watchdog: tul regota fut, kenyszer-stop")
-                self.mpv.stop()
-            if timed_out or self.mpv.is_finished():
-                self.state = AppState.SCORE
-            
-        elif self.state == AppState.SUMMARY:
+        if self.state == AppState.SUMMARY:
             if time.time() >= self._summary_end_time:
                 if self._pending_game_over and self.final_player_count > 1:
                     # Tobb jatekos jatszott, es ez valodi jatekveg volt -
