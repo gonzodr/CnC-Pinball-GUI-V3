@@ -1998,7 +1998,7 @@ class ScoreGUI:
             if not names:
                 self._draw_service_line("Varakozas a firmware valaszara...", y, False)
                 self._draw_service_line(
-                    "(a teszt csak attract modban indul - ha jatek megy, eloszor fejezd be)",
+                    "(csak attract modban indul; R: kapcsolat ujraprobalasa)",
                     y + line_h * 2, False,
                 )
             else:
@@ -2027,7 +2027,13 @@ class ScoreGUI:
                         f"(nincs friss adat {stale:.0f} mp-e - a firmware leallt?)",
                         y + (len(names) + 2) * line_h, False,
                     )
-            hint = "Bal/Jobb: +-1   PgUp/PgDn: +-10   Enter: mert ertek fole   Esc: stop + vissza"
+            save_state = "NINCS MENTVE" if controller.analog_dirty else "elmentve"
+            if controller.analog_save_pending:
+                save_state = "mentes..."
+            hint = (
+                "Bal/Jobb +-1  PgUp/Dn +-10  Enter: auto  "
+                f"S: MENTES [{save_state}]  Esc: vissza"
+            )
 
         elif controller.screen == "light_test":
             effects = controller.light_effects

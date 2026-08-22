@@ -11,6 +11,7 @@ if str(SRC) not in sys.path:
 
 from protocol import GameEvent, parse_line
 from serial_reader import SerialReader
+from service_menu import ServiceMenuController
 from state_machine import AppState, StateMachine
 
 
@@ -31,6 +32,15 @@ class FakeReader:
 
     def send_line(self, text):
         self.lines.append(text)
+        return True
+
+
+class FakeRawReader:
+    def __init__(self):
+        self.raw = []
+
+    def send_raw(self, text):
+        self.raw.append(text)
         return True
 
 
@@ -83,6 +93,9 @@ class ProtocolParserTests(unittest.TestCase):
         self.assertEqual(parse_line("MUNCHIES"), GameEvent("MUNCHIES_START"))
         self.assertEqual(parse_line("VUK_GAME"), GameEvent("MUNCHIES_START"))
 
+    def test_atomic_analog_save_ack(self):
+        self.assertEqual(parse_line("AT_SAVED"), GameEvent("ANALOG_SAVED"))
+
 
 class SerialWriterTests(unittest.TestCase):
     def test_send_line_adds_exactly_one_newline(self):
@@ -91,6 +104,28 @@ class SerialWriterTests(unittest.TestCase):
         reader._ser = port
         self.assertTrue(reader.send_line("MG_READY,9\r\n"))
         self.assertEqual(port.writes, [b"MG_READY,9\n"])
+
+
+class AnalogServiceMenuTests(unittest.TestCase):
+    def test_adjustments_are_local_until_saves_are_requested(self):
+        menu = ServiceMenuController.__new__(ServiceMenuController)
+        menu.serial_reader = FakeRawReader()
+        menu.cursor = 0
+        menu.status_message = ""
+        menu.analog_thresholds = [90, 90]
+        menu.analog_thresholds_saved = [90, 90]
+        menu.analog_dirty = False
+        menu.analog_save_pending = False
+        menu.analog_save_snapshot = None
+
+        menu._adjust_analog_threshold(10)
+        self.assertEqual(menu.analog_thresholds, [100, 90])
+        self.assertEqual(menu.serial_reader.raw, [])
+        self.assertTrue(menu.analog_dirty)
+
+        menu._save_analog_thresholds()
+        self.assertEqual(menu.serial_reader.raw, ["AT,SAVE,100,90\n"])
+        self.assertTrue(menu.analog_save_pending)
 
 
 class StateMachineProtocolTests(unittest.TestCase):

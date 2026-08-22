@@ -197,6 +197,7 @@ class StateMachine:
 
         if event.kind == "MUNCHIES_ABORT":
             session = None
+            reason = event.args[1] if len(event.args) > 1 else "UNKNOWN"
             if event.args:
                 try:
                     session = int(event.args[0])
@@ -206,7 +207,10 @@ class StateMachine:
                 self.state == AppState.MINIGAME
                 and (session is None or session == self._minigame_session)
             ):
-                print(f"[munchies] firmware megszakitas, session={session}")
+                print(
+                    f"[munchies] firmware megszakitas, "
+                    f"session={session}, reason={reason}"
+                )
                 self._abort_minigame()
             return
 

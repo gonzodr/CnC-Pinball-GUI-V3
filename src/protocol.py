@@ -78,7 +78,7 @@ def parse_line(line: str) -> Optional[GameEvent]:
         # AT_INFO,<db>,<nev1>,...   a szenzorok szama es neve (belepeskor)
         # AT_VAL,<e1>,...           nyers ADC-ertekek, ~5 Hz-en
         # AT_THR,<k1>,...           a jelenleg ervenyes kuszobok
-        # AT_OK,<idx>,<ert>         kuszob elmentve az EEPROM-ba
+        # AT_SAVED                  minden kuszob atomian elmentve az EEPROM-ba
         # AT_ERR,<ok>               BUSY (nem attract) / RANGE / CMD
         elif cmd == "AT_INFO" and len(parts) >= 2:
             return GameEvent("ANALOG_INFO", (tuple(parts[2:]),))
@@ -89,8 +89,8 @@ def parse_line(line: str) -> Optional[GameEvent]:
         elif cmd == "AT_THR" and len(parts) >= 2:
             return GameEvent("ANALOG_THRESHOLDS", (tuple(int(v) for v in parts[1:]),))
 
-        elif cmd == "AT_OK" and len(parts) == 3:
-            return GameEvent("ANALOG_SAVED", (int(parts[1]), int(parts[2])))
+        elif cmd == "AT_SAVED":
+            return GameEvent("ANALOG_SAVED")
 
         elif cmd == "AT_ERR" and len(parts) >= 2:
             return GameEvent("ANALOG_ERROR", (parts[1],))

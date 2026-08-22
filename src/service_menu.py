@@ -98,6 +98,10 @@ class ServiceMenuController:
         self.analog_names = []
         self.analog_values = []
         self.analog_thresholds = []
+        self.analog_thresholds_saved = []
+        self.analog_dirty = False
+        self.analog_save_pending = False
+        self.analog_save_snapshot = None
         self.analog_last_update = 0.0
         self.analog_streaming = False
 
@@ -218,14 +222,28 @@ class ServiceMenuController:
         self.analog_names = []
         self.analog_values = []
         self.analog_thresholds = []
+        self.analog_thresholds_saved = []
+        self.analog_dirty = False
+        self.analog_save_pending = False
+        self.analog_save_snapshot = None
         self.analog_last_update = 0.0
         self.analog_streaming = False
         if self.serial_reader is None:
             self.status_message = "Nincs soros kapcsolat"
             return
-        self.serial_reader.send_raw("AT,START\n")
-        self.analog_streaming = True
-        self.status_message = "Kapcsolodas a firmware-hez..."
+        self._start_analog_stream()
+
+    def _start_analog_stream(self):
+        if self.serial_reader is None:
+            self.status_message = "Nincs soros kapcsolat"
+            self.analog_streaming = False
+            return
+        self.analog_streaming = self.serial_reader.send_raw("AT,START\n")
+        self.status_message = (
+            "Kapcsolodas a firmware-hez..."
+            if self.analog_streaming
+            else "A parancs nem ment ki - R: ujraprobalas"
+        )
 
     def _leave_analog_test_if_needed(self):
         if self.screen == "analog_test" and self.analog_streaming:
@@ -244,12 +262,19 @@ class ServiceMenuController:
             self.analog_last_update = time.time()
         elif kind == "ANALOG_THRESHOLDS":
             self.analog_thresholds = list(event.args[0])
+            self.analog_thresholds_saved = list(self.analog_thresholds)
+            self.analog_dirty = False
+            self.analog_save_pending = False
         elif kind == "ANALOG_SAVED":
-            idx, val = event.args
-            if 0 <= idx < len(self.analog_thresholds):
-                self.analog_thresholds[idx] = val
-            self.status_message = f"Kuszob mentve az EEPROM-ba: {val}"
+            saved = self.analog_save_snapshot or self.analog_thresholds
+            self.analog_thresholds_saved = list(saved)
+            self.analog_dirty = self.analog_thresholds != self.analog_thresholds_saved
+            self.analog_save_pending = False
+            self.analog_save_snapshot = None
+            self.status_message = "Minden kuszob elmentve az EEPROM-ba"
         elif kind == "ANALOG_ERROR":
+            self.analog_save_pending = False
+            self.analog_save_snapshot = None
             reason = event.args[0] if event.args else "?"
             if reason == "BUSY":
                 self.status_message = "A gep nem attractban van - eloszor fejezd be a jatekot"
@@ -261,7 +286,7 @@ class ServiceMenuController:
             self.analog_streaming = False
 
     def _adjust_analog_threshold(self, delta):
-        if not self.analog_thresholds or self.serial_reader is None:
+        if not self.analog_thresholds:
             return
         idx = self.cursor
         if not 0 <= idx < len(self.analog_thresholds):
@@ -269,15 +294,38 @@ class ServiceMenuController:
         new_value = max(0, min(1023, self.analog_thresholds[idx] + delta))
         if new_value == self.analog_thresholds[idx]:
             return
-        # Optimista frissites: a firmware AT_OK-ja ugyis felulirja.
         self.analog_thresholds[idx] = new_value
-        self.serial_reader.send_raw(f"AT,SET,{idx},{new_value}\n")
+        self.analog_dirty = self.analog_thresholds != self.analog_thresholds_saved
+        self.status_message = "Nincs mentve - S: osszes kuszob mentese"
+
+    def _save_analog_thresholds(self):
+        """Az osszes kuszobot egyetlen, atomi firmware-paranccsal menti.
+
+        A nyilak csak a GUI helyi masolatat allitjak. Igy nincs billentyunkent
+        EEPROM-iras, es kesve visszaerkezo nyugtazas sem tudja felulirni az
+        eppen szerkesztett erteket.
+        """
+        if not self.analog_thresholds or self.serial_reader is None:
+            self.status_message = "Nincs mentheto adat vagy soros kapcsolat"
+            return
+        if self.analog_save_pending:
+            self.status_message = "A mentes mar folyamatban van"
+            return
+        payload = ",".join(str(value) for value in self.analog_thresholds)
+        if self.serial_reader.send_raw(f"AT,SAVE,{payload}\n"):
+            self.analog_save_pending = True
+            self.analog_save_snapshot = list(self.analog_thresholds)
+            self.status_message = "Mentes..."
+        else:
+            self.status_message = "Mentes sikertelen - nincs soros kapcsolat"
 
     def _handle_analog_test(self, event):
         count = max(len(self.analog_names), len(self.analog_thresholds))
         if event.key == pygame.K_ESCAPE:
             self._leave_analog_test_if_needed()
             self._go_diagnostics()
+        elif event.key == pygame.K_r:
+            self._start_analog_stream()
         elif not count:
             return
         elif event.key == pygame.K_UP:
@@ -292,6 +340,8 @@ class ServiceMenuController:
             self._adjust_analog_threshold(-10)
         elif event.key == pygame.K_PAGEUP:
             self._adjust_analog_threshold(10)
+        elif event.key == pygame.K_s:
+            self._save_analog_thresholds()
         elif event.key == pygame.K_RETURN:
             # A jelenlegi mert ertek koze allitas: gyors "tanitas" - a mert
             # ertek es a kuszob kozotti felezopontot veszi at.
