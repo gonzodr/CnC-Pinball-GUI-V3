@@ -29,10 +29,18 @@ class FakeSerialPort:
 class FakeReader:
     def __init__(self):
         self.lines = []
+        self.heartbeat_sessions = []
+        self.heartbeat_stops = 0
 
     def send_line(self, text):
         self.lines.append(text)
         return True
+
+    def start_minigame_heartbeat(self, session):
+        self.heartbeat_sessions.append(session)
+
+    def stop_minigame_heartbeat(self):
+        self.heartbeat_stops += 1
 
 
 class FakeRawReader:
@@ -105,11 +113,24 @@ class SerialWriterTests(unittest.TestCase):
         self.assertTrue(reader.send_line("MG_READY,9\r\n"))
         self.assertEqual(port.writes, [b"MG_READY,9\n"])
 
+    def test_background_heartbeat_is_independent_of_render_loop(self):
+        reader = SerialReader("unused")
+        port = FakeSerialPort()
+        reader._ser = port
+        reader.start_minigame_heartbeat(9)
+        reader._minigame_heartbeat_next = 0.0
+        reader._service_minigame_heartbeat(10.0)
+        self.assertEqual(port.writes, [b"MG_ALIVE,9\n"])
+        reader.stop_minigame_heartbeat()
+        reader._service_minigame_heartbeat(20.0)
+        self.assertEqual(port.writes, [b"MG_ALIVE,9\n"])
+
 
 class AnalogServiceMenuTests(unittest.TestCase):
     def test_adjustments_are_local_until_saves_are_requested(self):
         menu = ServiceMenuController.__new__(ServiceMenuController)
         menu.serial_reader = FakeRawReader()
+        menu.screen = "analog_test"
         menu.cursor = 0
         menu.status_message = ""
         menu.analog_thresholds = [90, 90]
@@ -117,6 +138,10 @@ class AnalogServiceMenuTests(unittest.TestCase):
         menu.analog_dirty = False
         menu.analog_save_pending = False
         menu.analog_save_snapshot = None
+        menu.analog_save_attempts = 0
+        menu.analog_save_next_retry = 0.0
+        menu.analog_save_deadline = 0.0
+        menu.analog_streaming = True
 
         menu._adjust_analog_threshold(10)
         self.assertEqual(menu.analog_thresholds, [100, 90])
@@ -126,6 +151,23 @@ class AnalogServiceMenuTests(unittest.TestCase):
         menu._save_analog_thresholds()
         self.assertEqual(menu.serial_reader.raw, ["AT,SAVE,100,90\n"])
         self.assertTrue(menu.analog_save_pending)
+
+        # Nyugtazas nelkul ujrakuldi ugyanazt az idempotens EEPROM.update
+        # csomagot; elveszett WS2812/serial-utkozes utan ez gyogyitja magat.
+        menu.analog_save_next_retry = 0.0
+        menu.tick(menu.analog_save_deadline - 1.0)
+        self.assertEqual(
+            menu.serial_reader.raw,
+            ["AT,SAVE,100,90\n", "AT,SAVE,100,90\n"],
+        )
+
+        menu.handle_analog_event(GameEvent("ANALOG_SAVED"))
+        self.assertEqual(
+            menu.serial_reader.raw,
+            ["AT,SAVE,100,90\n", "AT,SAVE,100,90\n"],
+        )
+        self.assertFalse(menu.analog_save_pending)
+        self.assertFalse(menu.analog_dirty)
 
 
 class StateMachineProtocolTests(unittest.TestCase):
@@ -179,13 +221,17 @@ class StateMachineProtocolTests(unittest.TestCase):
         self.assertEqual(state._minigame_session, 21)
         self.assertTrue(game.activated)
         self.assertEqual(game.difficulty, 2)
-        self.assertEqual(state.serial_reader.lines, ["MG_READY,21"])
+        self.assertEqual(
+            state.serial_reader.lines,
+            ["MG_READY,21", "MG_ALIVE,21"],
+        )
+        self.assertEqual(state.serial_reader.heartbeat_sessions, [21])
 
         state._handle_minigame_sound("collect")
         state._handle_minigame_sound("bad_pickup")
         state._handle_minigame_sound("collection_complete")
         self.assertEqual(
-            state.serial_reader.lines[1:],
+            state.serial_reader.lines[2:],
             [
                 "MG_PICKUP,21,GOOD",
                 "MG_PICKUP,21,BAD",

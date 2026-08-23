@@ -30,6 +30,9 @@ LIGHT_EFFECTS_HEADER = os.path.expanduser("~/CnC_firmware4/effect_data.h")
 
 
 class ServiceMenuController:
+    ANALOG_SAVE_RETRY_SEC = 0.35
+    ANALOG_SAVE_TIMEOUT_SEC = 5.0
+
     MAIN_ITEMS = [
         ("hiscore_edit", "F1 - Hiscore szerkesztes / torles"),
         ("thanks_edit", "F2 - Special Thanks nevek"),
@@ -102,6 +105,9 @@ class ServiceMenuController:
         self.analog_dirty = False
         self.analog_save_pending = False
         self.analog_save_snapshot = None
+        self.analog_save_attempts = 0
+        self.analog_save_next_retry = 0.0
+        self.analog_save_deadline = 0.0
         self.analog_last_update = 0.0
         self.analog_streaming = False
 
@@ -226,6 +232,9 @@ class ServiceMenuController:
         self.analog_dirty = False
         self.analog_save_pending = False
         self.analog_save_snapshot = None
+        self.analog_save_attempts = 0
+        self.analog_save_next_retry = 0.0
+        self.analog_save_deadline = 0.0
         self.analog_last_update = 0.0
         self.analog_streaming = False
         if self.serial_reader is None:
@@ -264,17 +273,22 @@ class ServiceMenuController:
             self.analog_thresholds = list(event.args[0])
             self.analog_thresholds_saved = list(self.analog_thresholds)
             self.analog_dirty = False
-            self.analog_save_pending = False
         elif kind == "ANALOG_SAVED":
             saved = self.analog_save_snapshot or self.analog_thresholds
             self.analog_thresholds_saved = list(saved)
             self.analog_dirty = self.analog_thresholds != self.analog_thresholds_saved
             self.analog_save_pending = False
             self.analog_save_snapshot = None
+            self.analog_save_attempts = 0
+            self.analog_save_next_retry = 0.0
+            self.analog_save_deadline = 0.0
             self.status_message = "Minden kuszob elmentve az EEPROM-ba"
         elif kind == "ANALOG_ERROR":
             self.analog_save_pending = False
             self.analog_save_snapshot = None
+            self.analog_save_attempts = 0
+            self.analog_save_next_retry = 0.0
+            self.analog_save_deadline = 0.0
             reason = event.args[0] if event.args else "?"
             if reason == "BUSY":
                 self.status_message = "A gep nem attractban van - eloszor fejezd be a jatekot"
@@ -286,6 +300,9 @@ class ServiceMenuController:
             self.analog_streaming = False
 
     def _adjust_analog_threshold(self, delta):
+        if self.analog_save_pending:
+            self.status_message = "Varj, amig a mentes befejezodik"
+            return
         if not self.analog_thresholds:
             return
         idx = self.cursor
@@ -311,13 +328,40 @@ class ServiceMenuController:
         if self.analog_save_pending:
             self.status_message = "A mentes mar folyamatban van"
             return
-        payload = ",".join(str(value) for value in self.analog_thresholds)
-        if self.serial_reader.send_raw(f"AT,SAVE,{payload}\n"):
-            self.analog_save_pending = True
-            self.analog_save_snapshot = list(self.analog_thresholds)
-            self.status_message = "Mentes..."
-        else:
-            self.status_message = "Mentes sikertelen - nincs soros kapcsolat"
+        self.analog_save_pending = True
+        self.analog_save_snapshot = list(self.analog_thresholds)
+        self.analog_save_attempts = 0
+        now = time.monotonic()
+        self.analog_save_next_retry = now
+        self.analog_save_deadline = now + self.ANALOG_SAVE_TIMEOUT_SEC
+        self._service_analog_save(now)
+
+    def tick(self, now=None):
+        """Ujrakuldi az EEPROM-parancsot, amig nyugtazas vagy timeout nem jon."""
+        if self.screen != "analog_test" or not self.analog_save_pending:
+            return
+        self._service_analog_save(time.monotonic() if now is None else now)
+
+    def _service_analog_save(self, now):
+        if now >= self.analog_save_deadline:
+            self.analog_save_pending = False
+            self.analog_save_snapshot = None
+            self.status_message = "Nincs firmware nyugtazas - S: ujraprobalas"
+            return
+        if now < self.analog_save_next_retry:
+            return
+        if self.serial_reader is None or self.analog_save_snapshot is None:
+            self.analog_save_next_retry = now + self.ANALOG_SAVE_RETRY_SEC
+            self.status_message = "Varakozas a soros kapcsolatra..."
+            return
+        payload = ",".join(str(value) for value in self.analog_save_snapshot)
+        self.analog_save_attempts += 1
+        self.analog_save_next_retry = now + self.ANALOG_SAVE_RETRY_SEC
+        sent = self.serial_reader.send_raw(f"AT,SAVE,{payload}\n")
+        self.status_message = (
+            f"Mentes az EEPROM-ba... ({self.analog_save_attempts}. proba)"
+            if sent else "Varakozas a soros kapcsolatra..."
+        )
 
     def _handle_analog_test(self, event):
         count = max(len(self.analog_names), len(self.analog_thresholds))

@@ -360,6 +360,7 @@ class StateMachine:
             if self.state == AppState.MINIGAME and self.minigame is not None:
                 if session is not None and session == self._minigame_session:
                     self._send_minigame_line(f"MG_READY,{session}")
+                    self._arm_minigame_heartbeat(session)
                 return
 
             # Az UFO elsobbseget kap egy eppen futo klippel szemben: a golyo
@@ -385,12 +386,18 @@ class StateMachine:
                 self._minigame_last_input_seq = None
                 self._minigame_pending_done = None
                 now = time.monotonic()
-                self._minigame_next_heartbeat = now + self.MINIGAME_HEARTBEAT_SEC
-                self._minigame_last_tick = time.monotonic()
+                # A READY utan rogton kuldunk egy ALIVE-ot is. Ez lezárja azt
+                # az inditasi rest, amelyben egy lassabb elso render vagy USB
+                # utemezes miatt a firmware meg az elso 500 ms-os heartbeat
+                # elott watchdogot kezdhetne szamolni.
+                self._minigame_next_heartbeat = now
+                self._minigame_last_tick = now
                 self._in_attract_loop = False
                 self.state = AppState.MINIGAME
                 if session is not None:
                     self._send_minigame_line(f"MG_READY,{session}")
+                    self._service_minigame_protocol(now)
+                    self._arm_minigame_heartbeat(session)
             elif session is not None:
                 self._send_minigame_line(f"MG_BUSY,{session}")
 
@@ -480,6 +487,7 @@ class StateMachine:
     def _abort_minigame(self):
         if self.minigame is None:
             return
+        self._disarm_minigame_heartbeat()
         aborted = self.minigame
         self.minigame = None
         aborted.prepare_for_replay()
@@ -487,6 +495,16 @@ class StateMachine:
         self._minigame_session = None
         self._minigame_last_input_seq = None
         self.state = AppState.SCORE
+
+    def _arm_minigame_heartbeat(self, session):
+        if self.serial_reader is not None and hasattr(
+                self.serial_reader, "start_minigame_heartbeat"):
+            self.serial_reader.start_minigame_heartbeat(session)
+
+    def _disarm_minigame_heartbeat(self):
+        if self.serial_reader is not None and hasattr(
+                self.serial_reader, "stop_minigame_heartbeat"):
+            self.serial_reader.stop_minigame_heartbeat()
 
     def _service_minigame_protocol(self, now: float):
         session = self._minigame_session
@@ -554,6 +572,8 @@ class StateMachine:
 
     def tick(self):
         protocol_now = time.monotonic()
+        if self.state == AppState.SERVICE_MENU:
+            self.service_menu.tick(protocol_now)
         self._service_minigame_protocol(protocol_now)
 
         if self.state == AppState.MINIGAME and self.minigame is not None:
@@ -576,6 +596,7 @@ class StateMachine:
                     self.serial_reader.send_raw(f"MunchiesBonus,{bonus}")
                 completed_game = self.minigame
                 self.minigame = None
+                self._disarm_minigame_heartbeat()
                 # Reuse decoded sprites, portraits, fonts, UI and all voice/SFX
                 # samples. Re-arming only creates a fresh lightweight road
                 # streamer, so later VUK entries remain just as immediate.

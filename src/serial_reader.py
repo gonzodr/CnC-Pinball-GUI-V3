@@ -19,6 +19,7 @@ class SerialReader:
     """
 
     RAW_LOG_MAXLEN = 30  # a szerviz menu Serial Monitor kepernyojehez
+    MINIGAME_HEARTBEAT_SEC = 0.35
 
     def __init__(self, port: str, baudrate: int = 115200):
         self.port = port  # fallback, ha az auto-detektalas nem talal semmit
@@ -33,6 +34,12 @@ class SerialReader:
         self.raw_log = deque(maxlen=self.RAW_LOG_MAXLEN)
         self._ser = None  # az elo kapcsolat (send_raw hasznalja; a szal kezeli)
         self._write_lock = threading.Lock()
+        # Tartalek heartbeat a soros olvasoszalon. A state machine tovabbra is
+        # kuld sajat ALIVE-ot, de egy lassu render/audio/file-IO frame igy nem
+        # tudja lejaratni az Arduino watchdogjat.
+        self._minigame_heartbeat_session = None
+        self._minigame_heartbeat_next = 0.0
+        self._heartbeat_lock = threading.Lock()
 
     def start(self):
         self._stop_flag.clear()
@@ -40,6 +47,7 @@ class SerialReader:
         self._thread.start()
 
     def stop(self):
+        self.stop_minigame_heartbeat()
         self._stop_flag.set()
         if self._thread:
             self._thread.join(timeout=2)
@@ -58,11 +66,12 @@ class SerialReader:
         while not self._stop_flag.is_set():
             active_port = self._resolve_port()
             try:
-                with serial.Serial(active_port, self.baudrate, timeout=1) as ser:
+                with serial.Serial(active_port, self.baudrate, timeout=0.1) as ser:
                     print(f"[serial] csatlakozva: {active_port}")
                     self._ser = ser
                     fast_empty = 0
                     while not self._stop_flag.is_set():
+                        self._service_minigame_heartbeat(time.monotonic())
                         t0 = time.monotonic()
                         raw = ser.readline()
                         if not raw:
@@ -127,6 +136,27 @@ class SerialReader:
         az Arduino karakterenkenti parserenek nem kell timeoutra varnia.
         """
         return self.send_raw(text.rstrip("\r\n") + "\n")
+
+    def start_minigame_heartbeat(self, session: int):
+        """A renderlooptol fuggetlen tartalek-heartbeat bekapcsolasa."""
+        with self._heartbeat_lock:
+            self._minigame_heartbeat_session = int(session)
+            self._minigame_heartbeat_next = (
+                time.monotonic() + self.MINIGAME_HEARTBEAT_SEC
+            )
+
+    def stop_minigame_heartbeat(self):
+        with self._heartbeat_lock:
+            self._minigame_heartbeat_session = None
+            self._minigame_heartbeat_next = 0.0
+
+    def _service_minigame_heartbeat(self, now: float):
+        with self._heartbeat_lock:
+            session = self._minigame_heartbeat_session
+            if session is None or now < self._minigame_heartbeat_next:
+                return
+            self._minigame_heartbeat_next = now + self.MINIGAME_HEARTBEAT_SEC
+        self.send_line(f"MG_ALIVE,{session}")
 
     def poll_events(self):
         """Nem-blokkoló: visszaadja az összes várakozó eventet."""
