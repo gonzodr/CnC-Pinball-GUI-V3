@@ -506,7 +506,7 @@ sed -i 's/^\/\/#define __WT_USE_SERIAL1__/#define __WT_USE_SERIAL1__/' ~/Arduino
 kell git hitelesítés a Pi-n):
 
 ```bash
-git clone https://github.com/gonzodr/CnC-Pinball-Firmware.git ~/CnC_firmware4
+git clone https://github.com/gonzodr/CnC_firmware4.git ~/CnC_firmware4
 ```
 
 A mappa nevének **pontosan** egyeznie kell a fő `.ino` fájl nevével

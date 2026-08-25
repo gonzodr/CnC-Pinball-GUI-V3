@@ -128,7 +128,7 @@ nem használt), `bg640.png`, `arrow.png`
   (0-nal klammelve), mert a score uzenet csak az aktualis jatekos pontjat hozza.
 - **VIDEO_NAME_REMAP**: a Unity-korszakbol orokolt elcsuszas kezelese — "Ufo6"
   trigger -> Ufofuck.mp4, "Ufo7" -> Ufo6.mp4 (Ufo7.mp4 soha nem letezett).
-  Reszletek: firmware repo (gonzodr/CnC-Pinball-Firmware), VIDEO_MAP.md.
+  Reszletek: firmware repo (gonzodr/CnC_firmware4), VIDEO_MAP.md.
 - **A soros esemeny-feldolgozas a main loopban VISSZA LETT KAPCSOLVA** (ki volt
   kommentelve!) — a probapadi Mega + SIM_MODE-os V4 firmware-rel most mar a teljes
   lanc tesztelheto (a firmware repo f_sim_mode.ino-ja egy teljes demojatekot jatszik).
