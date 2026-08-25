@@ -28,7 +28,8 @@ from typing import Iterable
 # all missing resolves to ``None``; state_machine logs it and skips the clip.
 SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     # --- Pontertek-videok -------------------------------------------------
-    # A V4 firmware csak Point1/Point2-t kuldi (a tobbi a Unity-korszakbol
+    # A V4 firmware a balance pass ota csak Point2-t kuldi (a Point1-es
+    # Hurry Up mikro-switch video-spam megszunt; a tobbi a Unity-korszakbol
     # maradt szamozas, ujabb firmware-hez keszen all).  Mind a nyolc klip
     # megvan, a 25000 is.
     "point1": ("2500",),
@@ -53,7 +54,8 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
 
     # --- UFO --------------------------------------------------------------
     # A lottery-tabla (lotVid) Ufo7/Ufo1/Ufo2/Ufo4/Ufo3/Ufo9-et kuld, az
-    # Ufo5 a extraball-nyeremeny, az Ufo10..13 a pontlopas aldozata.
+    # Ufo5 az azonnali extra ball, Ufo8 az EXTRA BALL LIT, az Ufo10..13
+    # pedig a pontlopas aldozata.
     # FIGYELEM, Unity-korszakbol orokolt ELCSUSZAS (a firmware megerositi):
     # az "Ufo6" trigger a "nem nyertel semmit" ag (CnC_firmware4.ino:3268,
     # effectID 4 = UFO FUCK), tehat az Ufofuck klip valo hozza; a "Ufo7"
@@ -65,7 +67,7 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "ufo5": ("Ufo5",),
     "ufo6": ("Ufofuck",),
     "ufo7": ("Ufo6",),
-    "ufo8": ("Ufo8",),  # a firmware sosem kuldi (arva klip)
+    "ufo8": ("Ufo8",),  # EXTRA BALL LIT lottery-kimenet
     "ufo9": ("Ufo9",),  # SpaceCoke multiball
     "ufo10": ("Ufo10",),
     "ufo11": ("Ufo11",),
@@ -85,21 +87,40 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "weed1": ("Weed",),  # regi alias, a V4 mar sima "Weed"-et kuld
     "drift": ("Drift",),
     "danger": ("Danger",),
+    "danger2": ("Danger2",),
+    "tilt": ("Tilt",),  # 30 fps intro + drainig tarto LOOP_INFO szakasz
     "jackpot1": ("PsychedelicJackpot", "PsyJackpot"),  # a V4 sosem kuldi
     "psyjackpot": ("PsychedelicJackpot", "PsyJackpot"),
 
-    # --- Meg nincs PNG sequence -------------------------------------------
-    # Ezeket a firmware kuldi (a Tilt-et es a Jackpot2..6/Combo/Multiball
-    # harmast biztosan), de a Test/ konyvtarban meg nincs hozzajuk sorozat,
-    # ezert egyelore nema marad a trigger.  Amint elkeszul a konverzio, a
-    # bejegyzes valtoztatas nelkul elkezd mukodni.
-    "tilt": ("Tilt",),
+    # --- Hid-combok -------------------------------------------------------
+    # A talalatot befejezo hid karaktere valasztja ki a videot: a kishid
+    # Chong, a nagyhid Cheech. A firmware ezert oldalspecifikus triggereket
+    # kuld. A relativ utvonalak a beagyazott sequence mappak kataloguskulcsai.
+    "combocheech1": ("Combo/Combo_Cheech/Combo_2500",),
+    "combocheech2": ("Combo/Combo_Cheech/Combo_5000",),
+    "combocheech3": ("Combo/Combo_Cheech/Combo_7500",),
+    "combocheech4": ("Combo/Combo_Cheech/Combo_10000",),
+    "combocheech5": ("Combo/Combo_Cheech/Combo_15000",),
+    "combocheech6": ("Combo/Combo_Cheech/Combo_20000",),
+    "combochong1": ("Combo/Combo_Chong/Combo_2500",),
+    "combochong2": ("Combo/Combo_Chong/Combo_5000",),
+    "combochong3": ("Combo/Combo_Chong/Combo_7500",),
+    "combochong4": ("Combo/Combo_Chong/Combo_10000",),
+    "combochong5": ("Combo/Combo_Chong/Combo_15000",),
+    "combochong6": ("Combo/Combo_Chong/Combo_20000",),
+
+    # Regi firmware-build kompatibilitas. Az uj firmware mar nem kuldi ezeket,
+    # de ha a regi, lapos mappak visszakerulnek, tovabbra is lejatszhatok.
     "combo1": ("Combo2500",),
     "combo2": ("Combo5000",),
     "combo3": ("Combo7500",),
     "combo4": ("Combo10000",),
     "combo5": ("Combo15000",),
     "combo6": ("Combo20000",),
+
+    # --- Meg nincs PNG sequence -------------------------------------------
+    # Ezeket a firmware kuldi, de a helyi konyvtarban meg nincs hozzajuk
+    # sorozat, ezert egyelore nema marad a trigger.
     "multiball1": ("Michokan",),
     "multiball2": ("Acapulco Gold",),
     "multiball3": ("Thai Stick",),
@@ -109,7 +130,7 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "jackpot4": ("Jackpot4",),
     "jackpot5": ("Jackpot5",),
     "jackpot6": ("Jackpot6",),
-    "extrab": ("Extraball",),  # a V4 sosem kuldi (extra ball nema)
+    "extrab": ("Extraball",),  # high-ramp EXTRA BALL collect; asset hianyzik
 }
 
 

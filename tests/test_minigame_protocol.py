@@ -81,6 +81,14 @@ class FakeMpv:
         self.stopped = True
 
 
+class FakePngVideo:
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
 class ProtocolParserTests(unittest.TestCase):
     def test_session_messages(self):
         self.assertEqual(parse_line("MG_START,42"), GameEvent("MUNCHIES_START", (42,)))
@@ -238,6 +246,24 @@ class StateMachineProtocolTests(unittest.TestCase):
                 "MG_COLLECTION,21",
             ],
         )
+
+    def test_next_and_end_stop_a_looping_tilt_video(self):
+        for serial_line in ("NEXT", "END"):
+            with self.subTest(serial_line=serial_line):
+                state = StateMachine.__new__(StateMachine)
+                state.recent_events = []
+                state.state = AppState.PNG_VIDEO
+                state.png_video_player = FakePngVideo()
+                state.current_bonusx = 0
+                state.current_bonus = 0
+                state.current_player = 1
+                state.active_player_count = 1
+                state.players = {1: 1234, 2: 0, 3: 0, 4: 0}
+
+                state.handle_event(parse_line(serial_line))
+
+                self.assertTrue(state.png_video_player.stopped)
+                self.assertEqual(state.state, AppState.SUMMARY)
 
 
 if __name__ == "__main__":

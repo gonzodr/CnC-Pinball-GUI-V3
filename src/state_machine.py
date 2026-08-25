@@ -242,6 +242,13 @@ class StateMachine:
                 self._in_attract_loop = False
 
         elif event.kind == "NEXT" or event.kind == "GAMEOVER":
+            # A Tilt sequence introja egyszer fut, majd a LOOP_INFO szerinti
+            # resz addig ismetlodik, amig a firmware a drain utan NEXT/END-et
+            # nem kuld. Ugyanez a biztos leallitas mas, drain kozben meg futo
+            # PNG-klipnel is helyes.
+            if self.state == AppState.PNG_VIDEO and self.png_video_player is not None:
+                self.png_video_player.stop()
+
             mult = self._get_multiplier(self.current_bonusx)
             bonus_total = self.current_bonus * mult
             

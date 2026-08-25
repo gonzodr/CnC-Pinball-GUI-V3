@@ -14,6 +14,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 import pygame
@@ -21,8 +22,17 @@ import pygame
 from video_asset_paths import resolve_sequence_root
 
 
+@dataclass(frozen=True)
+class ClipPlaybackInfo:
+    """Optional, per-sequence timing read from ``LOOP_INFO.txt``."""
+
+    fps: float
+    loop_start: int | None = None
+    loop_end: int | None = None
+
+
 class PngSequencePlayer:
-    """Stream one 640x480 PNG sequence at 30 FPS with bounded memory use."""
+    """Stream 640x480 PNG sequences with bounded memory use."""
 
     FRAME_SIZE = (640, 480)
     FPS = 30.0
@@ -31,6 +41,7 @@ class PngSequencePlayer:
     READY_SIZE = 8
     CONVERTS_PER_TICK = 2
     DECODER_WORKERS = 2
+    LOOP_INFO_FILENAME = "LOOP_INFO.txt"
 
     def __init__(self, root: Path | str | None = None):
         self.root = resolve_sequence_root(root)
@@ -56,6 +67,7 @@ class PngSequencePlayer:
         self._started_at = 0.0
         self._current_index = 0
         self._last_requested_index = -1
+        self._loop_has_wrapped = False
         self.active = False
         self.finished = False
         self._closed = False
@@ -91,17 +103,78 @@ class PngSequencePlayer:
 
     def _index_clips(self) -> dict[str, list[Path]]:
         clips: dict[str, list[Path]] = {}
+        self.playback_info: dict[str, ClipPlaybackInfo] = {}
         if not self.root.is_dir():
             print(f"[png-video] sequence mappa nem talalhato: {self.root}")
             return clips
+        # A sequence lehet kozvetlenul a Videos alatt, vagy tematikus
+        # alkonyvtarakban (peldaul Combo/Combo_Cheech/Combo_2500).  A relativ
+        # POSIX utvonal egyedi, platformfuggetlen kataloguskulcsot ad, mikozben
+        # a regi, felso szintu klipek neve valtozatlan marad.
         for directory in sorted(
-            (entry for entry in self.root.iterdir() if entry.is_dir()),
-            key=lambda entry: entry.name.lower(),
+            (entry for entry in self.root.rglob("*") if entry.is_dir()),
+            key=lambda entry: entry.relative_to(self.root).as_posix().lower(),
         ):
             frames = sorted(directory.glob("*.png"), key=self._frame_sort_key)
             if frames:
-                clips[directory.name] = frames
+                name = directory.relative_to(self.root).as_posix()
+                clips[name] = frames
+                info = self._read_playback_info(directory, len(frames))
+                if info is not None:
+                    self.playback_info[name] = info
         return clips
+
+    def _read_playback_info(
+        self, directory: Path, frame_count: int
+    ) -> ClipPlaybackInfo | None:
+        """Parse the human-readable timing fields used by exported clips."""
+        path = directory / self.LOOP_INFO_FILENAME
+        if not path.is_file():
+            return None
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except OSError as exc:
+            print(f"[png-video] {path} nem olvashato: {exc}")
+            return None
+
+        fps_match = re.search(
+            r"^\s*Frame\s+rate\s*:\s*(\d+(?:\.\d+)?)\s*fps\s*$",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        start_match = re.search(
+            r"^\s*LOOP\s+START\s*\(zero-based frame index\)\s*:\s*(\d+)\s*$",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        end_match = re.search(
+            r"^\s*LOOP\s+END\s*\(inclusive(?:\s*,\s*zero-based)?\)\s*:\s*"
+            r"(?:frame\s+index\s+)?(\d+)\s*$",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+
+        fps = float(fps_match.group(1)) if fps_match else self.FPS
+        if fps <= 0:
+            print(f"[png-video] ervenytelen frame rate, alapertelmezett marad: {path}")
+            fps = self.FPS
+
+        if start_match is None and end_match is None:
+            return ClipPlaybackInfo(fps=fps)
+        if start_match is None or end_match is None:
+            print(f"[png-video] hianyos loop tartomany, loop kihagyva: {path}")
+            return ClipPlaybackInfo(fps=fps)
+
+        loop_start = int(start_match.group(1))
+        loop_end = int(end_match.group(1))
+        if not 0 <= loop_start <= loop_end < frame_count:
+            print(f"[png-video] ervenytelen loop tartomany, loop kihagyva: {path}")
+            return ClipPlaybackInfo(fps=fps)
+        return ClipPlaybackInfo(
+            fps=fps,
+            loop_start=loop_start,
+            loop_end=loop_end,
+        )
 
     def _prepare_frame(self, surface: pygame.Surface) -> pygame.Surface:
         if surface.get_size() != self.FRAME_SIZE:
@@ -166,6 +239,7 @@ class PngSequencePlayer:
         self._started_at = time.monotonic() if now is None else now
         self._current_index = 0
         self._last_requested_index = -1
+        self._loop_has_wrapped = False
         self.active = True
         self.finished = False
         self._draw_requests = 0
@@ -200,16 +274,40 @@ class PngSequencePlayer:
         if not self.active or self._active_name is None:
             return
         paths = self.clips[self._active_name]
-        first = max(0, self._current_index - self.LOOK_BEHIND)
-        last = min(len(paths), first + self.CACHE_SIZE)
-        desired = set(range(first, last))
+        info = self.playback_info.get(self._active_name)
+        if info is not None and info.loop_start is not None and info.loop_end is not None:
+            loop_length = info.loop_end - info.loop_start + 1
+            wanted_count = min(self.CACHE_SIZE, loop_length)
+            if self._loop_has_wrapped:
+                first_offset = self._current_index - info.loop_start - self.LOOK_BEHIND
+                requested_order = [
+                    info.loop_start + ((first_offset + offset) % loop_length)
+                    for offset in range(wanted_count)
+                ]
+            else:
+                first = max(0, self._current_index - self.LOOK_BEHIND)
+                requested_order = list(range(first, info.loop_end + 1))
+                if len(requested_order) < self.CACHE_SIZE:
+                    wrap_count = min(
+                        self.CACHE_SIZE - len(requested_order), loop_length
+                    )
+                    requested_order.extend(
+                        info.loop_start + (offset % loop_length)
+                        for offset in range(wrap_count)
+                    )
+                requested_order = requested_order[:self.CACHE_SIZE]
+        else:
+            first = max(0, self._current_index - self.LOOK_BEHIND)
+            last = min(len(paths), first + self.CACHE_SIZE)
+            requested_order = list(range(first, last))
+        desired = set(requested_order)
         generation = self._generation
         name = self._active_name
 
         with self._lock:
             self._desired = desired
             requested = [
-                index for index in range(first, last)
+                index for index in requested_order
                 if index not in self._cache
                 and (generation, index) not in self._pending
             ]
@@ -315,7 +413,20 @@ class PngSequencePlayer:
             return
         current_time = time.monotonic() if now is None else now
         elapsed = max(0.0, current_time - self._started_at)
-        index = int(elapsed * self.FPS)
+        info = self.playback_info.get(self._active_name)
+        fps = info.fps if info is not None else self.FPS
+        playhead = int(elapsed * fps)
+        if info is not None and info.loop_start is not None and info.loop_end is not None:
+            if playhead > info.loop_end:
+                loop_length = info.loop_end - info.loop_start + 1
+                index = info.loop_start + (
+                    (playhead - info.loop_start) % loop_length
+                )
+                self._loop_has_wrapped = True
+            else:
+                index = playhead
+        else:
+            index = playhead
         if index >= len(self.clips[self._active_name]):
             self._finish()
             return
