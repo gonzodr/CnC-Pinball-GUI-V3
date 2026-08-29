@@ -24,3 +24,11 @@ src/serial_port.json
 src/assets/Videos/
 video_assets/
 video_assets_downloads/
+
+# Mas projekt (Semmelweis-animacio) ide tevedt munkafajljai es kimenete
+output/
+tmp/
+build_joint_tmp*.js
+build_semmelweis_vintage.jsx
+finalize_semmelweis_animation.jsx
+.codex-remote-attachments/

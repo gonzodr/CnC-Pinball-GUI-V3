@@ -13,6 +13,11 @@ class MockInputController:
         self._scores = {1: 0, 2: 0, 3: 0, 4: 0}
         self._bonus = 0
         self._bonusx = 0  # 0..4 (x1, x2, x4, x6, x8)
+        # Party-szamlalok a Joint/Beer allapotdeszkak teszteleséhez.
+        # A valodi gepen ezeket a firmware PARTY uzenete hozza; itt kezzel
+        # lepkedunk 0..3 kozott, hogy a be/kicsuszas ellenorizheto legyen.
+        self._joints = 0
+        self._beers = 0
 
     def poll_events(self, pygame_events) -> list[GameEvent]:
         events = []
@@ -108,6 +113,18 @@ class MockInputController:
             elif key == pygame.K_r:
                 events.append(GameEvent("PNG_VIDEO_RANDOM", ()))
 
+            # 3b. Party-szamlalok lepteteése a Joint/Beer deszkakhoz.
+            # J = joint, E = beer (a B-t a labda-leeses foglalja). Mindketto
+            # 0->1->2->3->0 korben jar, igy a becsuszas ES a kicsuszas is
+            # kiprobalhato egyetlen gombbal.
+            elif key == pygame.K_j:
+                self._joints = (self._joints + 1) % 4
+                events.append(self._generate_party_event())
+
+            elif key == pygame.K_e:
+                self._beers = (self._beers + 1) % 4
+                events.append(self._generate_party_event())
+
             # 4. Labda leesik (B) - EZ A KULCS
             elif key == pygame.K_b:
                 # 1. Küldünk egy SCORE_UPDATE-et a VÉGSŐ pontszámmal (Summary-hoz)
@@ -142,6 +159,16 @@ class MockInputController:
                     events.append(self._generate_score_event())
 
         return events
+
+    def _generate_party_event(self):
+        """Ugyanaz a PARTY_STATE esemeny, amit a firmware PARTY sora ad.
+
+        Az ufo_tier/weed_ready a mockban 0/False - a deszkak csak a beer es
+        joint szamlalot nezik.
+        """
+        return GameEvent("PARTY_STATE", (
+            self._player, self._beers, self._joints, 0, False
+        ))
 
     def _generate_score_event(self):
         """Hajszálpontosan azt a formátumot küldi, amit a StateMachine vár."""

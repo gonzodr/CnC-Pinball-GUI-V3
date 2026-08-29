@@ -289,6 +289,55 @@ class ScoreGUI:
     SCORE_BG_SMOKE_OPACITY = 38          # 15% (0.15 * 255 ~ 38)
     SCORE_BG_SMOKE_CENTER = (320, 300)   # a felskalazott fust kozeppontja a kepernyon
 
+    # --- Party-allapotdeszkak (Joint / Beer) ---------------------------
+    # Ket fa deszka csuszik be oldalrol, ugyanugy, ahogy a jatekos-papirok:
+    # ha van mit kijelezni, betolodik, ha nullara esik a szamlalo, kicsuszik.
+    # A vegleges (bent levo) pozicio a deszka KOZEPPONTJA a kepernyon.
+    PARTY_BOARD_WIDTH = 366               # deszka szelessege a kepernyon
+    PARTY_BOARD_HEIGHT = 90               # deszka magassaga; 0 = a rajz sajat aranya
+    PARTY_BOARD_ANGLE = 4                 # fokban; a bal deszka +, a jobb - ennyivel dol
+
+    # A csuszas ket vegpontja, deszkankent: START_X = kint (innen indul),
+    # END_X = bent (ide erkezik). Mindketto a deszka KOZEPPONTJANAK x-e a
+    # kepernyon; az Y vegig valtozatlan.
+    PARTY_JOINT_START_X = -250
+    PARTY_JOINT_END_X = 80
+    PARTY_JOINT_Y = 173
+    PARTY_BEER_START_X = 840
+    PARTY_BEER_END_X = 550
+    PARTY_BEER_Y = 176
+    PARTY_BOARD_SLIDE_SEC = 0.45          # be/ki csuszas hossza
+
+    # A tartalom (felirat + ikonok) BALRA rendezve, a deszkan beluli ettol
+    # az x-tol indul. Deszkankent kulon, mert a bal deszka kulso vege a
+    # leveles keret ala csuszik, ott minden elveszne.
+    PARTY_JOINT_CONTENT_X = 130
+    PARTY_BEER_CONTENT_X = 40
+
+    PARTY_JOINT_SCALE = 1               # ikon-meret a RAJZ sajat meretehez kepest
+    PARTY_BEER_SCALE = 1.0
+    PARTY_LABEL_SIZE = 25                 # a "Joint:" / "Beer:" felirat betumerete
+    PARTY_LABEL_COLOR = (74, 46, 20)      # sotetbarna, a vilagos fara
+    PARTY_ICON_ANGLE = 0                  # az ikon NEM kap sajat forgatast - a
+                                          # rajzon mar jo a dolese, es a deszkaval
+                                          # egyutt fordul a vegso forgatasnal
+    # Ikonok kozotti hezag deszkankent kulon, mert a ket rajz nem
+    # egyforma szeles. Negativ ertek = az ikonok egymasra csusznak.
+    # --- Love Pack ---------------------------------------------------
+    # 3 sor + 3 joint = egy Love Pack az UFO-nak. Ilyenkor a ket deszka
+    # kicsuszik (mintha minden lenullazodott volna), es a ket felho kozott
+    # 0-rol felnagyodik a csomag, majd lassan "lelegzik".
+    LOVE_PACK_WIDTH = 150                 # kepernyo-szelesseg (a magassag aranyos)
+    LOVE_PACK_CENTER = (320, 92)          # a ket felho kozott, felul
+    LOVE_PACK_GROW_SEC = 0.45             # 0-rol teljes meretre ennyi ido alatt
+    LOVE_PACK_PULSE_PERIOD_SEC = 2.6      # egy teljes lelegzes-ciklus
+    LOVE_PACK_PULSE_MIN_SCALE = 0.94
+    LOVE_PACK_PULSE_MAX_SCALE = 1.06
+
+    PARTY_JOINT_GAP = -15
+    PARTY_BEER_GAP = 5
+    PARTY_ICON_OVERHANG = 8               # ennyivel logHATnak az ikonok a deszka fole/ala
+
     # Score-watchdog: ha valtozik a kozepso pontszam, a SCORE-betuk lukteto
     # nagyitast kapnak SCORE_PULSE_DURATION_SEC-ig. Minden ujabb valtozas
     # ujrainditja az idozitot, igy folyamatos pontszerzes alatt vegig luktet.
@@ -497,6 +546,7 @@ class ScoreGUI:
         self.font_active_player = None
         self.font_label = None
         self.font_small = None
+        self.font_party = None
         self.font_card_name = None
         self.font_card_score = None
         self.active = False
@@ -518,6 +568,9 @@ class ScoreGUI:
         self._score_pulse_start = None   # a jelenlegi luktetes-sorozat kezdete
         self._score_pulse_until = 0.0    # min. befejezes (utolso valtozas + duration)
         self._score_pulse_prev_value = None
+        # Party-deszkak be/ki csuszasanak allapota kulcsonkent.
+        self._party_board_anim = {}
+        self._love_pack_since = None   # mikor lett teljes a Love Pack
         self._active_player_cache = None
         self._active_player_cache_key = None
         self._press_start_cache = None
@@ -593,6 +646,9 @@ class ScoreGUI:
         self.font_active_player = pygame.font.Font(modak_font_path, 40)       # 28 * 0.8
         self.font_label = pygame.font.Font(modak_font_path, 40)       # 28 * 0.8
         self.font_small = pygame.font.Font(modak_font_path, 18)       # 22 * 0.8
+        # A party-deszkak felirata kulon fonton fut, hogy a meretet a
+        # tobbi kiirastol fuggetlenul lehessen hangolni.
+        self.font_party = pygame.font.Font(modak_font_path, self.PARTY_LABEL_SIZE)
         self.font_card_name = pygame.font.Font(modak_font_path, 20)   # 20 * 0.8
         self.font_card_score = pygame.font.Font(modak_font_path, 26)  # 26 * 0.8
 
@@ -750,6 +806,70 @@ class ScoreGUI:
                     s.fill((255, 255, 255, self.SCORE_BG_SMOKE_OPACITY),
                            special_flags=pygame.BLEND_RGBA_MULT)
                 self.score_bg_smoke.append(s)
+
+        # --- Party-allapotdeszkak (Joint / Beer) ---
+        # A deszkak es az ikonok mar itt, betolteskor kapjak meg a vegleges
+        # meretuket es szoguket; futas kozben mar csak kesz feluleteket
+        # blittelunk a kepernyore (nincs per-frame skalazas/forgatas - lasd
+        # az ARM Bus Error-t a render_special_thanks kommentjeben).
+        self.party_boards = {}      # "joint"/"beer" -> [0..3 darabhoz kesz felulet]
+        joint_icon = None
+        joint_path = self._find_asset(score_dir, "JOINT.png")
+        if joint_path:
+            raw = pygame.image.load(joint_path).convert_alpha()
+            bbox = raw.get_bounding_rect(min_alpha=1)
+            if bbox.width and bbox.height:
+                raw = raw.subsurface(bbox).copy()   # a nagy atlatszo keret levagasa
+            joint_icon = self._prepare_party_icon(raw, scale_fn, self.PARTY_JOINT_SCALE)
+
+        beer_icon = None
+        beer_path = self._find_asset(score_dir, "BEER.png")   # meg nincs meg - ha jon, magatol eletre kel
+        if beer_path:
+            raw = pygame.image.load(beer_path).convert_alpha()
+            bbox = raw.get_bounding_rect(min_alpha=1)
+            if bbox.width and bbox.height:
+                raw = raw.subsurface(bbox).copy()
+            beer_icon = self._prepare_party_icon(raw, scale_fn, self.PARTY_BEER_SCALE)
+
+        # Egyetlen deszka-rajz szolgal ki mindket oldalt, tukrozes NELKUL.
+        # A rajzon a szeg a bal vegen van, es ez pont jol jon ki: a bal
+        # deszkan a szeges veg csuszik a leveles keret ala (nem latszik
+        # szeg), a jobb deszkan viszont ugyanaz a veg nez befele, igy ott
+        # lathato a szeg.
+        plank_path = self._find_asset(score_dir, "PLANK.png")
+        if plank_path:
+            raw_plank = pygame.image.load(plank_path).convert_alpha()
+            pw, ph = raw_plank.get_size()
+            target_w = self.PARTY_BOARD_WIDTH
+            target_h = self.PARTY_BOARD_HEIGHT or max(1, round(ph * target_w / pw))
+            plank = scale_fn(raw_plank, (target_w, target_h))
+
+            for key, label, icon, angle, content_x, gap in (
+                ("joint", "Joint:", joint_icon, self.PARTY_BOARD_ANGLE,
+                 self.PARTY_JOINT_CONTENT_X, self.PARTY_JOINT_GAP),
+                ("beer", "Beer:", beer_icon, -self.PARTY_BOARD_ANGLE,
+                 self.PARTY_BEER_CONTENT_X, self.PARTY_BEER_GAP),
+            ):
+                self.party_boards[key] = [
+                    pygame.transform.rotate(
+                        self._build_party_board(plank, label, icon, count, content_x, gap), angle
+                    )
+                    for count in range(4)
+                ]
+
+        # Love Pack ajandekdoboz (a party-deszkak helyett jelenik meg)
+        self.love_pack_img = None
+        lp_path = self._find_asset(score_dir, "LP_Gift_Box_Love_Pack_v02.png")
+        if lp_path:
+            raw = pygame.image.load(lp_path).convert_alpha()
+            bbox = raw.get_bounding_rect(min_alpha=1)
+            if bbox.width and bbox.height:
+                raw = raw.subsurface(bbox).copy()
+            lw, lh = raw.get_size()
+            target_w = self.LOVE_PACK_WIDTH
+            self.love_pack_img = scale_fn(
+                raw, (target_w, max(1, round(lh * target_w / lw)))
+            )
 
         # TOP3 levél ikon - a TrophyStar.png egy szürkeárnyalatos levél,
         # amit itt színezünk arany/ezüst/bronzra (multiply blend), ahogy
@@ -975,6 +1095,168 @@ class ScoreGUI:
         except OSError:
             pass
 
+    @staticmethod
+    def _find_asset(directory, filename):
+        """Fajl keresese kis/nagybetu-fuggetlenul.
+
+        A Pi (Linux) megkulonbozteti a kis- es nagybetut, a Windows nem -
+        egy "beer.png" nevu rajz igy a fejlesztogepen mukodik, a gepben
+        viszont csendben eltunne. Ezert nem a pontos nevre hagyatkozunk.
+        """
+        path = os.path.join(directory, filename)
+        if os.path.isfile(path):
+            return path
+        if not os.path.isdir(directory):
+            return None
+        target = filename.casefold()
+        for entry in os.listdir(directory):
+            if entry.casefold() == target:
+                return os.path.join(directory, entry)
+        return None
+
+    def _prepare_party_icon(self, raw, scale_fn, scale):
+        """Egy joint/soruveg ikon vegleges merete es dolese, egyszer.
+
+        A `scale` a RAJZ sajat (atlatszo kerettol megtisztitott) meretehez
+        kepest ertendo: 1.0 = eredeti meret, 1.5 = masfelszeres.
+        """
+        w, h = raw.get_size()
+        target = (max(1, round(w * scale)), max(1, round(h * scale)))
+        icon = scale_fn(raw, target)
+        if self.PARTY_ICON_ANGLE:
+            icon = pygame.transform.rotate(icon, self.PARTY_ICON_ANGLE)
+        return icon
+
+    def _build_party_board(self, plank, label, icon, count, content_x, gap):
+        """Deszka + felirat + `count` darab ikon, egyetlen kesz feluletre.
+
+        Betolteskor fut, darabszamonkent egyszer (0..3), ezert a kesobbi
+        rajzolas mar csak egy blit. A felulet kicsi (~210x40), tehat ez a
+        kompozitalas biztonsagos az ARM-on is - a Bus Error a szeles
+        (500px+) SRCALPHA-ra-SRCALPHA blitnel jon elo.
+        """
+        plank_w, plank_h = plank.get_size()
+        # A felulet magasabb a deszkanal, hogy a jointok/uvegek RALOGHASSANAK
+        # a deszka szelere - a referencian is igy ulnek rajta.
+        icon_h = icon.get_height() if (count and icon is not None) else 0
+        board_h = max(plank_h, icon_h + 2 * self.PARTY_ICON_OVERHANG)
+        board = pygame.Surface((plank_w, board_h), pygame.SRCALPHA)
+        mid_y = board_h // 2
+        board.blit(plank, (0, mid_y - plank_h // 2))
+
+        # A felirat + ikonok BALRA rendezve, a megadott x-tol indulva.
+        label_surf = self.font_party.render(label, True, self.PARTY_LABEL_COLOR)
+        label_w = label_surf.get_width()
+        board.blit(label_surf, label_surf.get_rect(midleft=(content_x, mid_y)))
+
+        if not count or icon is None:
+            return board
+
+        icon_w = icon.get_width()
+        start_x = content_x + label_w + 6
+        step = icon_w + gap
+        # Ha a deszka vegen kifutna, jobban egymasra csusztatjuk az ikonokat
+        # ahelyett, hogy lelognanak a fatol.
+        if count > 1:
+            room = (plank_w - start_x) - icon_w
+            if room > 0:
+                step = min(step, max(6, room / (count - 1)))
+        for i in range(count):
+            x = start_x + i * step
+            board.blit(icon, icon.get_rect(center=(int(x + icon_w / 2), mid_y)))
+        return board
+
+    def _party_board_offset(self, key, visible, now):
+        """0.0 = teljesen bent, 1.0 = teljesen kint (a kepernyon kivul).
+
+        Ugyanaz a logika, mint a jatekos-papiroknal: allapotvaltaskor indul
+        egy ease-out csuszas, kozben barmikor visszafordulhat.
+        """
+        state = self._party_board_anim.get(key)
+        if state is None or state["visible"] != visible:
+            # Az aktualis pozicioból indulunk, hogy iranyvaltaskor ne ugorjon.
+            current = self._party_board_offset(key, not visible, now) if state else (0.0 if visible else 1.0)
+            state = {"visible": visible, "start": now, "from": current}
+            self._party_board_anim[key] = state
+
+        target = 0.0 if visible else 1.0
+        elapsed = now - state["start"]
+        if elapsed >= self.PARTY_BOARD_SLIDE_SEC:
+            return target
+        t = ease_out_cubic(elapsed / self.PARTY_BOARD_SLIDE_SEC)
+        return state["from"] + (target - state["from"]) * t
+
+    def _draw_party_boards(self, state):
+        """A ket allapotdeszka kirajzolasa a becsuszas-animacioval."""
+        if not self.party_boards:
+            return
+        party = state.party_progress.get(state.current_player, {})
+        now = time.time()
+
+        # Teljes a keszlet? Ilyenkor a ket deszka kicsuszik, es helyette a
+        # Love Pack jelenik meg. A szamlalokat nezzuk (nem csak az
+        # ufo_tier-t), hogy a billentyus mock-kal is kiprobalhato legyen.
+        love_pack = (
+            (party.get("beers", 0) >= 3 and party.get("joints", 0) >= 3)
+            or party.get("ufo_tier", 0) == 4
+        )
+        if love_pack:
+            if self._love_pack_since is None:
+                self._love_pack_since = now
+        else:
+            self._love_pack_since = None
+
+        for key, count_key, start_x, end_x, y in (
+            ("joint", "joints", self.PARTY_JOINT_START_X, self.PARTY_JOINT_END_X, self.PARTY_JOINT_Y),
+            ("beer", "beers", self.PARTY_BEER_START_X, self.PARTY_BEER_END_X, self.PARTY_BEER_Y),
+        ):
+            boards = self.party_boards.get(key)
+            if not boards:
+                continue
+            count = max(0, min(3, int(party.get(count_key, 0))))
+            offset = self._party_board_offset(key, count > 0 and not love_pack, now)
+            if offset >= 1.0:
+                continue                      # teljesen kint, nincs mit rajzolni
+            board = boards[count]
+            # 0.0 = bent (END_X), 1.0 = kint (START_X) - a ketto kozott
+            # interpolalunk, igy a csuszas mindket vegpontja allithato.
+            x = end_x + (start_x - end_x) * offset
+            rect = board.get_rect(center=(x, y))
+            self.screen.blit(board, rect)
+
+            # A deszka a TOP_FRAME (felhok) UTAN rajzolodik, hogy azokra
+            # ratakarjon - viszont a leveles keretnek tovabbra is a deszka
+            # FOLOTT kell lennie. Ezert a keretbol pontosan a deszka
+            # teruletet huzzuk vissza ra: a felhoket takarja a deszka, a
+            # deszkat pedig a levelek, es a papirokhoz nem nyulunk hozza.
+            clip = rect.clip(self.screen.get_rect())
+            if clip.width and clip.height:
+                self.screen.blit(self.score_middle_frame, clip, clip)
+
+        self._draw_love_pack(now)
+
+    def _draw_love_pack(self, now):
+        """A Love Pack doboz: 0-rol felnagyodik, aztan lassan lelegzik.
+
+        A per-frame skalazas a guarded _blit_scaled_centered-en megy (ARM-on
+        sima scale, PC-n smoothscale) - ugyanaz a minta, mint a PRESS_START
+        es a FINAL_SCORES gyoztes-pulzalasa.
+        """
+        if self.love_pack_img is None or self._love_pack_since is None:
+            return
+        elapsed = now - self._love_pack_since
+        if elapsed < self.LOVE_PACK_GROW_SEC:
+            scale = ease_out_cubic(elapsed / self.LOVE_PACK_GROW_SEC)
+        else:
+            scale = self._cosine_pulse_scale(
+                self.LOVE_PACK_PULSE_PERIOD_SEC,
+                self.LOVE_PACK_PULSE_MIN_SCALE,
+                self.LOVE_PACK_PULSE_MAX_SCALE,
+            )
+        if scale <= 0.01:
+            return
+        self._blit_scaled_centered(self.love_pack_img, self.LOVE_PACK_CENTER, scale)
+
     def _build_card_surface(self, player_num, state):
         # Per-jatekos papir-textura (CigP1..4). A papir mar tartalmazza a sajat
         # alakjat (atlatszo szelekkel), ezert csak meretre skalazzuk.
@@ -1116,6 +1398,10 @@ class ScoreGUI:
         # 4. TOP_FRAME (felhok + also levelek) - a papirok folott
         self.screen.blit(self.score_top_frame, (0, 0))
 
+        # 4b. Party-allapotdeszkak - a felho-reteg FOLE, hogy rajuk takarjanak
+        # ott, ahol a felhok alja beleer a deszkak savjaba.
+        self._draw_party_boards(state)
+
         # 5. Kiirasok legfelul, a TOP_FRAME felhoire / a keret fole
         # "Ball: X" felirat a bal felhoben
         if self._ball_label_cache_key != state.current_ball:
@@ -1185,6 +1471,36 @@ class ScoreGUI:
         else:
             score_rect = self._main_score_cache.get_rect(center=(center_x, center_y))
             self.screen.blit(self._main_score_cache, score_rect)
+
+        # Beer / Joint / Love Pack: a firmware jatekosonkenti, golyok kozott
+        # megmarado allapota. Ez assetek nelkul is egyertelmuen megmutatja,
+        # hogy a kishid, a spinner vagy az UFO eppen mit fog csinalni.
+        party = state.party_progress.get(state.current_player, {})
+        beers = party.get("beers", 0)
+        joints = party.get("joints", 0)
+        ufo_tier = party.get("ufo_tier", 0)
+        weed_ready = party.get("weed_ready", False)
+
+        if ufo_tier == 4:
+            progress_surf = self.font_small.render(
+                "LOVE PACK READY - SHOOT UFO", True, (120, 245, 255)
+            )
+            self.screen.blit(progress_surf, progress_surf.get_rect(center=(320, 421)))
+
+        if weed_ready:
+            if beers > 0 and joints < 3:
+                hint_text = "UFO / GET HIGH / ROLL A JOINT"
+            else:
+                hint_text = "UFO / GET HIGH - GET A BEER TO ROLL"
+            hint_surf = self.font_small.render(hint_text, True, (190, 240, 175))
+            self.screen.blit(hint_surf, hint_surf.get_rect(center=(320, 445)))
+
+        if state.party_message and time.time() < state.party_message_until:
+            message_surf = build_outlined_text_surface(
+                self.font_small, state.party_message,
+                (255, 245, 185), (45, 15, 10), outline_width=2,
+            )
+            self.screen.blit(message_surf, message_surf.get_rect(center=(320, 386)))
 
         
 

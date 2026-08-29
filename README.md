@@ -104,6 +104,22 @@ NAME_ENTRY --(kész)--> HIGHSCORE (5s) --> attract-loop
 SCORE --(MG_START,<session>)--> MINIGAME --(MG_DONE/ACK)--> SCORE
 ```
 
+### UFO Feature Wheel
+
+A ket jointos UFO-sorsolas az Arduinon tortenik. A firmware
+`WheelStart,<session>,<EXTRABALL|HURRYUP|MUNCHIES>` sort kuld, a GUI pedig a
+hozza tartozo 640x480-as, 180 frame-es PNG sequence-et jatssza le. Extra Ball
+es Hurry Up eseten ezt meg egy 150 frame-es, 5 masodperces eredmenyvideo
+koveti; Munchiesnal nincs koztes klip. Extra Ball/Hurry Up agban a GUI az
+eredmenyvideo inditasakor kuldi a `WHEEL_DONE,<session>` valaszt, igy a
+firmware mar az animacio alatt aktivizalhatja a jutalmat es kidobhatja a
+golyot. Munchiesnal ugyanez a valasz a kerek vegen inditja a minijatekot.
+A firmware 500 ms-onkent megismetli a START-ot, a GUI ugyanazt a sessiont
+nem inditja ujra; 12 masodperces firmware-timeout megakadalyozza, hogy
+GUI-hiba eseten a golyo a VUK-ban maradjon.
+
+A Feature Wheel agban a regi `Ufo5`/`Ufo6` klipek szandekosan nem futnak le.
+
 ## Munchies Abduction minijáték
 
 A VUK/UFO találat egy 640×480-as, felülnézetes Cheech & Chong minijátékot

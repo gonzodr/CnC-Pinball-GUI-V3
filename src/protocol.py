@@ -42,6 +42,40 @@ def parse_line(line: str) -> Optional[GameEvent]:
                 return GameEvent("VIDEO_STOP")
             return GameEvent("VIDEO", (parts[1],))
 
+        elif cmd == "PARTY" and len(parts) == 6:
+            # PARTY,<player>,<beer>,<joint>,<ufo-tier>,<weed-qualified>
+            player, beers, joints, ufo_tier, weed_ready = map(int, parts[1:6])
+            if not 1 <= player <= 4:
+                return None
+            if not 0 <= beers <= 3 or not 0 <= joints <= 3:
+                return None
+            if not 0 <= ufo_tier <= 4 or weed_ready not in (0, 1):
+                return None
+            return GameEvent("PARTY_STATE", (
+                player, beers, joints, ufo_tier, bool(weed_ready)
+            ))
+
+        elif cmd == "PARTYEVENT" and len(parts) == 3:
+            player = int(parts[1])
+            if not 1 <= player <= 4 or not parts[2]:
+                return None
+            return GameEvent("PARTY_EVENT", (player, parts[2].upper()))
+
+        elif cmd == "STEAL" and len(parts) == 3:
+            victim, amount = map(int, parts[1:3])
+            if not 1 <= victim <= 4 or amount < 0:
+                return None
+            return GameEvent("SCORE_STEAL", (victim, amount))
+
+        elif cmd in ("WHEELSTART", "WHEEL_START") and len(parts) == 3:
+            session = int(parts[1])
+            result = parts[2].upper()
+            if not 1 <= session <= 0xFFFF:
+                return None
+            if result not in ("EXTRABALL", "HURRYUP", "MUNCHIES"):
+                return None
+            return GameEvent("UFO_WHEEL_START", (session, result))
+
         elif cmd in ("MUNCHIES", "VUK_GAME"):
             # Regi, session-azonosito nelkuli VUK trigger. Az ures args
             # szandekos: igy a friss GUI a regi firmware-rel is hasznalhato.

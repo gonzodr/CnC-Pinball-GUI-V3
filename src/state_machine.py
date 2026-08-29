@@ -78,6 +78,17 @@ class StateMachine:
         
         self.current_bonus = 0
         self.current_bonusx = 0
+        self.party_progress = {
+            p: {"beers": 0, "joints": 0, "ufo_tier": 0, "weed_ready": False}
+            for p in range(1, 5)
+        }
+        self.party_message = ""
+        self.party_message_until = 0.0
+        # Uj firmware: a Steal sor tartalmazza a tenyleges 10k/20k osszeget,
+        # az utana jovo Ufo10..13 csak video. Regi firmware-nel a video
+        # tovabbra is a historikus 10k levonast vegzi.
+        self._pending_steal_video_victim = None
+        self._pending_steal_video_until = 0.0
 
         self.summary_data = {
             "player": 1,
@@ -120,6 +131,10 @@ class StateMachine:
         self._minigame_last_input_seq = None
         self._minigame_next_heartbeat = 0.0
         self._minigame_pending_done = None
+        # Ket jointos UFO Feature Wheel: a session azonosito miatt az Arduino
+        # 500 ms-os ujrakuldese nem inditja ujra a mar futo sequence-et.
+        self._ufo_wheel_pending = None  # (session, result, "wheel")
+        self._ufo_wheel_last_completed = None
         # A Pygame-alapu PNG sequence motor a kijelzo letrehozasa utan
         # kerul ide a main.py-bol (a Surface.convert() aktiv displayt ker).
         self.png_video_player = None
@@ -241,6 +256,91 @@ class StateMachine:
                 self.state = AppState.SCORE
                 self._in_attract_loop = False
 
+        elif event.kind == "PARTY_STATE":
+            player, beers, joints, ufo_tier, weed_ready = event.args
+            self.party_progress[player] = {
+                "beers": beers,
+                "joints": joints,
+                "ufo_tier": ufo_tier,
+                "weed_ready": weed_ready,
+            }
+
+        elif event.kind == "PARTY_EVENT":
+            player, party_event = event.args
+            messages = {
+                "BEER": "BEER COLLECTED",
+                "BEER_FULL": "BEER FULL - ROLL A JOINT",
+                "CHOOSE": "CHOOSE: UFO / GET HIGH / ROLL A JOINT",
+                "NEED_BEER": "GET A BEER TO ROLL A JOINT",
+                "SPINNER": "GET HIGH - MULTIBALL PROGRESS",
+                "CASHOUT": "UFO CASH OUT",
+                "SUPER_CASHOUT": "SUPER CASH OUT",
+                "JOINT1": "JOINT 1/3 - SUPER CASH OUT LIT",
+                "JOINT2": "JOINT 2/3 - FEATURE WHEEL LIT",
+                "FEATURE_WHEEL": "UFO FEATURE WHEEL",
+                "WHEEL_EXTRA_BALL": "EXTRA BALL AWARDED",
+                "WHEEL_HURRY_UP": "HURRY UP!",
+                "WHEEL_MUNCHIES": "MUNCHIES!",
+                "LOVE_PACK": "LOVE PACK! SHOOT THE UFO FOR COKE!",
+                "SPACE_COKE": "SPACE COKE MULTIBALL",
+            }
+            self.party_message = messages.get(party_event, party_event.replace("_", " "))
+            self.party_message_until = time.time() + (
+                6.0 if party_event == "LOVE_PACK" else 3.5
+            )
+
+        elif event.kind == "UFO_WHEEL_START":
+            session, result = event.args
+
+            # A firmware DONE-ig ujrakuldi a START-ot. Futaskor nem restartoljuk
+            # a sequence-et; mar befejezett sessionre csak a DONE-t ismeteljuk.
+            if session == self._ufo_wheel_last_completed:
+                self._send_ufo_wheel_done(session)
+                return
+            if self._ufo_wheel_pending is not None:
+                if session == self._ufo_wheel_pending[0]:
+                    return
+                # Egy uj firmware-session felulirhat egy arva regi allapotot.
+                self._ufo_wheel_pending = None
+
+            if self.state not in (AppState.SCORE, AppState.PNG_VIDEO):
+                print(
+                    f"[ufo-wheel] GUI foglalt, tovabblepes video nelkul: "
+                    f"session={session}, state={self.state.name}"
+                )
+                self._ufo_wheel_last_completed = session
+                self._send_ufo_wheel_done(session)
+                return
+            if self.png_video_player is None:
+                print(f"[ufo-wheel] video motor nem elerheto, session={session}")
+                self._ufo_wheel_last_completed = session
+                self._send_ufo_wheel_done(session)
+                return
+
+            requested_name = f"UfoWheel_{result}"
+            video_name = resolve_serial_video_name(
+                requested_name,
+                self.png_video_player.clip_names,
+            )
+            if video_name is None or not self.png_video_player.start(video_name):
+                print(
+                    f"[ufo-wheel] hianyzo/hibas sequence: {requested_name}; "
+                    f"session={session}"
+                )
+                self._ufo_wheel_last_completed = session
+                self._send_ufo_wheel_done(session)
+                return
+
+            self._ufo_wheel_pending = (session, result, "wheel")
+            self._in_attract_loop = False
+            self.state = AppState.PNG_VIDEO
+
+        elif event.kind == "SCORE_STEAL":
+            victim, amount = event.args
+            self.players[victim] = max(0, self.players[victim] - amount)
+            self._pending_steal_video_victim = victim
+            self._pending_steal_video_until = time.time() + 2.0
+
         elif event.kind == "NEXT" or event.kind == "GAMEOVER":
             # A Tilt sequence introja egyszer fut, majd a LOOP_INFO szerinti
             # resz addig ismetlodik, amig a firmware a drain utan NEXT/END-et
@@ -289,6 +389,14 @@ class StateMachine:
                 self.active_player_count = 1
                 self.current_bonus = 0
                 self.current_bonusx = 0
+                self.party_progress = {
+                    p: {"beers": 0, "joints": 0, "ufo_tier": 0, "weed_ready": False}
+                    for p in range(1, 5)
+                }
+                self.party_message = ""
+                self.party_message_until = 0.0
+                self._pending_steal_video_victim = None
+                self._pending_steal_video_until = 0.0
             else:
                 self._pending_highscore_check = None
                 self._pending_game_over = False
@@ -426,14 +534,19 @@ class StateMachine:
         elif event.kind == "VIDEO":
             requested_name = str(event.args[0])
 
-            # Ufo10..13 = az UFO "pontlopas" nyeremenye: a firmware a
-            # KIRABOLT jatekos pontjabol vont le 10000-et, de a score
-            # uzenetben mindig csak az aktualis jatekos pontja jon -
-            # itt szinkronizaljuk a kijelzett pontszamot is (0-nal nem
-            # megy lejjebb, ugyanugy, ahogy a firmware-ben).
+            # Ufo10..13 = az UFO "pontlopas" videoja. Az uj firmware elotte
+            # pontos Steal sort kuld (10k vagy Super Cashoutnal 20k); regi
+            # firmware-nel tovabbra is itt alkalmazzuk a historikus 10k-t.
             if requested_name.casefold() in ("ufo10", "ufo11", "ufo12", "ufo13"):
                 victim = int(requested_name[3:]) - 9  # Ufo10 -> 1 ... Ufo13 -> 4
-                self.players[victim] = max(0, self.players[victim] - 10000)
+                if (self._pending_steal_video_victim == victim
+                        and time.time() <= self._pending_steal_video_until):
+                    self._pending_steal_video_victim = None
+                    self._pending_steal_video_until = 0.0
+                else:
+                    self._pending_steal_video_victim = None
+                    self._pending_steal_video_until = 0.0
+                    self.players[victim] = max(0, self.players[victim] - 10000)
 
             # Minden platform ugyanazt a Pygame PNG-sequence motort hasznalja.
             # Egy uj soros trigger a mar futo klipet is azonnal lecsereli.
@@ -458,6 +571,11 @@ class StateMachine:
         elif event.kind == "VIDEO_STOP":
             if self.state == AppState.PNG_VIDEO and self.png_video_player is not None:
                 self.png_video_player.stop()
+                if self._ufo_wheel_pending is not None:
+                    session, _result, _phase = self._ufo_wheel_pending
+                    self._ufo_wheel_pending = None
+                    self._ufo_wheel_last_completed = session
+                    self._send_ufo_wheel_done(session)
                 self.state = AppState.SCORE
 
     def _send_exit_to_firmware(self, variant: str):
@@ -478,6 +596,9 @@ class StateMachine:
         if hasattr(self.serial_reader, "send_raw"):
             return self.serial_reader.send_raw(text + "\n")
         return False
+
+    def _send_ufo_wheel_done(self, session: int) -> bool:
+        return self._send_minigame_line(f"WHEEL_DONE,{session}")
 
     def _handle_minigame_sound(self, name: str):
         """Forward gameplay outcomes to the cabinet light controller."""
@@ -617,6 +738,32 @@ class StateMachine:
         if self.state == AppState.PNG_VIDEO and self.png_video_player is not None:
             self.png_video_player.update()
             if self.png_video_player.finished:
+                if self._ufo_wheel_pending is not None:
+                    session, result, phase = self._ufo_wheel_pending
+                    if phase == "wheel" and result in ("EXTRABALL", "HURRYUP"):
+                        result_trigger = f"UfoWheelResult_{result}"
+                        result_video = resolve_serial_video_name(
+                            result_trigger,
+                            self.png_video_player.clip_names,
+                        )
+                        if (
+                            result_video is not None
+                            and self.png_video_player.start(result_video)
+                        ):
+                            # A firmware mar az eredmenyvideo alatt adhassa a
+                            # jutalmat es dobhassa ki a golyot. A result klip
+                            # vege ezert mar nem kuld masodik DONE-t.
+                            self._ufo_wheel_pending = None
+                            self._ufo_wheel_last_completed = session
+                            self._send_ufo_wheel_done(session)
+                            return
+                        print(
+                            f"[ufo-wheel] eredmenyvideo hianyzik/hibas: "
+                            f"{result_trigger}; session={session}"
+                        )
+                    self._ufo_wheel_pending = None
+                    self._ufo_wheel_last_completed = session
+                    self._send_ufo_wheel_done(session)
                 self.state = AppState.SCORE
             return
 
