@@ -73,6 +73,15 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "ufo11": ("Ufo11",),
     "ufo12": ("Ufo12",),
     "ufo13": ("Ufo13",),
+    # Ket jointos UFO Feature Wheel. A firmware sorsol, a GUI a teljes
+    # hatmasodperces kereket jatssza le, majd WHEEL_DONE-nal engedi tovabb a
+    # fizikai jutalmat. Ezek nem a regi UFO eredmenyvideok aliasai.
+    "ufowheel_extraball": ("UfoWheel_ExtraBall",),
+    "ufowheel_hurryup": ("UfoWheel_HurryUp",),
+    "ufowheel_munchies": ("UfoWheel_Munchies",),
+    # A Wheel utan indulnak; a GUI az inditasukkal egyutt kuldi a WHEEL_DONE-t.
+    "ufowheelresult_extraball": ("Extraball",),
+    "ufowheelresult_hurryup": ("HURRY_UP_MASTER",),
 
     # --- Karakter-klipek --------------------------------------------------
     "cheechc1": ("CheechC1",),
@@ -85,6 +94,7 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     # --- Egyedi trigger-nevek ---------------------------------------------
     "weed": ("Weed",),
     "weed1": ("Weed",),  # regi alias, a V4 mar sima "Weed"-et kuld
+    "lovepack": ("LovePack",),  # placeholder: a sequence kesobb erkezik
     "drift": ("Drift",),
     "danger": ("Danger",),
     "danger2": ("Danger2",),
