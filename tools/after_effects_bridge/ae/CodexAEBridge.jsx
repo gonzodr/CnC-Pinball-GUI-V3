@@ -2,7 +2,7 @@
 #targetengine "codex_ae_bridge"
 
 (function () {
-    var BRIDGE_VERSION = "0.1.31";
+    var BRIDGE_VERSION = "0.1.41";
     var POLL_MS = 200;
     var HEARTBEAT_MS = 750;
 
@@ -3412,6 +3412,1147 @@
         });
     }
 
+    function addJointRolledRoundedRect(layer, size, offset, roundness, fillColor, strokeColor, strokeWidth, opacity) {
+        var group = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+        var vectors = group.property("ADBE Vectors Group");
+        var rect = vectors.addProperty("ADBE Vector Shape - Rect");
+        rect.property("ADBE Vector Rect Size").setValue(size);
+        rect.property("ADBE Vector Rect Position").setValue(offset || [0, 0]);
+        try { rect.property("ADBE Vector Rect Roundness").setValue(roundness || 0); } catch (ignoredRoundness) {}
+        if (fillColor) {
+            var fill = vectors.addProperty("ADBE Vector Graphic - Fill");
+            fill.property("ADBE Vector Fill Color").setValue(fillColor);
+            fill.property("ADBE Vector Fill Opacity").setValue(opacity === undefined ? 100 : opacity);
+        }
+        if (strokeColor && strokeWidth > 0) {
+            var stroke = vectors.addProperty("ADBE Vector Graphic - Stroke");
+            stroke.property("ADBE Vector Stroke Color").setValue(strokeColor);
+            stroke.property("ADBE Vector Stroke Width").setValue(strokeWidth);
+            stroke.property("ADBE Vector Stroke Opacity").setValue(opacity === undefined ? 100 : opacity);
+            try { stroke.property("ADBE Vector Stroke Line Join").setValue(2); } catch (ignoredJoin) {}
+        }
+        return group;
+    }
+
+    function styleJointRolledText(layer, text, font, fontSize, fillColor, strokeColor, strokeWidth, position) {
+        var sourceText = layer.property("ADBE Text Properties").property("ADBE Text Document");
+        var document = sourceText.value;
+        document.text = text;
+        try { document.font = font || "Modak"; } catch (ignoredFont) {}
+        document.fontSize = fontSize;
+        document.tracking = -7;
+        document.autoLeading = false;
+        document.leading = fontSize * 0.71;
+        document.applyFill = true;
+        document.fillColor = fillColor;
+        document.applyStroke = true;
+        document.strokeColor = strokeColor;
+        document.strokeWidth = strokeWidth;
+        document.strokeOverFill = false;
+        try { document.justification = ParagraphJustification.CENTER_JUSTIFY; } catch (ignoredJustification) {}
+        sourceText.setValue(document);
+        var rect = layer.sourceRectAtTime(0, false);
+        var transform = layer.property("ADBE Transform Group");
+        transform.property("ADBE Anchor Point").setValue([rect.left + rect.width / 2, rect.top + rect.height / 2, 0]);
+        transform.property("ADBE Position").setValue(position);
+        return rect;
+    }
+
+    function animateJointRolledTitle(layer, position, baseScale, delay) {
+        var transform = layer.property("ADBE Transform Group");
+        var start = 1.48 + (delay || 0);
+        replaceKeyframes(transform.property("ADBE Position"), [
+            [start, [position[0], position[1] + 34, 0]],
+            [start + 0.20, [position[0], position[1] - 12, 0]],
+            [start + 0.34, [position[0], position[1] + 7, 0]],
+            [start + 0.52, [position[0], position[1], 0]],
+            [2.70, [position[0] - 2, position[1] - 2, 0]],
+            [3.50, [position[0] + 2, position[1] + 1, 0]],
+            [4.25, [position[0] - 1, position[1] - 2, 0]],
+            [5.00, [position[0], position[1], 0]]
+        ]);
+        replaceKeyframes(transform.property("ADBE Scale"), [
+            [start, [0, 0, 100]],
+            [start + 0.18, [baseScale * 1.24, baseScale * 0.82, 100]],
+            [start + 0.32, [baseScale * 0.91, baseScale * 1.10, 100]],
+            [start + 0.52, [baseScale, baseScale, 100]],
+            [2.70, [baseScale * 1.012, baseScale * 0.988, 100]],
+            [3.50, [baseScale * 0.99, baseScale * 1.015, 100]],
+            [4.25, [baseScale * 1.013, baseScale * 0.99, 100]],
+            [5.00, [baseScale, baseScale, 100]]
+        ]);
+        replaceKeyframes(transform.property("ADBE Rotate Z"), [
+            [start, -8], [start + 0.20, 4], [start + 0.34, -2.2], [start + 0.52, 0],
+            [2.70, -0.8], [3.50, 0.7], [4.25, -0.6], [5.00, 0]
+        ]);
+        replaceKeyframes(transform.property("ADBE Opacity"), [[start, 0], [start + 0.10, 100], [5.00, 100]]);
+        layer.motionBlur = true;
+    }
+
+    function addJointRolledPuff(comp, name, front, center, start) {
+        var layer = comp.layers.addShape();
+        layer.name = name;
+        var cream = front ? [0.95, 0.89, 0.70] : [0.24, 0.31, 0.10];
+        var offsets = [
+            [-92, 2, 88, 66], [-55, -45, 96, 80], [0, -58, 118, 92], [58, -42, 100, 78],
+            [94, 5, 86, 68], [62, 48, 102, 74], [0, 61, 128, 82], [-64, 48, 100, 72]
+        ];
+        for (var i = 0; i < offsets.length; i++) {
+            var color = cream;
+            if (front && i % 3 === 1) color = [0.83, 0.78, 0.56];
+            addShapeGroup(layer, "ellipse", [offsets[i][2], offsets[i][3]], [offsets[i][0], offsets[i][1]], color, front ? 96 : 82);
+        }
+        var transform = layer.property("ADBE Transform Group");
+        transform.property("ADBE Position").setValue(center);
+        replaceKeyframes(transform.property("ADBE Scale"), [
+            [start, [0, 0, 100]], [start + 0.13, front ? [82, 72, 100] : [94, 86, 100]],
+            [start + 0.28, front ? [112, 106, 100] : [126, 118, 100]],
+            [start + 0.78, front ? [172, 158, 100] : [186, 170, 100]]
+        ]);
+        replaceKeyframes(transform.property("ADBE Rotate Z"), [[start, front ? -7 : 8], [start + 0.78, front ? 6 : -5]]);
+        replaceKeyframes(transform.property("ADBE Opacity"), [
+            [start, 0], [start + 0.05, front ? 100 : 76], [start + 0.30, front ? 78 : 48], [start + 0.78, 0]
+        ]);
+        try {
+            var turbulence = layer.property("ADBE Effect Parade").addProperty("ADBE Turbulent Displace");
+            turbulence.property(1).setValue(front ? 13 : 20);
+            turbulence.property(2).setValue(front ? 58 : 72);
+        } catch (ignoredPuffTurbulence) {}
+        layer.motionBlur = true;
+        return layer;
+    }
+
+    function addJointRolledGlint(comp, index, position, start, color) {
+        var layer = comp.layers.addShape();
+        layer.name = "DETAIL | Matte glint " + pad(index + 1, 2);
+        var group = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+        var vectors = group.property("ADBE Vectors Group");
+        var star = vectors.addProperty("ADBE Vector Shape - Star");
+        star.property("ADBE Vector Star Type").setValue(1);
+        star.property("ADBE Vector Star Points").setValue(4);
+        star.property("ADBE Vector Star Inner Radius").setValue(1.5);
+        star.property("ADBE Vector Star Outer Radius").setValue(8 + (index % 3) * 3);
+        star.property("ADBE Vector Star Rotation").setValue(45);
+        var fill = vectors.addProperty("ADBE Vector Graphic - Fill");
+        fill.property("ADBE Vector Fill Color").setValue(color);
+        var transform = layer.property("ADBE Transform Group");
+        transform.property("ADBE Position").setValue(position);
+        replaceKeyframes(transform.property("ADBE Scale"), [
+            [start, [0, 0, 100]], [start + 0.10, [128, 128, 100]],
+            [start + 0.24, [72, 72, 100]], [start + 0.42, [0, 0, 100]]
+        ]);
+        replaceKeyframes(transform.property("ADBE Opacity"), [[start, 0], [start + 0.07, 90], [start + 0.28, 64], [start + 0.42, 0]]);
+        replaceKeyframes(transform.property("ADBE Rotate Z"), [[start, -20], [start + 0.42, 24]]);
+        layer.motionBlur = true;
+        return layer;
+    }
+
+    function commandBuildJointRolledV2(args) {
+        return withUndo("Codex: Build Joint Rolled earthy v2", function () {
+            var project = requireProject();
+            var compName = args.new_name || "JOINT_ROLLED_1_EARTHY";
+            var oldComp = null;
+            for (var p = 1; p <= project.numItems; p++) {
+                if (project.item(p) instanceof CompItem && project.item(p).name === compName) {
+                    oldComp = project.item(p);
+                    break;
+                }
+            }
+            if (oldComp) oldComp.remove();
+
+            var rollItem = findProjectItem(args.roll_item);
+            var finalItem = findProjectItem(args.final_item);
+            if (!(rollItem instanceof FootageItem) || !(finalItem instanceof FootageItem)) {
+                throw new Error("Joint Rolled requires a keyed roll sequence and a final joint still.");
+            }
+
+            var comp = project.items.addComp(compName, 640, 480, 1, 5.0, 30);
+            comp.parentFolder = findOrCreateProjectFolder("02_COMPS");
+            comp.motionBlur = true;
+            comp.shutterAngle = 210;
+            comp.shutterPhase = -105;
+            comp.workAreaStart = 0;
+            comp.workAreaDuration = 5.0;
+            comp.bgColor = [0.18, 0.10, 0.045];
+
+            var darkBrown = [0.105, 0.055, 0.025];
+            var burntBrown = [0.31, 0.17, 0.065];
+            var tobacco = [0.48, 0.29, 0.11];
+            var mustard = [0.80, 0.60, 0.20];
+            var olive = [0.29, 0.39, 0.105];
+            var herb = [0.17, 0.29, 0.075];
+            var cream = [0.95, 0.89, 0.70];
+            var paper = [0.92, 0.86, 0.69];
+
+            var base = addFullFrameLayer(comp, "BG | Burnt rolling table", darkBrown, 100);
+            var table = addFullFrameLayer(comp, "BG | Tobacco paper surface", burntBrown, 100);
+            var tableT = table.property("ADBE Transform Group");
+            replaceKeyframes(tableT.property("ADBE Scale"), [[0, [102, 102, 100]], [2.45, [106, 106, 100]], [5.0, [103, 103, 100]]]);
+            replaceKeyframes(tableT.property("ADBE Rotate Z"), [[0, -0.6], [2.45, 0.7], [5.0, -0.35]]);
+
+            var centerMat = comp.layers.addShape();
+            centerMat.name = "BG | Worn paper halo";
+            addOutlinedEllipseGroup(centerMat, [570, 360], [0, 0], tobacco, darkBrown, 9, 78);
+            var centerMatT = centerMat.property("ADBE Transform Group");
+            centerMatT.property("ADBE Position").setValue([320, 252, 0]);
+            centerMatT.property("ADBE Rotate Z").setValue(-4);
+            replaceKeyframes(centerMatT.property("ADBE Scale"), [[0, [100, 100, 100]], [2.5, [105, 102, 100]], [5.0, [101, 104, 100]]]);
+            try {
+                var matTurbulence = centerMat.property("ADBE Effect Parade").addProperty("ADBE Turbulent Displace");
+                matTurbulence.property(1).setValue(16);
+                matTurbulence.property(2).setValue(115);
+            } catch (ignoredMatTurbulence) {}
+
+            var stripeColors = [mustard, olive, paper];
+            for (var s = 0; s < 9; s++) {
+                var stripe = comp.layers.addShape();
+                stripe.name = "BG | Faded paper stripe " + pad(s + 1, 2);
+                addJointRolledRoundedRect(stripe, [760, 18 + (s % 3) * 5], [0, 0], 8, stripeColors[s % stripeColors.length], null, 0, 100);
+                var stripeT = stripe.property("ADBE Transform Group");
+                stripeT.property("ADBE Position").setValue([320, 26 + s * 57, 0]);
+                stripeT.property("ADBE Rotate Z").setValue(-16 + (s % 2) * 4);
+                stripeT.property("ADBE Opacity").setValue(5 + (s % 3) * 3);
+                replaceKeyframes(stripeT.property("ADBE Position"), [
+                    [0, [315, 26 + s * 57, 0]], [2.5, [325, 22 + s * 57, 0]], [5.0, [315, 26 + s * 57, 0]]
+                ]);
+            }
+
+            for (var f = 0; f < 26; f++) {
+                var fleck = comp.layers.addShape();
+                fleck.name = "BG | Herb crumb " + pad(f + 1, 2);
+                var fleckW = 4 + (f % 4) * 2;
+                var fleckH = 3 + ((f + 2) % 3) * 2;
+                addOutlinedEllipseGroup(fleck, [fleckW, fleckH], [0, 0], f % 4 === 0 ? mustard : (f % 3 === 0 ? olive : herb), darkBrown, 1.0, 92);
+                var fleckT = fleck.property("ADBE Transform Group");
+                var fx = 28 + ((f * 83) % 584);
+                var fy = 30 + ((f * 47) % 414);
+                fleckT.property("ADBE Position").setValue([fx, fy, 0]);
+                fleckT.property("ADBE Rotate Z").setValue((f * 37) % 180);
+                replaceKeyframes(fleckT.property("ADBE Position"), [[0, [fx, fy, 0]], [2.5, [fx + (f % 2 ? 4 : -4), fy - 3, 0]], [5.0, [fx, fy, 0]]]);
+            }
+
+            var roll = comp.layers.add(rollItem);
+            roll.name = "ROLL | Keyed paper and herb";
+            roll.inPoint = 0;
+            roll.outPoint = Math.min(1.90, comp.duration);
+            var rollT = roll.property("ADBE Transform Group");
+            rollT.property("ADBE Anchor Point").setValue([rollItem.width / 2, rollItem.height / 2, 0]);
+            replaceKeyframes(rollT.property("ADBE Position"), [
+                [0, [320, 248, 0]], [0.85, [316, 252, 0]], [1.45, [322, 246, 0]], [1.74, [320, 244, 0]]
+            ]);
+            replaceKeyframes(rollT.property("ADBE Scale"), [
+                [0, [96, 96, 100]], [1.18, [102, 102, 100]], [1.48, [108, 108, 100]], [1.72, [119, 119, 100]]
+            ]);
+            replaceKeyframes(rollT.property("ADBE Rotate Z"), [[0, -1.2], [1.10, 0.7], [1.48, -1.0], [1.72, 1.8]]);
+            replaceKeyframes(rollT.property("ADBE Opacity"), [[0, 100], [1.60, 100], [1.82, 0]]);
+            roll.motionBlur = true;
+
+            for (var r = 0; r < 16; r++) {
+                var ray = comp.layers.addShape();
+                ray.name = "IMPACT | Paper dash " + pad(r + 1, 2);
+                addJointRolledRoundedRect(ray, [8 + (r % 3) * 4, 54 + (r % 4) * 11], [0, -104], 5,
+                    r % 3 === 0 ? cream : (r % 3 === 1 ? mustard : olive), darkBrown, 1.5, 92);
+                var rayT = ray.property("ADBE Transform Group");
+                rayT.property("ADBE Position").setValue([320, 262, 0]);
+                rayT.property("ADBE Rotate Z").setValue(r * 22.5 + (r % 2 ? 4 : -3));
+                replaceKeyframes(rayT.property("ADBE Scale"), [[1.43, [0, 0, 100]], [1.64, [116, 116, 100]], [1.98, [164, 164, 100]]]);
+                replaceKeyframes(rayT.property("ADBE Opacity"), [[1.43, 0], [1.56, 92], [1.77, 64], [1.98, 0]]);
+                ray.motionBlur = true;
+            }
+
+            addJointRolledPuff(comp, "PUFF | Olive depth", false, [320, 262, 0], 1.44);
+            addJointRolledPuff(comp, "PUFF | Cream cartoon cloud", true, [320, 258, 0], 1.47);
+
+            var badgeShadow = comp.layers.addShape();
+            badgeShadow.name = "TITLE | Brown paper shadow";
+            addJointRolledRoundedRect(badgeShadow, [442, 166], [0, 0], 28, darkBrown, darkBrown, 7, 100);
+            animateJointRolledTitle(badgeShadow, [327, 151, 0], 100, 0.03);
+
+            var badge = comp.layers.addShape();
+            badge.name = "TITLE | Olive paper patch";
+            addJointRolledRoundedRect(badge, [436, 160], [0, 0], 28, olive, darkBrown, 7, 100);
+            animateJointRolledTitle(badge, [320, 143, 0], 100, 0);
+
+            var titleShadow = comp.layers.addText("JOINT\rROLLED");
+            titleShadow.name = "TITLE | Ink offset";
+            styleJointRolledText(titleShadow, "JOINT\rROLLED", args.font || "Modak", 94, darkBrown, darkBrown, 10, [326, 151, 0]);
+            animateJointRolledTitle(titleShadow, [326, 151, 0], 100, 0.08);
+
+            var title = comp.layers.addText("JOINT\rROLLED");
+            title.name = "TITLE | Cream Modak face";
+            styleJointRolledText(title, "JOINT\rROLLED", args.font || "Modak", 94, cream, darkBrown, 7, [320, 143, 0]);
+            animateJointRolledTitle(title, [320, 143, 0], 100, 0.05);
+
+            var joint = comp.layers.add(finalItem);
+            joint.name = "JOINT 1 | Slash slot A";
+            joint.inPoint = 1.48;
+            joint.outPoint = 5.0;
+            var jointT = joint.property("ADBE Transform Group");
+            jointT.property("ADBE Anchor Point").setValue([finalItem.width / 2, finalItem.height / 2, 0]);
+            replaceKeyframes(jointT.property("ADBE Position"), [
+                [1.48, [320, 286, 0]], [1.67, [258, 338, 0]], [1.82, [282, 328, 0]], [2.02, [270, 334, 0]],
+                [2.75, [268, 331, 0]], [3.50, [272, 336, 0]], [4.25, [268, 332, 0]], [5.0, [270, 334, 0]]
+            ]);
+            replaceKeyframes(jointT.property("ADBE Scale"), [
+                [1.48, [0, 0, 100]], [1.66, [55, 55, 100]], [1.82, [39, 48, 100]], [2.02, [44, 44, 100]],
+                [2.75, [45, 43, 100]], [3.50, [43, 45, 100]], [4.25, [45, 43, 100]], [5.0, [44, 44, 100]]
+            ]);
+            replaceKeyframes(jointT.property("ADBE Rotate Z"), [
+                [1.48, -150], [1.67, -58], [1.82, -76], [2.02, -68],
+                [2.75, -69.5], [3.50, -67], [4.25, -69], [5.0, -68]
+            ]);
+            replaceKeyframes(jointT.property("ADBE Opacity"), [[1.48, 0], [1.55, 100], [5.0, 100]]);
+            joint.motionBlur = true;
+
+            for (var h = 0; h < 20; h++) {
+                var burst = comp.layers.addShape();
+                burst.name = "DETAIL | Flying herb " + pad(h + 1, 2);
+                var bw = 5 + (h % 4) * 2;
+                var bh = 4 + ((h + 1) % 3) * 2;
+                addOutlinedEllipseGroup(burst, [bw, bh], [0, 0], h % 5 === 0 ? mustard : (h % 2 === 0 ? herb : olive), darkBrown, 1.2, 100);
+                var burstT = burst.property("ADBE Transform Group");
+                var angle = (h * 41 + 9) * Math.PI / 180;
+                var radius = 90 + (h % 6) * 24;
+                var tx = 320 + Math.cos(angle) * radius;
+                var ty = 268 + Math.sin(angle) * radius * 0.62;
+                replaceKeyframes(burstT.property("ADBE Position"), [
+                    [1.48, [320, 266, 0]], [1.76, [tx, ty, 0]], [2.35, [tx + Math.cos(angle) * 28, ty + 26, 0]]
+                ]);
+                replaceKeyframes(burstT.property("ADBE Scale"), [[1.48, [0, 0, 100]], [1.62, [130, 130, 100]], [2.35, [55, 55, 100]]]);
+                replaceKeyframes(burstT.property("ADBE Rotate Z"), [[1.48, h * 17], [2.35, h % 2 ? 260 : -240]]);
+                replaceKeyframes(burstT.property("ADBE Opacity"), [[1.48, 0], [1.58, 100], [2.05, 82], [2.35, 0]]);
+                burst.motionBlur = true;
+            }
+
+            var glintPositions = [[212, 243], [304, 377], [392, 281], [445, 356], [187, 361], [420, 222]];
+            for (var g = 0; g < glintPositions.length; g++) {
+                addJointRolledGlint(comp, g, [glintPositions[g][0], glintPositions[g][1], 0], 2.18 + g * 0.46,
+                    g % 2 === 0 ? cream : mustard);
+            }
+
+            var vignette = comp.layers.addShape();
+            vignette.name = "FG | Soft ink vignette";
+            addJointRolledRoundedRect(vignette, [650, 490], [0, 0], 22, null, darkBrown, 34, 55);
+            vignette.property("ADBE Transform Group").property("ADBE Position").setValue([320, 240, 0]);
+            vignette.property("ADBE Transform Group").property("ADBE Opacity").setValue(74);
+            try {
+                var vignetteBlur = vignette.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+                vignetteBlur.property(1).setValue(18);
+            } catch (ignoredVignetteBlur) {}
+
+            comp.time = 2.18;
+            comp.openInViewer();
+            return {
+                comp: compSnapshot(comp, 250),
+                style: "earthy_hand_drawn_rolling_paper",
+                palette: "tobacco_olive_mustard_cream",
+                joint_slot: { x: 270, y: 334, rotation: -68, scale: 44 },
+                future_slots: [{ x: 340, y: 334 }, { x: 410, y: 334 }]
+            };
+        });
+    }
+
+    function commandBuildJointRolledApproved(args) {
+        return withUndo("Codex: Build approved Joint Rolled concept", function () {
+            var project = requireProject();
+            var compName = args.new_name || "JOINT_ROLLED_1_APPROVED";
+            var oldComp = null;
+            for (var p = 1; p <= project.numItems; p++) {
+                if (project.item(p) instanceof CompItem && project.item(p).name === compName) {
+                    oldComp = project.item(p);
+                    break;
+                }
+            }
+            if (oldComp) oldComp.remove();
+
+            var rollItem = findProjectItem(args.roll_item);
+            var backgroundItem = findProjectItem(args.background_item);
+            var titleItem = findProjectItem(args.title_item);
+            var jointItem = findProjectItem(args.joint_item);
+            var burstItem = findProjectItem(args.burst_item);
+
+            var comp = project.items.addComp(compName, 640, 480, 1, 5.0, 30);
+            comp.parentFolder = findOrCreateProjectFolder("02_COMPS");
+            comp.motionBlur = true;
+            comp.shutterAngle = 220;
+            comp.shutterPhase = -110;
+            comp.workAreaStart = 0;
+            comp.workAreaDuration = 5.0;
+            comp.bgColor = [0.22, 0.12, 0.045];
+
+            var darkBrown = [0.10, 0.052, 0.021];
+            var cream = [0.95, 0.88, 0.66];
+            var mustard = [0.79, 0.57, 0.16];
+            var olive = [0.30, 0.39, 0.085];
+            var herb = [0.16, 0.27, 0.055];
+
+            var safety = addFullFrameLayer(comp, "BG | Dark tobacco safety", darkBrown, 100);
+
+            var background = comp.layers.add(backgroundItem);
+            background.name = "BG | Approved tobacco paper plate";
+            background.outPoint = 5.0;
+            var bgT = background.property("ADBE Transform Group");
+            bgT.property("ADBE Anchor Point").setValue([backgroundItem.width / 2, backgroundItem.height / 2, 0]);
+            var bgScale = coverScaleFor(comp, backgroundItem, 1.04);
+            replaceKeyframes(bgT.property("ADBE Position"), [
+                [0, [320, 240, 0]], [1.40, [316, 243, 0]], [1.62, [323, 237, 0]],
+                [2.20, [320, 240, 0]], [3.60, [317, 238, 0]], [5.0, [320, 240, 0]]
+            ]);
+            replaceKeyframes(bgT.property("ADBE Scale"), [
+                [0, [bgScale, bgScale, 100]], [1.40, [bgScale * 1.018, bgScale * 1.018, 100]],
+                [1.62, [bgScale * 1.075, bgScale * 1.075, 100]], [2.10, [bgScale * 1.035, bgScale * 1.035, 100]],
+                [5.0, [bgScale * 1.065, bgScale * 1.065, 100]]
+            ]);
+            replaceKeyframes(bgT.property("ADBE Rotate Z"), [[0, -0.25], [1.62, 0.9], [2.10, -0.2], [5.0, 0.25]]);
+            background.motionBlur = true;
+
+            for (var d = 0; d < 10; d++) {
+                var dust = comp.layers.addShape();
+                dust.name = "BG | Drifting herb speck " + pad(d + 1, 2);
+                addOutlinedEllipseGroup(dust, [4 + d % 3 * 2, 3 + (d + 1) % 3 * 2], [0, 0], d % 3 === 0 ? mustard : herb, darkBrown, 1.0, 76);
+                var dustT = dust.property("ADBE Transform Group");
+                var dx = 55 + ((d * 97) % 530);
+                var dy = 38 + ((d * 53) % 392);
+                replaceKeyframes(dustT.property("ADBE Position"), [[0, [dx, dy, 0]], [2.5, [dx + (d % 2 ? 6 : -5), dy - 7, 0]], [5.0, [dx, dy, 0]]]);
+                replaceKeyframes(dustT.property("ADBE Rotate Z"), [[0, d * 21], [5.0, d % 2 ? d * 21 + 90 : d * 21 - 80]]);
+                dustT.property("ADBE Opacity").setValue(64);
+            }
+
+            var roll = comp.layers.add(rollItem);
+            roll.name = "ROLL | MiniMax keyed paper";
+            roll.inPoint = 0;
+            roll.outPoint = 1.86;
+            var rollT = roll.property("ADBE Transform Group");
+            rollT.property("ADBE Anchor Point").setValue([rollItem.width / 2, rollItem.height / 2, 0]);
+            replaceKeyframes(rollT.property("ADBE Position"), [
+                [0, [320, 246, 0]], [0.72, [316, 250, 0]], [1.20, [322, 245, 0]],
+                [1.42, [320, 252, 0]], [1.58, [320, 242, 0]]
+            ]);
+            replaceKeyframes(rollT.property("ADBE Scale"), [
+                [0, [98, 98, 100]], [1.18, [103, 103, 100]], [1.40, [94, 88, 100]],
+                [1.56, [116, 124, 100]], [1.78, [128, 128, 100]]
+            ]);
+            replaceKeyframes(rollT.property("ADBE Rotate Z"), [[0, -0.7], [1.18, 0.8], [1.42, -1.6], [1.58, 2.8]]);
+            replaceKeyframes(rollT.property("ADBE Opacity"), [[0, 100], [1.58, 100], [1.78, 0]]);
+            roll.motionBlur = true;
+
+            var burstHold = comp.layers.add(burstItem);
+            burstHold.name = "BURST | Approved paper smoke hold";
+            burstHold.inPoint = 1.38;
+            burstHold.outPoint = 5.0;
+            var burstHoldT = burstHold.property("ADBE Transform Group");
+            burstHoldT.property("ADBE Anchor Point").setValue([burstItem.width / 2, burstItem.height / 2, 0]);
+            replaceKeyframes(burstHoldT.property("ADBE Position"), [
+                [1.38, [320, 268, 0]], [1.64, [320, 252, 0]], [2.05, [320, 258, 0]],
+                [3.20, [316, 255, 0]], [4.10, [323, 260, 0]], [5.0, [320, 258, 0]]
+            ]);
+            replaceKeyframes(burstHoldT.property("ADBE Scale"), [
+                [1.38, [0, 0, 100]], [1.59, [53, 47, 100]], [1.76, [43, 47, 100]],
+                [1.98, [46, 46, 100]], [3.20, [47, 46, 100]], [4.10, [46, 47, 100]], [5.0, [46, 46, 100]]
+            ]);
+            replaceKeyframes(burstHoldT.property("ADBE Rotate Z"), [[1.38, -13], [1.62, 4], [1.82, -2], [2.05, 0], [5.0, 1.2]]);
+            replaceKeyframes(burstHoldT.property("ADBE Opacity"), [[1.38, 0], [1.49, 100], [2.15, 100], [3.0, 86], [5.0, 82]]);
+            burstHold.motionBlur = true;
+
+            var burstPunch = comp.layers.add(burstItem);
+            burstPunch.name = "BURST | Fast paper impact echo";
+            burstPunch.inPoint = 1.38;
+            burstPunch.outPoint = 2.24;
+            var burstPunchT = burstPunch.property("ADBE Transform Group");
+            burstPunchT.property("ADBE Anchor Point").setValue([burstItem.width / 2, burstItem.height / 2, 0]);
+            burstPunchT.property("ADBE Position").setValue([320, 260, 0]);
+            replaceKeyframes(burstPunchT.property("ADBE Scale"), [[1.38, [0, 0, 100]], [1.57, [42, 42, 100]], [1.84, [62, 62, 100]], [2.22, [78, 78, 100]]]);
+            replaceKeyframes(burstPunchT.property("ADBE Rotate Z"), [[1.38, 16], [2.22, -9]]);
+            replaceKeyframes(burstPunchT.property("ADBE Opacity"), [[1.38, 0], [1.50, 74], [1.76, 40], [2.22, 0]]);
+            burstPunch.motionBlur = true;
+
+            var titleShadow = comp.layers.add(titleItem);
+            titleShadow.name = "TITLE | Approved offset print shadow";
+            titleShadow.inPoint = 1.42;
+            titleShadow.outPoint = 5.0;
+            var titleShadowT = titleShadow.property("ADBE Transform Group");
+            titleShadowT.property("ADBE Anchor Point").setValue([titleItem.width / 2, titleItem.height / 2, 0]);
+            replaceKeyframes(titleShadowT.property("ADBE Position"), [[1.42, [327, 165, 0]], [1.68, [327, 133, 0]], [1.90, [327, 145, 0]], [2.10, [327, 141, 0]], [5.0, [327, 141, 0]]]);
+            replaceKeyframes(titleShadowT.property("ADBE Scale"), [[1.42, [0, 0, 100]], [1.64, [37, 30, 100]], [1.82, [28, 35, 100]], [2.04, [31.4, 31.4, 100]], [5.0, [31.4, 31.4, 100]]]);
+            replaceKeyframes(titleShadowT.property("ADBE Rotate Z"), [[1.42, -12], [1.68, 4], [1.88, -2], [2.08, 0], [5.0, 0]]);
+            replaceKeyframes(titleShadowT.property("ADBE Opacity"), [[1.42, 0], [1.50, 46], [5.0, 46]]);
+            titleShadow.blendingMode = BlendingMode.MULTIPLY;
+            titleShadow.motionBlur = true;
+
+            var title = comp.layers.add(titleItem);
+            title.name = "TITLE | Approved paper cutout";
+            title.inPoint = 1.42;
+            title.outPoint = 5.0;
+            var titleT = title.property("ADBE Transform Group");
+            titleT.property("ADBE Anchor Point").setValue([titleItem.width / 2, titleItem.height / 2, 0]);
+            replaceKeyframes(titleT.property("ADBE Position"), [
+                [1.42, [320, 156, 0]], [1.66, [320, 121, 0]], [1.83, [320, 139, 0]], [2.05, [320, 133, 0]],
+                [2.70, [318, 131, 0]], [3.40, [322, 135, 0]], [4.18, [318, 132, 0]], [5.0, [320, 133, 0]]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Scale"), [
+                [1.42, [0, 0, 100]], [1.62, [39, 31, 100]], [1.80, [28, 35, 100]], [2.02, [31, 31, 100]],
+                [2.70, [31.6, 30.6, 100]], [3.40, [30.6, 31.5, 100]], [4.18, [31.5, 30.7, 100]], [5.0, [31, 31, 100]]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Rotate Z"), [[1.42, -12], [1.66, 4], [1.83, -2], [2.05, 0], [2.70, -0.8], [3.40, 0.7], [4.18, -0.6], [5.0, 0]]);
+            replaceKeyframes(titleT.property("ADBE Opacity"), [[1.42, 0], [1.50, 100], [5.0, 100]]);
+            title.motionBlur = true;
+
+            var jointShadow = comp.layers.add(jointItem);
+            jointShadow.name = "JOINT 1 | Ink offset shadow";
+            jointShadow.inPoint = 1.46;
+            jointShadow.outPoint = 5.0;
+            var jointShadowT = jointShadow.property("ADBE Transform Group");
+            jointShadowT.property("ADBE Anchor Point").setValue([jointItem.width / 2, jointItem.height / 2, 0]);
+            replaceKeyframes(jointShadowT.property("ADBE Position"), [[1.46, [326, 290, 0]], [1.70, [218, 356, 0]], [1.86, [239, 336, 0]], [2.08, [226, 347, 0]], [5.0, [226, 347, 0]]]);
+            replaceKeyframes(jointShadowT.property("ADBE Scale"), [[1.46, [0, 0, 100]], [1.68, [23, 23, 100]], [1.84, [15, 20, 100]], [2.06, [18.3, 18.3, 100]], [5.0, [18.3, 18.3, 100]]]);
+            replaceKeyframes(jointShadowT.property("ADBE Rotate Z"), [[1.46, -105], [1.70, 8], [1.86, -5], [2.08, 0], [5.0, 0]]);
+            replaceKeyframes(jointShadowT.property("ADBE Opacity"), [[1.46, 0], [1.53, 42], [5.0, 42]]);
+            jointShadow.blendingMode = BlendingMode.MULTIPLY;
+            try {
+                var jointShadowBlur = jointShadow.property("ADBE Effect Parade").addProperty("ADBE Box Blur2");
+                if (jointShadowBlur.property(1)) jointShadowBlur.property(1).setValue(14);
+                if (jointShadowBlur.property(2)) jointShadowBlur.property(2).setValue(3);
+            } catch (ignoredJointShadowFastBlur) {
+                try {
+                    var jointShadowGaussian = jointShadow.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+                    if (jointShadowGaussian.property(1)) jointShadowGaussian.property(1).setValue(14);
+                    if (jointShadowGaussian.property(3)) jointShadowGaussian.property(3).setValue(1);
+                } catch (ignoredJointShadowGaussian) {}
+            }
+            jointShadow.motionBlur = true;
+
+            var joint = comp.layers.add(jointItem);
+            joint.name = "JOINT 1 | Approved slash slot A";
+            joint.inPoint = 1.46;
+            joint.outPoint = 5.0;
+            var jointT = joint.property("ADBE Transform Group");
+            jointT.property("ADBE Anchor Point").setValue([jointItem.width / 2, jointItem.height / 2, 0]);
+            replaceKeyframes(jointT.property("ADBE Position"), [
+                [1.46, [320, 282, 0]], [1.68, [210, 348, 0]], [1.84, [231, 328, 0]], [2.06, [218, 339, 0]],
+                [2.78, [216, 336, 0]], [3.45, [221, 341, 0]], [4.20, [216, 337, 0]], [5.0, [218, 339, 0]]
+            ]);
+            replaceKeyframes(jointT.property("ADBE Scale"), [
+                [1.46, [0, 0, 100]], [1.66, [22, 22, 100]], [1.82, [14, 20, 100]], [2.04, [18, 18, 100]],
+                [2.78, [18.4, 17.6, 100]], [3.45, [17.6, 18.4, 100]], [4.20, [18.3, 17.7, 100]], [5.0, [18, 18, 100]]
+            ]);
+            replaceKeyframes(jointT.property("ADBE Rotate Z"), [[1.46, -105], [1.68, 8], [1.84, -5], [2.06, 0], [2.78, -1.6], [3.45, 1.4], [4.20, -1.2], [5.0, 0]]);
+            replaceKeyframes(jointT.property("ADBE Opacity"), [[1.46, 0], [1.53, 100], [5.0, 100]]);
+            joint.motionBlur = true;
+
+            for (var h = 0; h < 14; h++) {
+                var particle = comp.layers.addShape();
+                particle.name = "IMPACT | Loose herb crumb " + pad(h + 1, 2);
+                var pw = 5 + (h % 4) * 2;
+                var ph = 4 + ((h + 2) % 3) * 2;
+                addOutlinedEllipseGroup(particle, [pw, ph], [0, 0], h % 4 === 0 ? mustard : (h % 2 === 0 ? olive : herb), darkBrown, 1.1, 100);
+                var particleT = particle.property("ADBE Transform Group");
+                var angle = (h * 51 + 17) * Math.PI / 180;
+                var radius = 105 + (h % 5) * 27;
+                var px = 320 + Math.cos(angle) * radius;
+                var py = 262 + Math.sin(angle) * radius * 0.68;
+                replaceKeyframes(particleT.property("ADBE Position"), [[1.46, [320, 260, 0]], [1.78, [px, py, 0]], [2.48, [px + Math.cos(angle) * 24, py + 34, 0]]]);
+                replaceKeyframes(particleT.property("ADBE Scale"), [[1.46, [0, 0, 100]], [1.60, [135, 135, 100]], [2.48, [55, 55, 100]]]);
+                replaceKeyframes(particleT.property("ADBE Rotate Z"), [[1.46, h * 19], [2.48, h % 2 ? 270 : -250]]);
+                replaceKeyframes(particleT.property("ADBE Opacity"), [[1.46, 0], [1.55, 100], [2.12, 82], [2.48, 0]]);
+                particle.motionBlur = true;
+            }
+
+            var flash = addFullFrameLayer(comp, "IMPACT | Warm paper flash", cream, 0);
+            replaceKeyframes(flash.property("ADBE Transform Group").property("ADBE Opacity"), [[0, 0], [1.46, 0], [1.52, 22], [1.64, 0], [5.0, 0]]);
+
+            var glints = [[150, 236], [291, 390], [420, 265], [506, 345], [255, 248], [468, 205]];
+            for (var g = 0; g < glints.length; g++) {
+                addJointRolledGlint(comp, g, [glints[g][0], glints[g][1], 0], 2.12 + g * 0.47, g % 2 === 0 ? cream : mustard);
+            }
+
+            comp.time = 2.20;
+            comp.openInViewer();
+            return {
+                comp: compSnapshot(comp, 220),
+                style: "approved_earthy_paper_cutout",
+                joint_slots: [{ x: 218, y: 339 }, { x: 340, y: 339 }, { x: 462, y: 339 }],
+                title_scale: 31,
+                joint_scale: 18
+            };
+        });
+    }
+
+    function addApprovedJointCountPuff(comp, slotX, start, ordinal) {
+        var darkBrown = [0.10, 0.052, 0.021];
+        var olive = [0.30, 0.39, 0.085];
+        var cream = [0.95, 0.88, 0.66];
+        var paperShade = [0.78, 0.70, 0.49];
+        var cloud = [
+            [-35, 2, 46, 31], [-19, -23, 46, 38], [8, -29, 54, 43],
+            [35, -7, 42, 33], [25, 23, 49, 35], [-11, 28, 52, 37]
+        ];
+
+        var back = comp.layers.addShape();
+        back.name = "COUNT " + ordinal + " | Olive puff depth";
+        for (var b = 0; b < cloud.length; b++) {
+            addOutlinedEllipseGroup(back, [cloud[b][2], cloud[b][3]], [cloud[b][0], cloud[b][1]], olive, darkBrown, 2.0, 88);
+        }
+        var backT = back.property("ADBE Transform Group");
+        backT.property("ADBE Position").setValue([slotX, 342, 0]);
+        replaceKeyframes(backT.property("ADBE Scale"), [
+            [start, [0, 0, 100]], [start + 0.10, [72, 62, 100]],
+            [start + 0.27, [116, 104, 100]], [start + 0.62, [158, 142, 100]]
+        ]);
+        replaceKeyframes(backT.property("ADBE Rotate Z"), [[start, 8], [start + 0.62, -5]]);
+        replaceKeyframes(backT.property("ADBE Opacity"), [[start, 0], [start + 0.05, 76], [start + 0.28, 45], [start + 0.62, 0]]);
+        back.motionBlur = true;
+
+        var front = comp.layers.addShape();
+        front.name = "COUNT " + ordinal + " | Cream paper puff";
+        for (var f = 0; f < cloud.length; f++) {
+            var frontColor = f % 3 === 1 ? paperShade : cream;
+            addOutlinedEllipseGroup(front, [cloud[f][2] * 0.82, cloud[f][3] * 0.82], [cloud[f][0] * 0.78, cloud[f][1] * 0.78], frontColor, darkBrown, 1.8, 96);
+        }
+        var frontT = front.property("ADBE Transform Group");
+        frontT.property("ADBE Position").setValue([slotX, 340, 0]);
+        replaceKeyframes(frontT.property("ADBE Scale"), [
+            [start + 0.02, [0, 0, 100]], [start + 0.11, [64, 56, 100]],
+            [start + 0.25, [102, 94, 100]], [start + 0.58, [142, 128, 100]]
+        ]);
+        replaceKeyframes(frontT.property("ADBE Rotate Z"), [[start + 0.02, -7], [start + 0.58, 6]]);
+        replaceKeyframes(frontT.property("ADBE Opacity"), [[start + 0.02, 0], [start + 0.07, 100], [start + 0.27, 62], [start + 0.58, 0]]);
+        try {
+            var puffTurbulence = front.property("ADBE Effect Parade").addProperty("ADBE Turbulent Displace");
+            if (puffTurbulence.property(1)) puffTurbulence.property(1).setValue(9);
+            if (puffTurbulence.property(2)) puffTurbulence.property(2).setValue(46);
+        } catch (ignoredCountPuffTurbulence) {}
+        front.motionBlur = true;
+
+        var sparkle = addJointRolledGlint(comp, 20 + ordinal, [slotX - 12, 282, 0], start + 0.31, cream);
+        sparkle.name = "COUNT " + ordinal + " | Matte arrival glint";
+        return { back: back, front: front, sparkle: sparkle };
+    }
+
+    function addApprovedJointToSlot(comp, slotX, delay, ordinal) {
+        var sourceJoint = findLayer(comp, "JOINT 1 | Approved slash slot A");
+        var sourceShadow = findLayer(comp, "JOINT 1 | Ink offset shadow");
+        var puff = addApprovedJointCountPuff(comp, slotX, 1.50 + delay, ordinal);
+
+        var shadow = sourceShadow.duplicate();
+        shadow.name = "JOINT " + ordinal + " | Blurred ink shadow";
+        shadow.inPoint = 1.46 + delay;
+        shadow.outPoint = 5.0;
+        var shadowT = shadow.property("ADBE Transform Group");
+        replaceKeyframes(shadowT.property("ADBE Position"), [
+            [1.46 + delay, [326, 290, 0]], [1.70 + delay, [slotX, 356, 0]],
+            [1.86 + delay, [slotX + 21, 336, 0]], [2.08 + delay, [slotX + 8, 347, 0]], [5.0, [slotX + 8, 347, 0]]
+        ]);
+        replaceKeyframes(shadowT.property("ADBE Scale"), [
+            [1.46 + delay, [0, 0, 100]], [1.68 + delay, [23, 23, 100]],
+            [1.84 + delay, [15, 20, 100]], [2.06 + delay, [18.3, 18.3, 100]], [5.0, [18.3, 18.3, 100]]
+        ]);
+        replaceKeyframes(shadowT.property("ADBE Rotate Z"), [[1.46 + delay, -105], [1.70 + delay, 8], [1.86 + delay, -5], [2.08 + delay, 0], [5.0, 0]]);
+        replaceKeyframes(shadowT.property("ADBE Opacity"), [[1.46 + delay, 0], [1.53 + delay, 42], [5.0, 42]]);
+
+        var joint = sourceJoint.duplicate();
+        joint.name = "JOINT " + ordinal + " | Approved slash slot " + (ordinal === 2 ? "B" : "C");
+        joint.inPoint = 1.46 + delay;
+        joint.outPoint = 5.0;
+        var jointT = joint.property("ADBE Transform Group");
+        replaceKeyframes(jointT.property("ADBE Position"), [
+            [1.46 + delay, [320, 282, 0]], [1.68 + delay, [slotX - 8, 348, 0]],
+            [1.84 + delay, [slotX + 13, 328, 0]], [2.06 + delay, [slotX, 339, 0]],
+            [2.78 + delay, [slotX - 2, 336, 0]], [3.45 + delay, [slotX + 3, 341, 0]],
+            [4.20 + delay, [slotX - 2, 337, 0]], [5.0, [slotX, 339, 0]]
+        ]);
+        replaceKeyframes(jointT.property("ADBE Scale"), [
+            [1.46 + delay, [0, 0, 100]], [1.66 + delay, [22, 22, 100]],
+            [1.82 + delay, [14, 20, 100]], [2.04 + delay, [18, 18, 100]],
+            [2.78 + delay, [18.4, 17.6, 100]], [3.45 + delay, [17.6, 18.4, 100]],
+            [4.20 + delay, [18.3, 17.7, 100]], [5.0, [18, 18, 100]]
+        ]);
+        replaceKeyframes(jointT.property("ADBE Rotate Z"), [[1.46 + delay, -105], [1.68 + delay, 8], [1.84 + delay, -5], [2.06 + delay, 0], [2.78 + delay, -1.6], [3.45 + delay, 1.4], [4.20 + delay, -1.2], [5.0, 0]]);
+        replaceKeyframes(jointT.property("ADBE Opacity"), [[1.46 + delay, 0], [1.53 + delay, 100], [5.0, 100]]);
+
+        joint.moveToBeginning();
+        shadow.moveAfter(joint);
+        puff.front.moveAfter(shadow);
+        puff.sparkle.moveAfter(puff.front);
+        puff.back.moveAfter(puff.sparkle);
+        return { joint: joint, shadow: shadow, puff: puff };
+    }
+
+    function commandBuildJointRolledCountVariants(args) {
+        return withUndo("Codex: Build Joint Rolled count variants", function () {
+            var project = requireProject();
+            var source = findComp(args.source_comp || "JOINT_ROLLED_1_APPROVED");
+            var counts = args.counts || [2, 3];
+            var output = [];
+            for (var c = 0; c < counts.length; c++) {
+                var count = Number(counts[c]);
+                if (count !== 2 && count !== 3) throw new Error("Joint Rolled count must be 2 or 3.");
+                var targetName = "JOINT_ROLLED_" + count + "_APPROVED";
+                var oldComp = null;
+                for (var p = 1; p <= project.numItems; p++) {
+                    if (project.item(p) instanceof CompItem && project.item(p).name === targetName) {
+                        oldComp = project.item(p);
+                        break;
+                    }
+                }
+                if (oldComp) oldComp.remove();
+
+                var copy = source.duplicate();
+                copy.name = targetName;
+                copy.parentFolder = findOrCreateProjectFolder("02_COMPS");
+                addApprovedJointToSlot(copy, 340, 0.09, 2);
+                if (count === 3) {
+                    addApprovedJointToSlot(copy, 462, 0.18, 3);
+                    try {
+                        copy.markerProperty.setValueAtTime(3.20, new MarkerValue("LOVE PACK PUFF EXTENSION POINT"));
+                    } catch (ignoredLovePackMarker) {}
+                }
+                copy.time = 2.42;
+                output.push({
+                    id: copy.id,
+                    name: copy.name,
+                    width: copy.width,
+                    height: copy.height,
+                    duration: copy.duration,
+                    fps: copy.frameRate,
+                    layers: copy.numLayers,
+                    count: count,
+                    love_pack_extension_marker: count === 3 ? 3.20 : null
+                });
+            }
+            if (output.length) findComp(output[output.length - 1].id).openInViewer();
+            return { source: serializeItem(source), variants: output };
+        });
+    }
+
+    function addLovePackBeer(comp, beerItem, index) {
+        var targets = [[218, 292, 0], [340, 286, 0], [462, 292, 0]];
+        var starts = [[-90, 176, 0], [320, -130, 0], [730, 176, 0]];
+        var startRotations = [-54, 18, 58];
+        var finalRotations = [-12, 0, 12];
+        var delay = index * 0.09;
+        var target = targets[index];
+        var gatherX = 304 + index * 16;
+
+        var shadow = comp.layers.add(beerItem);
+        shadow.name = "LOVE PACK | Beer " + (index + 1) + " blurred shadow";
+        shadow.inPoint = 3.0 + delay;
+        shadow.outPoint = 4.70;
+        var shadowT = shadow.property("ADBE Transform Group");
+        shadowT.property("ADBE Anchor Point").setValue([beerItem.width / 2, beerItem.height / 2, 0]);
+        replaceKeyframes(shadowT.property("ADBE Position"), [
+            [3.00 + delay, [starts[index][0] + 7, starts[index][1] + 9, 0]],
+            [3.31 + delay, [target[0] + (index === 1 ? 0 : (index === 0 ? 13 : -13)) + 7, target[1] - 13 + 9, 0]],
+            [3.59 + delay, [target[0] + 7, target[1] + 9, 0]], [4.08, [target[0] + 7, target[1] + 9, 0]],
+            [4.46, [gatherX + 7, 297, 0]], [4.62, [327, 295, 0]]
+        ]);
+        replaceKeyframes(shadowT.property("ADBE Scale"), [
+            [3.00 + delay, [0, 0, 100]], [3.23 + delay, [15.0, 15.0, 100]],
+            [3.43 + delay, [10.4, 13.0, 100]], [3.62 + delay, [12.1, 12.1, 100]],
+            [4.08, [12.1, 12.1, 100]], [4.46, [7.5, 7.5, 100]], [4.62, [0, 0, 100]]
+        ]);
+        replaceKeyframes(shadowT.property("ADBE Rotate Z"), [[3.00 + delay, startRotations[index]], [3.48 + delay, finalRotations[index] + 7], [3.68 + delay, finalRotations[index]], [4.08, finalRotations[index]], [4.62, index === 1 ? 180 : (index === 0 ? -210 : 210)]]);
+        replaceKeyframes(shadowT.property("ADBE Opacity"), [[3.00 + delay, 0], [3.11 + delay, 34], [4.42, 34], [4.62, 0]]);
+        shadow.blendingMode = BlendingMode.MULTIPLY;
+        try {
+            var beerShadowBlur = shadow.property("ADBE Effect Parade").addProperty("ADBE Box Blur2");
+            if (beerShadowBlur.property(1)) beerShadowBlur.property(1).setValue(14);
+            if (beerShadowBlur.property(2)) beerShadowBlur.property(2).setValue(3);
+        } catch (ignoredBeerShadowBlur) {}
+        shadow.motionBlur = true;
+
+        var beer = comp.layers.add(beerItem);
+        beer.name = "LOVE PACK | Beer " + (index + 1) + " hero";
+        beer.inPoint = 3.0 + delay;
+        beer.outPoint = 4.70;
+        var beerT = beer.property("ADBE Transform Group");
+        beerT.property("ADBE Anchor Point").setValue([beerItem.width / 2, beerItem.height / 2, 0]);
+        replaceKeyframes(beerT.property("ADBE Position"), [
+            [3.00 + delay, starts[index]],
+            [3.31 + delay, [target[0] + (index === 1 ? 0 : (index === 0 ? 13 : -13)), target[1] - 13, 0]],
+            [3.59 + delay, target], [4.08, target], [4.46, [gatherX, 288, 0]], [4.62, [320, 286, 0]]
+        ]);
+        replaceKeyframes(beerT.property("ADBE Scale"), [
+            [3.00 + delay, [0, 0, 100]], [3.23 + delay, [15.0, 15.0, 100]],
+            [3.43 + delay, [10.4, 13.0, 100]], [3.62 + delay, [12.1, 12.1, 100]],
+            [4.08, [12.1, 12.1, 100]], [4.46, [7.5, 7.5, 100]], [4.62, [0, 0, 100]]
+        ]);
+        replaceKeyframes(beerT.property("ADBE Rotate Z"), [[3.00 + delay, startRotations[index]], [3.48 + delay, finalRotations[index] + 7], [3.68 + delay, finalRotations[index]], [4.08, finalRotations[index]], [4.62, index === 1 ? 180 : (index === 0 ? -210 : 210)]]);
+        replaceKeyframes(beerT.property("ADBE Opacity"), [[3.00 + delay, 0], [3.08 + delay, 100], [4.54, 100], [4.64, 0]]);
+        beer.motionBlur = true;
+        return { beer: beer, shadow: shadow };
+    }
+
+    function addLovePackHeart(comp, index, position, start, color) {
+        var darkBrown = [0.10, 0.052, 0.021];
+        var layer = comp.layers.addShape();
+        layer.name = "LOVE PACK | Floating heart " + pad(index + 1, 2);
+        var group = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+        var vectors = group.property("ADBE Vectors Group");
+        var path = vectors.addProperty("ADBE Vector Shape - Group");
+        var heart = new Shape();
+        heart.vertices = [[0, 17], [-18, 0], [-18, -9], [-11, -17], [0, -9], [11, -17], [18, -9], [18, 0]];
+        heart.inTangents = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]];
+        heart.outTangents = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]];
+        heart.closed = true;
+        path.property("ADBE Vector Shape").setValue(heart);
+        var fill = vectors.addProperty("ADBE Vector Graphic - Fill");
+        fill.property("ADBE Vector Fill Color").setValue(color);
+        var stroke = vectors.addProperty("ADBE Vector Graphic - Stroke");
+        stroke.property("ADBE Vector Stroke Color").setValue(darkBrown);
+        stroke.property("ADBE Vector Stroke Width").setValue(2.2);
+        var t = layer.property("ADBE Transform Group");
+        replaceKeyframes(t.property("ADBE Position"), [[start, [position[0], position[1] + 12, 0]], [start + 0.32, position], [start + 1.15, [position[0] + (index % 2 ? 8 : -8), position[1] - 10, 0]], [7.0, position]]);
+        replaceKeyframes(t.property("ADBE Scale"), [[start, [0, 0, 100]], [start + 0.16, [128, 128, 100]], [start + 0.34, [82, 82, 100]], [6.2, [94, 94, 100]], [7.0, [82, 82, 100]]]);
+        replaceKeyframes(t.property("ADBE Rotate Z"), [[start, -22], [start + 0.34, 9], [7.0, index % 2 ? 18 : -14]]);
+        replaceKeyframes(t.property("ADBE Opacity"), [[start, 0], [start + 0.08, 92], [6.65, 82], [7.0, 70]]);
+        layer.motionBlur = true;
+        return layer;
+    }
+
+    function commandBuildLovePackFinale(args) {
+        return withUndo("Codex: Build Love Pack finale", function () {
+            var project = requireProject();
+            var source = findComp(args.source_comp || "JOINT_ROLLED_3_APPROVED");
+            var beerItem = findProjectItem(args.beer_item);
+            var giftItem = findProjectItem(args.gift_item);
+            var targetName = args.new_name || "LOVE_PACK_APPROVED";
+            var oldComp = null;
+            for (var p = 1; p <= project.numItems; p++) {
+                if (project.item(p) instanceof CompItem && project.item(p).name === targetName) {
+                    oldComp = project.item(p);
+                    break;
+                }
+            }
+            if (oldComp) oldComp.remove();
+
+            var originalDuration = source.duration;
+            var comp = source.duplicate();
+            comp.name = targetName;
+            comp.parentFolder = findOrCreateProjectFolder("02_COMPS");
+            comp.duration = 7.0;
+            comp.workAreaStart = 0;
+            comp.workAreaDuration = 7.0;
+            for (var i = 1; i <= comp.numLayers; i++) {
+                var baseLayer = comp.layer(i);
+                if (baseLayer.outPoint >= originalDuration - comp.frameDuration * 1.5) baseLayer.outPoint = 7.0;
+            }
+
+            var dustyPink = [0.62, 0.17, 0.30];
+            var deepRose = [0.34, 0.055, 0.14];
+            var cream = [0.96, 0.86, 0.64];
+            var mustard = [0.80, 0.58, 0.17];
+            var darkBrown = [0.10, 0.052, 0.021];
+            var baseBackground = findLayer(comp, "BG | Approved tobacco paper plate");
+
+            var pink = addFullFrameLayer(comp, "LOVE PACK BG | Dusty pink takeover", dustyPink, 0);
+            pink.outPoint = 7.0;
+            replaceKeyframes(pink.property("ADBE Transform Group").property("ADBE Opacity"), [[0, 0], [4.30, 0], [4.72, 100], [7.0, 100]]);
+            pink.moveBefore(baseBackground);
+
+            var halo = comp.layers.addShape();
+            halo.name = "LOVE PACK BG | Cream paper halo";
+            addOutlinedEllipseGroup(halo, [580, 410], [0, 0], cream, darkBrown, 7, 100);
+            var haloT = halo.property("ADBE Transform Group");
+            haloT.property("ADBE Position").setValue([320, 268, 0]);
+            replaceKeyframes(haloT.property("ADBE Scale"), [[4.35, [0, 0, 100]], [4.82, [106, 92, 100]], [5.18, [96, 100, 100]], [7.0, [101, 98, 100]]]);
+            replaceKeyframes(haloT.property("ADBE Rotate Z"), [[4.35, -8], [5.18, 3], [7.0, -2]]);
+            replaceKeyframes(haloT.property("ADBE Opacity"), [[4.35, 0], [4.68, 52], [7.0, 42]]);
+            halo.moveBefore(pink);
+
+            var rayColors = [deepRose, cream, mustard];
+            for (var r = 0; r < 12; r++) {
+                var ray = comp.layers.addShape();
+                ray.name = "LOVE PACK BG | Retro ray " + pad(r + 1, 2);
+                addJointRolledRoundedRect(ray, [34 + (r % 3) * 8, 380], [0, -236], 18, rayColors[r % rayColors.length], null, 0, 100);
+                var rayT = ray.property("ADBE Transform Group");
+                rayT.property("ADBE Position").setValue([320, 276, 0]);
+                rayT.property("ADBE Rotate Z").setValue(r * 30);
+                replaceKeyframes(rayT.property("ADBE Scale"), [[4.38, [0, 0, 100]], [4.80, [100, 100, 100]], [7.0, [108, 103, 100]]]);
+                replaceKeyframes(rayT.property("ADBE Rotate Z"), [[4.38, r * 30 - 7], [7.0, r * 30 + 7]]);
+                replaceKeyframes(rayT.property("ADBE Opacity"), [[4.38, 0], [4.76, r % 3 === 1 ? 12 : 20], [7.0, r % 3 === 1 ? 9 : 16]]);
+                ray.moveBefore(halo);
+            }
+
+            var title = findLayer(comp, "TITLE | Approved paper cutout");
+            var titleShadow = findLayer(comp, "TITLE | Approved offset print shadow");
+            setKeyframes(title.property("ADBE Transform Group").property("ADBE Position"), [[4.20, [320, 133, 0]], [4.50, [320, 226, 0]], [4.64, [320, 270, 0]], [5.0, [320, 270, 0]], [7.0, [320, 270, 0]]]);
+            setKeyframes(title.property("ADBE Transform Group").property("ADBE Scale"), [[4.20, [31, 31, 100]], [4.50, [18, 18, 100]], [4.64, [0, 0, 100]], [5.0, [0, 0, 100]], [7.0, [0, 0, 100]]]);
+            setKeyframes(title.property("ADBE Transform Group").property("ADBE Rotate Z"), [[4.20, 0], [4.64, 165], [5.0, 165], [7.0, 165]]);
+            setKeyframes(title.property("ADBE Transform Group").property("ADBE Opacity"), [[4.20, 100], [4.55, 100], [4.66, 0], [5.0, 0], [7.0, 0]]);
+            setKeyframes(titleShadow.property("ADBE Transform Group").property("ADBE Position"), [[4.20, [327, 141, 0]], [4.50, [327, 234, 0]], [4.64, [327, 278, 0]], [5.0, [327, 278, 0]], [7.0, [327, 278, 0]]]);
+            setKeyframes(titleShadow.property("ADBE Transform Group").property("ADBE Scale"), [[4.20, [31.4, 31.4, 100]], [4.50, [18.4, 18.4, 100]], [4.64, [0, 0, 100]], [5.0, [0, 0, 100]], [7.0, [0, 0, 100]]]);
+            setKeyframes(titleShadow.property("ADBE Transform Group").property("ADBE Opacity"), [[4.20, 46], [4.54, 40], [4.66, 0], [5.0, 0], [7.0, 0]]);
+
+            var approvedBurst = findLayer(comp, "BURST | Approved paper smoke hold");
+            setKeyframes(approvedBurst.property("ADBE Transform Group").property("ADBE Opacity"), [[4.08, 82], [4.46, 48], [4.68, 0], [5.0, 0], [7.0, 0]]);
+
+            var jointNames = ["JOINT 1 | Approved slash slot A", "JOINT 2 | Approved slash slot B", "JOINT 3 | Approved slash slot C"];
+            var shadowNames = ["JOINT 1 | Ink offset shadow", "JOINT 2 | Blurred ink shadow", "JOINT 3 | Blurred ink shadow"];
+            var jointSlots = [218, 340, 462];
+            for (var j = 0; j < 3; j++) {
+                var joint = findLayer(comp, jointNames[j]);
+                var jt = joint.property("ADBE Transform Group");
+                setKeyframes(jt.property("ADBE Position"), [[4.08, [jointSlots[j], 339, 0]], [4.46, [304 + j * 16, 302, 0]], [4.62, [320, 292, 0]], [5.0, [320, 292, 0]], [7.0, [320, 292, 0]]]);
+                var jointScale = jt.property("ADBE Scale");
+                for (var sk = jointScale.numKeys; sk >= 1; sk--) {
+                    if (jointScale.keyTime(sk) >= 3.0) jointScale.removeKey(sk);
+                }
+                setKeyframes(jointScale, [[3.00, [18, 18, 100]], [3.20, [6.4, 6.4, 100]], [3.38, [8.2, 8.2, 100]], [3.58, [7.5, 7.5, 100]], [4.08, [7.5, 7.5, 100]], [4.46, [4.2, 4.2, 100]], [4.62, [0, 0, 100]], [5.0, [0, 0, 100]], [7.0, [0, 0, 100]]]);
+                setKeyframes(jt.property("ADBE Rotate Z"), [[4.08, 0], [4.62, j === 1 ? 180 : (j === 0 ? -220 : 220)], [5.0, j === 1 ? 180 : (j === 0 ? -220 : 220)], [7.0, j === 1 ? 180 : (j === 0 ? -220 : 220)]]);
+                setKeyframes(jt.property("ADBE Opacity"), [[4.08, 100], [4.54, 100], [4.64, 0], [5.0, 0], [7.0, 0]]);
+                var jointShadow = findLayer(comp, shadowNames[j]);
+                var jointShadowScale = jointShadow.property("ADBE Transform Group").property("ADBE Scale");
+                for (var ssk = jointShadowScale.numKeys; ssk >= 1; ssk--) {
+                    if (jointShadowScale.keyTime(ssk) >= 3.0) jointShadowScale.removeKey(ssk);
+                }
+                setKeyframes(jointShadowScale, [[3.00, [18.3, 18.3, 100]], [3.20, [6.6, 6.6, 100]], [3.38, [8.4, 8.4, 100]], [3.58, [7.7, 7.7, 100]], [4.08, [7.7, 7.7, 100]], [4.42, [4.4, 4.4, 100]], [4.60, [0, 0, 100]], [5.0, [0, 0, 100]], [7.0, [0, 0, 100]]]);
+                setKeyframes(jointShadow.property("ADBE Transform Group").property("ADBE Opacity"), [[4.04, 42], [4.42, 22], [4.60, 0], [5.0, 0], [7.0, 0]]);
+            }
+
+            for (var b = 0; b < 3; b++) addLovePackBeer(comp, beerItem, b);
+
+            // Keep the smaller joints visually in front of the arriving beer
+            // bottles. Later-added gift/puff layers still cover both groups.
+            for (var jo = 2; jo >= 0; jo--) {
+                var frontJoint = findLayer(comp, jointNames[jo]);
+                var frontJointShadow = findLayer(comp, shadowNames[jo]);
+                frontJoint.moveToBeginning();
+                frontJointShadow.moveAfter(frontJoint);
+            }
+
+            var gift = comp.layers.add(giftItem);
+            gift.name = "LOVE PACK | Gift box hero";
+            gift.inPoint = 4.48;
+            gift.outPoint = 7.0;
+            var giftT = gift.property("ADBE Transform Group");
+            giftT.property("ADBE Anchor Point").setValue([giftItem.width / 2, giftItem.height / 2, 0]);
+            replaceKeyframes(giftT.property("ADBE Position"), [[4.48, [320, 302, 0]], [4.82, [320, 260, 0]], [5.04, [320, 278, 0]], [5.28, [320, 268, 0]], [6.05, [317, 265, 0]], [7.0, [320, 270, 0]]]);
+            replaceKeyframes(giftT.property("ADBE Scale"), [[4.48, [0, 0, 100]], [4.80, [37, 30.5, 100]], [5.02, [28.5, 34, 100]], [5.26, [32.5, 32.5, 100]], [6.05, [33.0, 32.0, 100]], [7.0, [32.5, 32.5, 100]]]);
+            replaceKeyframes(giftT.property("ADBE Rotate Z"), [[4.48, -14], [4.80, 4], [5.02, -2], [5.26, 0], [6.05, 0.8], [7.0, 0]]);
+            replaceKeyframes(giftT.property("ADBE Opacity"), [[4.48, 0], [4.58, 100], [7.0, 100]]);
+            gift.motionBlur = true;
+
+            addJointRolledPuff(comp, "LOVE PACK PUFF | Rose depth", false, [320, 280, 0], 4.38);
+            addJointRolledPuff(comp, "LOVE PACK PUFF | Cream gift cloud", true, [320, 276, 0], 4.42);
+            var flash = addFullFrameLayer(comp, "LOVE PACK PUFF | Warm flash", cream, 0);
+            replaceKeyframes(flash.property("ADBE Transform Group").property("ADBE Opacity"), [[0, 0], [4.42, 0], [4.50, 38], [4.62, 0], [7.0, 0]]);
+
+            var heartPositions = [[78, 146, 0], [562, 142, 0], [86, 362, 0], [552, 354, 0], [174, 74, 0], [486, 82, 0]];
+            for (var h = 0; h < heartPositions.length; h++) {
+                addLovePackHeart(comp, h, heartPositions[h], 4.92 + h * 0.17, h % 3 === 0 ? cream : (h % 3 === 1 ? mustard : deepRose));
+            }
+            var glintPositions = [[132, 244], [515, 250], [220, 416], [435, 410], [307, 74], [587, 283]];
+            for (var g = 0; g < glintPositions.length; g++) {
+                addJointRolledGlint(comp, 40 + g, [glintPositions[g][0], glintPositions[g][1], 0], 5.08 + g * 0.28, g % 2 === 0 ? cream : mustard);
+            }
+
+            try { comp.markerProperty.setValueAtTime(4.42, new MarkerValue("LOVE PACK PUFF")); } catch (ignoredLovePackPuffMarker) {}
+            try { comp.markerProperty.setValueAtTime(5.26, new MarkerValue("LOVE PACK HOLD")); } catch (ignoredLovePackHoldMarker) {}
+            comp.time = 5.30;
+            comp.openInViewer();
+            return {
+                comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height, duration: comp.duration, fps: comp.frameRate, layers: comp.numLayers },
+                beer_entry: 3.0,
+                puff: 4.42,
+                gift_hold: 5.26,
+                style: "dusty_pink_earthy_love_pack"
+            };
+        });
+    }
+
+    function commandUpgradeHurryUpAssets(args) {
+        return withUndo("Codex: Upgrade Hurry Up with illustrated assets", function () {
+            var project = requireProject();
+            var source = findComp(args.source_comp || "HURRY_UP_MASTER");
+            var titleItem = findProjectItem(args.title_item);
+            var clockItem = findProjectItem(args.clock_item);
+            var targetName = args.new_name || "HURRY_UP_MASTER_ASSET_V2";
+            var oldComp = null;
+            for (var p = 1; p <= project.numItems; p++) {
+                if (project.item(p) instanceof CompItem && project.item(p).name === targetName) {
+                    oldComp = project.item(p);
+                    break;
+                }
+            }
+            if (oldComp) oldComp.remove();
+
+            var comp = source.duplicate();
+            comp.name = targetName;
+            comp.parentFolder = findOrCreateProjectFolder("01_COMPS");
+            comp.motionBlur = true;
+            comp.shutterAngle = 220;
+            comp.shutterPhase = -110;
+
+            var oldTitleNames = ["HURRY UP - HERO", "TITLE ECHO - 1", "TITLE ECHO - 2"];
+            for (var ot = 0; ot < oldTitleNames.length; ot++) {
+                try { findLayer(comp, oldTitleNames[ot]).enabled = false; } catch (ignoredOldTitle) {}
+            }
+
+            var gold = [1.0, 0.69, 0.06];
+            var cream = [1.0, 0.91, 0.55];
+            var magenta = [0.94, 0.02, 0.54];
+            var purple = [0.32, 0.015, 0.48];
+
+            // A physical clock first owns the center of the vortex, then parks above
+            // the title so the time motif remains readable throughout the hold.
+            var clockHalo = comp.layers.addShape();
+            clockHalo.name = "CLOCK ASSET | Gold time halo";
+            addOutlinedEllipseGroup(clockHalo, [430, 430], [0, 0], null, gold, 7, 86);
+            addOutlinedEllipseGroup(clockHalo, [392, 392], [0, 0], null, magenta, 3, 66);
+            var clockHaloT = clockHalo.property("ADBE Transform Group");
+            replaceKeyframes(clockHaloT.property("ADBE Position"), [
+                [0.08, [320, 244, 0]], [1.08, [320, 244, 0]],
+                [1.54, [320, 112, 0]], [3.10, [317, 110, 0]], [5.0, [320, 112, 0]]
+            ]);
+            replaceKeyframes(clockHaloT.property("ADBE Scale"), [
+                [0.08, [0, 0, 100]], [0.36, [112, 112, 100]], [0.62, [94, 94, 100]],
+                [1.08, [100, 100, 100]], [1.54, [44, 44, 100]],
+                [3.10, [45.5, 45.5, 100]], [5.0, [44, 44, 100]]
+            ]);
+            replaceKeyframes(clockHaloT.property("ADBE Rotate Z"), [[0.08, -120], [1.08, 235], [1.54, 272], [5.0, 286]]);
+            replaceKeyframes(clockHaloT.property("ADBE Opacity"), [[0.08, 0], [0.28, 88], [1.20, 62], [1.54, 34], [5.0, 27]]);
+            clockHalo.blendingMode = BlendingMode.ADD;
+            clockHalo.motionBlur = true;
+
+            var clockGlow = comp.layers.add(clockItem);
+            clockGlow.name = "CLOCK ASSET | Soft magenta aura";
+            clockGlow.blendingMode = BlendingMode.ADD;
+            clockGlow.motionBlur = true;
+            var clockGlowT = clockGlow.property("ADBE Transform Group");
+            clockGlowT.property("ADBE Anchor Point").setValue([clockItem.width / 2, clockItem.height / 2, 0]);
+            replaceKeyframes(clockGlowT.property("ADBE Position"), [
+                [0.08, [320, 244, 0]], [1.08, [320, 244, 0]],
+                [1.54, [320, 112, 0]], [3.10, [317, 110, 0]], [5.0, [320, 112, 0]]
+            ]);
+            replaceKeyframes(clockGlowT.property("ADBE Scale"), [
+                [0.08, [0, 0, 100]], [0.36, [36, 36, 100]], [0.62, [30, 30, 100]],
+                [1.08, [32, 32, 100]], [1.54, [15.4, 15.4, 100]],
+                [3.10, [15.9, 15.9, 100]], [5.0, [15.4, 15.4, 100]]
+            ]);
+            replaceKeyframes(clockGlowT.property("ADBE Rotate Z"), [[0.08, -28], [0.36, 8], [0.62, -4], [1.08, 0], [3.10, -1.3], [5.0, 0]]);
+            replaceKeyframes(clockGlowT.property("ADBE Opacity"), [[0.08, 0], [0.28, 56], [1.10, 34], [1.54, 19], [5.0, 14]]);
+            try {
+                var clockBlur = clockGlow.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+                clockBlur.property("ADBE Gaussian Blur 2-0001").setValue(24);
+                clockBlur.property("ADBE Gaussian Blur 2-0002").setValue(1);
+            } catch (ignoredClockBlur) {}
+
+            var clock = comp.layers.add(clockItem);
+            clock.name = "CLOCK ASSET | Illustrated pocket clock";
+            clock.motionBlur = true;
+            var clockT = clock.property("ADBE Transform Group");
+            clockT.property("ADBE Anchor Point").setValue([clockItem.width / 2, clockItem.height / 2, 0]);
+            replaceKeyframes(clockT.property("ADBE Position"), [
+                [0.08, [320, 244, 0]], [1.08, [320, 244, 0]], [1.30, [320, 213, 0]],
+                [1.54, [320, 112, 0]], [2.35, [323, 114, 0]], [3.10, [317, 110, 0]],
+                [4.05, [322, 113, 0]], [5.0, [320, 112, 0]]
+            ]);
+            replaceKeyframes(clockT.property("ADBE Scale"), [
+                [0.08, [0, 0, 100]], [0.36, [35, 35, 100]], [0.62, [29, 29, 100]],
+                [0.84, [32.5, 32.5, 100]], [1.08, [31, 31, 100]],
+                [1.54, [14.8, 14.8, 100]], [2.35, [15.2, 15.2, 100]],
+                [3.10, [14.7, 14.7, 100]], [4.05, [15.1, 15.1, 100]], [5.0, [14.8, 14.8, 100]]
+            ]);
+            replaceKeyframes(clockT.property("ADBE Rotate Z"), [
+                [0.08, -28], [0.36, 8], [0.62, -4], [0.84, 2.2], [1.08, 0],
+                [1.54, -2], [2.35, 1.2], [3.10, -1.5], [4.05, 1.1], [5.0, 0]
+            ]);
+            replaceKeyframes(clockT.property("ADBE Opacity"), [[0.08, 0], [0.22, 100], [5.0, 100]]);
+
+            // A fast sweep over the dial makes the clock active despite being a
+            // single flattened illustration.
+            var minuteHand = comp.layers.addShape();
+            minuteHand.name = "CLOCK ASSET | One-second sweep";
+            addJointRolledRoundedRect(minuteHand, [10, 110], [0, -48], 5, magenta, gold, 2.4, 100);
+            var minuteT = minuteHand.property("ADBE Transform Group");
+            replaceKeyframes(minuteT.property("ADBE Position"), [[0.08, [320, 244, 0]], [1.08, [320, 244, 0]], [1.54, [320, 112, 0]], [5.0, [320, 112, 0]]]);
+            replaceKeyframes(minuteT.property("ADBE Scale"), [[0.08, [0, 0, 100]], [0.30, [100, 100, 100]], [1.08, [100, 100, 100]], [1.54, [47.7, 47.7, 100]], [5.0, [47.7, 47.7, 100]]]);
+            replaceKeyframes(minuteT.property("ADBE Rotate Z"), [[0.08, -72], [1.08, 648], [1.54, 700], [5.0, 865]]);
+            replaceKeyframes(minuteT.property("ADBE Opacity"), [[0.08, 0], [0.22, 96], [1.54, 80], [5.0, 68]]);
+            minuteHand.blendingMode = BlendingMode.ADD;
+            minuteHand.motionBlur = true;
+
+            var hourHand = comp.layers.addShape();
+            hourHand.name = "CLOCK ASSET | Counter hand";
+            addJointRolledRoundedRect(hourHand, [13, 76], [0, -31], 6, gold, purple, 2.2, 100);
+            var hourT = hourHand.property("ADBE Transform Group");
+            replaceKeyframes(hourT.property("ADBE Position"), [[0.08, [320, 244, 0]], [1.08, [320, 244, 0]], [1.54, [320, 112, 0]], [5.0, [320, 112, 0]]]);
+            replaceKeyframes(hourT.property("ADBE Scale"), [[0.08, [0, 0, 100]], [0.30, [100, 100, 100]], [1.08, [100, 100, 100]], [1.54, [47.7, 47.7, 100]], [5.0, [47.7, 47.7, 100]]]);
+            replaceKeyframes(hourT.property("ADBE Rotate Z"), [[0.08, 38], [1.08, 398], [1.54, 422], [5.0, 486]]);
+            replaceKeyframes(hourT.property("ADBE Opacity"), [[0.08, 0], [0.22, 100], [1.54, 88], [5.0, 76]]);
+            hourHand.motionBlur = true;
+
+            var hub = comp.layers.addShape();
+            hub.name = "CLOCK ASSET | Animated hand hub";
+            addOutlinedEllipseGroup(hub, [27, 27], [0, 0], cream, purple, 4, 100);
+            var hubT = hub.property("ADBE Transform Group");
+            replaceKeyframes(hubT.property("ADBE Position"), [[0.08, [320, 244, 0]], [1.08, [320, 244, 0]], [1.54, [320, 112, 0]], [5.0, [320, 112, 0]]]);
+            replaceKeyframes(hubT.property("ADBE Scale"), [[0.08, [0, 0, 100]], [0.30, [100, 100, 100]], [1.08, [100, 100, 100]], [1.54, [47.7, 47.7, 100]], [5.0, [47.7, 47.7, 100]]]);
+            replaceKeyframes(hubT.property("ADBE Opacity"), [[0.08, 0], [0.22, 100], [5.0, 100]]);
+
+            var titleEcho = comp.layers.add(titleItem);
+            titleEcho.name = "HURRY UP ASSET | Magenta impact echo";
+            titleEcho.blendingMode = BlendingMode.ADD;
+            titleEcho.motionBlur = true;
+            var echoT = titleEcho.property("ADBE Transform Group");
+            echoT.property("ADBE Anchor Point").setValue([titleItem.width / 2, titleItem.height / 2, 0]);
+            replaceKeyframes(echoT.property("ADBE Position"), [[0.46, [320, 242, 0]], [0.82, [320, 284, 0]], [1.42, [320, 292, 0]], [5.0, [320, 292, 0]]]);
+            replaceKeyframes(echoT.property("ADBE Scale"), [[0.46, [0, 0, 100]], [0.78, [38, 38, 100]], [1.02, [31, 31, 100]], [1.42, [29, 29, 100]], [5.0, [29, 29, 100]]]);
+            replaceKeyframes(echoT.property("ADBE Rotate Z"), [[0.46, -720], [0.90, 14], [1.42, 0], [5.0, 0]]);
+            replaceKeyframes(echoT.property("ADBE Opacity"), [[0.46, 0], [0.67, 48], [1.08, 26], [1.48, 0], [5.0, 0]]);
+            try {
+                var titleBlur = titleEcho.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+                titleBlur.property("ADBE Gaussian Blur 2-0001").setValue(18);
+                titleBlur.property("ADBE Gaussian Blur 2-0002").setValue(1);
+            } catch (ignoredTitleBlur) {}
+
+            var title = comp.layers.add(titleItem);
+            title.name = "HURRY UP ASSET | Illustrated hero";
+            title.motionBlur = true;
+            var titleT = title.property("ADBE Transform Group");
+            titleT.property("ADBE Anchor Point").setValue([titleItem.width / 2, titleItem.height / 2, 0]);
+            replaceKeyframes(titleT.property("ADBE Position"), [
+                [0.48, [320, 242, 0]], [0.80, [320, 278, 0]], [1.04, [320, 300, 0]],
+                [1.28, [320, 286, 0]], [1.52, [320, 292, 0]], [2.35, [320, 288, 0]],
+                [3.10, [320, 293, 0]], [4.05, [320, 288, 0]], [5.0, [320, 292, 0]]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Scale"), [
+                [0.48, [0, 0, 100]], [0.80, [33.2, 33.2, 100]], [1.02, [26.0, 32.5, 100]],
+                [1.25, [29.8, 26.7, 100]], [1.52, [27.8, 27.8, 100]],
+                [2.35, [28.3, 28.3, 100]], [3.10, [27.7, 27.7, 100]],
+                [4.05, [28.2, 28.2, 100]], [5.0, [27.8, 27.8, 100]]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Rotate Z"), [
+                [0.48, -720], [0.80, 10], [1.02, -5], [1.25, 2.4], [1.52, 0],
+                [2.35, -0.8], [3.10, 0.7], [4.05, -0.6], [5.0, 0]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Opacity"), [[0.48, 0], [0.60, 100], [5.0, 100]]);
+
+            // Preserve the original foreground sparkle hierarchy over the new title.
+            try { title.moveAfter(findLayer(comp, "Sparkle 1")); } catch (ignoredTitleOrder) {}
+            try { titleEcho.moveAfter(title); } catch (ignoredEchoOrder) {}
+            try { hub.moveAfter(titleEcho); } catch (ignoredHubOrder) {}
+            try { hourHand.moveAfter(hub); } catch (ignoredHourOrder) {}
+            try { minuteHand.moveAfter(hourHand); } catch (ignoredMinuteOrder) {}
+            try { clock.moveAfter(minuteHand); } catch (ignoredClockOrder) {}
+            try { clockGlow.moveAfter(clock); } catch (ignoredClockGlowOrder) {}
+            try { clockHalo.moveAfter(clockGlow); } catch (ignoredHaloOrder) {}
+
+            try { comp.markerProperty.setValueAtTime(0.48, new MarkerValue("ILLUSTRATED TITLE IMPACT")); } catch (ignoredTitleMarker) {}
+            try { comp.markerProperty.setValueAtTime(1.54, new MarkerValue("CLOCK PARK + TITLE HOLD")); } catch (ignoredClockMarker) {}
+            comp.time = 2.35;
+            comp.openInViewer();
+            return {
+                comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height, duration: comp.duration, fps: comp.frameRate, layers: comp.numLayers },
+                title_asset: serializeItem(titleItem),
+                clock_asset: serializeItem(clockItem),
+                title_impact: 0.48,
+                clock_park: 1.54,
+                style: "illustrated_gold_magenta_time_vortex"
+            };
+        });
+    }
+
     function commandImportAsset(args) {
         return withUndo("Codex: Import asset", function () {
             var file = new File(args.path);
@@ -3654,6 +4795,11 @@
         if (action === "polish_psychedelic_jackpot_v03") return commandPolishPsychedelicJackpotV03(args);
         if (action === "build_psychedelic_jackpot_second_half") return commandBuildPsychedelicJackpotSecondHalf(args);
         if (action === "rebuild_psychedelic_jackpot_portal_zoom") return commandRebuildPsychedelicJackpotPortalZoom(args);
+        if (action === "build_joint_rolled_v2") return commandBuildJointRolledV2(args);
+        if (action === "build_joint_rolled_approved") return commandBuildJointRolledApproved(args);
+        if (action === "build_joint_rolled_count_variants") return commandBuildJointRolledCountVariants(args);
+        if (action === "build_love_pack_finale") return commandBuildLovePackFinale(args);
+        if (action === "upgrade_hurry_up_assets") return commandUpgradeHurryUpAssets(args);
         if (action === "import_asset") return commandImportAsset(args);
         if (action === "add_layer") return commandAddLayer(args);
         if (action === "add_text") return commandAddText(args);
