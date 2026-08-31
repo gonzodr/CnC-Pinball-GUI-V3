@@ -83,7 +83,10 @@ class StateMachine:
             for p in range(1, 5)
         }
         self.party_message = ""
-        self.party_message_until = 0.0
+        self.party_message_until = 0
+        # Hurry Up: mikor jar le, es milyen hosszu volt (a GUI 2X-kijelzojehez)
+        self.hurry_up_until = 0.0
+        self.hurry_up_seconds = 0.0
         # Uj firmware: a Steal sor tartalmazza a tenyleges 10k/20k osszeget,
         # az utana jovo Ufo10..13 csak video. Regi firmware-nel a video
         # tovabbra is a historikus 10k levonast vegzi.
@@ -255,6 +258,14 @@ class StateMachine:
             ):
                 self.state = AppState.SCORE
                 self._in_attract_loop = False
+
+        elif event.kind == "HURRY_UP":
+            seconds = event.args[0] if event.args else 0
+            if seconds > 0:
+                self.hurry_up_until = time.time() + seconds
+                self.hurry_up_seconds = seconds
+            else:
+                self.hurry_up_until = 0.0
 
         elif event.kind == "PARTY_STATE":
             player, beers, joints, ufo_tier, weed_ready = event.args

@@ -55,6 +55,15 @@ def parse_line(line: str) -> Optional[GameEvent]:
                 player, beers, joints, ufo_tier, bool(weed_ready)
             ))
 
+        # HurryUp,<masodperc> = indul (a firmware kuldi a sajat hosszat),
+        # HurryUp,0 = vege. A GUI ebbol rakja ki a lukteto 2X-et es szamolja
+        # vissza az idot; igy a firmware idotartamanak atirasa eleg egy helyen.
+        elif cmd == "HURRYUP" and len(parts) == 2:
+            seconds = int(parts[1])
+            if not 0 <= seconds <= 600:
+                return None
+            return GameEvent("HURRY_UP", (seconds,))
+
         elif cmd == "PARTYEVENT" and len(parts) == 3:
             player = int(parts[1])
             if not 1 <= player <= 4 or not parts[2]:

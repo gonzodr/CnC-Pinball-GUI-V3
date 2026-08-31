@@ -331,6 +331,17 @@ class ScoreGUI:
     LOVE_PACK_CENTER = (320, 92)          # a ket felho kozott, felul
     LOVE_PACK_GROW_SEC = 0.45             # 0-rol teljes meretre ennyi ido alatt
     LOVE_PACK_PULSE_PERIOD_SEC = 2.6      # egy teljes lelegzes-ciklus
+    # Hurry Up kijelzo: ugyanoda, ahova a Love Pack is kerul (a ket felho koze)
+    HURRY_2X_CENTER = (320, 78)           # a lukteto "2X"
+    HURRY_TIME_CENTER = (320, 118)        # alatta a visszaszamlalo
+    HURRY_2X_SIZE = 54
+    HURRY_TIME_SIZE = 30
+    HURRY_2X_COLOR = (255, 226, 64)
+    HURRY_TIME_COLOR = (255, 255, 255)
+    HURRY_PULSE_PERIOD_SEC = 0.7          # gyorsabb, surgetobb, mint a Love Pack
+    HURRY_PULSE_MIN_SCALE = 0.88
+    HURRY_PULSE_MAX_SCALE = 1.12
+
     LOVE_PACK_PULSE_MIN_SCALE = 0.94
     LOVE_PACK_PULSE_MAX_SCALE = 1.06
 
@@ -547,6 +558,8 @@ class ScoreGUI:
         self.font_label = None
         self.font_small = None
         self.font_party = None
+        self.font_hurry_2x = None
+        self.font_hurry_time = None
         self.font_card_name = None
         self.font_card_score = None
         self.active = False
@@ -649,6 +662,8 @@ class ScoreGUI:
         # A party-deszkak felirata kulon fonton fut, hogy a meretet a
         # tobbi kiirastol fuggetlenul lehessen hangolni.
         self.font_party = pygame.font.Font(modak_font_path, self.PARTY_LABEL_SIZE)
+        self.font_hurry_2x = pygame.font.Font(modak_font_path, self.HURRY_2X_SIZE)
+        self.font_hurry_time = pygame.font.Font(modak_font_path, self.HURRY_TIME_SIZE)
         self.font_card_name = pygame.font.Font(modak_font_path, 20)   # 20 * 0.8
         self.font_card_score = pygame.font.Font(modak_font_path, 26)  # 26 * 0.8
 
@@ -1235,6 +1250,34 @@ class ScoreGUI:
 
         self._draw_love_pack(now)
 
+    def _draw_hurry_up(self, state):
+        """Hurry Up alatt lukteto "2X" es alatta a hatralevo ido.
+
+        Ugyanoda kerul, ahova a Love Pack doboz is - a ket felho koze -, mert
+        a ketto sosem aktiv egyszerre: a Hurry Up alatt nem lehet jointot
+        sodorni. Az idot a firmware kezdo ertekebol szamoljuk vissza.
+        """
+        remaining = getattr(state, "hurry_up_until", 0.0) - time.time()
+        if remaining <= 0:
+            return
+
+        scale = self._cosine_pulse_scale(
+            self.HURRY_PULSE_PERIOD_SEC,
+            self.HURRY_PULSE_MIN_SCALE,
+            self.HURRY_PULSE_MAX_SCALE,
+        )
+        label = build_outlined_text_surface(
+            self.font_hurry_2x, "2X", self.HURRY_2X_COLOR, self.COLOR_TEXT_OUTLINE, 3
+        )
+        self._blit_scaled_centered(label, self.HURRY_2X_CENTER, scale)
+
+        # A visszaszamlalo nem luktet - azt olvasni kell, nem unnepelni.
+        time_surf = build_outlined_text_surface(
+            self.font_hurry_time, str(int(remaining) + 1),
+            self.HURRY_TIME_COLOR, self.COLOR_TEXT_OUTLINE, 2,
+        )
+        self.screen.blit(time_surf, time_surf.get_rect(center=self.HURRY_TIME_CENTER))
+
     def _draw_love_pack(self, now):
         """A Love Pack doboz: 0-rol felnagyodik, aztan lassan lelegzik.
 
@@ -1472,28 +1515,10 @@ class ScoreGUI:
             score_rect = self._main_score_cache.get_rect(center=(center_x, center_y))
             self.screen.blit(self._main_score_cache, score_rect)
 
-        # Beer / Joint / Love Pack: a firmware jatekosonkenti, golyok kozott
-        # megmarado allapota. Ez assetek nelkul is egyertelmuen megmutatja,
-        # hogy a kishid, a spinner vagy az UFO eppen mit fog csinalni.
-        party = state.party_progress.get(state.current_player, {})
-        beers = party.get("beers", 0)
-        joints = party.get("joints", 0)
-        ufo_tier = party.get("ufo_tier", 0)
-        weed_ready = party.get("weed_ready", False)
-
-        if ufo_tier == 4:
-            progress_surf = self.font_small.render(
-                "LOVE PACK READY - SHOOT UFO", True, (120, 245, 255)
-            )
-            self.screen.blit(progress_surf, progress_surf.get_rect(center=(320, 421)))
-
-        if weed_ready:
-            if beers > 0 and joints < 3:
-                hint_text = "UFO / GET HIGH / ROLL A JOINT"
-            else:
-                hint_text = "UFO / GET HIGH - GET A BEER TO ROLL"
-            hint_surf = self.font_small.render(hint_text, True, (190, 240, 175))
-            self.screen.blit(hint_surf, hint_surf.get_rect(center=(320, 445)))
+        # A sor/joint allast a ket oldalso deszka mutatja, a Love Packot a
+        # doboz - az also szoveges kiirasok ezert megszuntek. Ami maradt: a
+        # Hurry Up 2X-kijelzoje es a party_message esemeny-bejelentesei.
+        self._draw_hurry_up(state)
 
         if state.party_message and time.time() < state.party_message_until:
             message_surf = build_outlined_text_surface(
