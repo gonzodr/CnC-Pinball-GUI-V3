@@ -866,9 +866,7 @@ class ScoreGUI:
                  self.PARTY_BEER_CONTENT_X, self.PARTY_BEER_GAP),
             ):
                 self.party_boards[key] = [
-                    pygame.transform.rotate(
-                        self._build_party_board(plank, label, icon, count, content_x, gap), angle
-                    )
+                    self._build_party_board(plank, label, icon, count, content_x, gap, angle)
                     for count in range(4)
                 ]
 
@@ -1142,44 +1140,66 @@ class ScoreGUI:
             icon = pygame.transform.rotate(icon, self.PARTY_ICON_ANGLE)
         return icon
 
-    def _build_party_board(self, plank, label, icon, count, content_x, gap):
-        """Deszka + felirat + `count` darab ikon, egyetlen kesz feluletre.
+    def _build_party_board(self, plank, label, icon, count, content_x, gap, angle):
+        """A deszka darabjait keszti elo: (felulet, kozeppont-eltolas) parok.
 
-        Betolteskor fut, darabszamonkent egyszer (0..3), ezert a kesobbi
-        rajzolas mar csak egy blit. A felulet kicsi (~210x40), tehat ez a
-        kompozitalas biztonsagos az ARM-on is - a Bus Error a szeles
-        (500px+) SRCALPHA-ra-SRCALPHA blitnel jon elo.
+        NEM komponal koztes feluletre! A deszka ~366px szeles, es a
+        forgatas utan ~369x85 - ekkora SRCALPHA-ra SRCALPHA-t blittelni
+        Bus Error-t dob az ARM-on (a Pi 3B+ ezzel crash-loopolt). Ezert
+        minden darabot kulon forgatunk el, es rajzolaskor egyenkent
+        mennek KOZVETLENUL a kepernyore - ez a bevalt biztonsagos minta.
+
+        A darabonkenti forgatas ugyanoda teszi oket, mintha az egesz
+        deszkat forgattuk volna: egy kozepponthoz kepesti (ux, uy)
+        eltolas theta-val (oramutato ellen) forgatva
+        (ux*cos+uy*sin, -ux*sin+uy*cos) lesz.
+
+        Visszaad: (darabok, befoglalo_teglalap) - utobbi a kozepponthoz
+        kepest, hogy a leveles keretet pontosan vissza lehessen huzni ra.
         """
         plank_w, plank_h = plank.get_size()
-        # A felulet magasabb a deszkanal, hogy a jointok/uvegek RALOGHASSANAK
+        # A sav magasabb a deszkanal, hogy a jointok/uvegek RALOGHASSANAK
         # a deszka szelere - a referencian is igy ulnek rajta.
         icon_h = icon.get_height() if (count and icon is not None) else 0
         board_h = max(plank_h, icon_h + 2 * self.PARTY_ICON_OVERHANG)
-        board = pygame.Surface((plank_w, board_h), pygame.SRCALPHA)
+        cx, cy = plank_w / 2.0, board_h / 2.0
         mid_y = board_h // 2
-        board.blit(plank, (0, mid_y - plank_h // 2))
 
-        # A felirat + ikonok BALRA rendezve, a megadott x-tol indulva.
+        # Darabok a forgatas ELOTTI deszka-koordinatakban, kozepponttal.
         label_surf = self.font_party.render(label, True, self.PARTY_LABEL_COLOR)
         label_w = label_surf.get_width()
-        board.blit(label_surf, label_surf.get_rect(midleft=(content_x, mid_y)))
+        flat = [
+            (plank, (plank_w / 2.0, float(mid_y))),
+            (label_surf, (content_x + label_w / 2.0, float(mid_y))),
+        ]
 
-        if not count or icon is None:
-            return board
+        if count and icon is not None:
+            icon_w = icon.get_width()
+            start_x = content_x + label_w + 6
+            step = icon_w + gap
+            # Ha a deszka vegen kifutna, jobban egymasra csusztatjuk az
+            # ikonokat ahelyett, hogy lelognanak a fatol.
+            if count > 1:
+                room = (plank_w - start_x) - icon_w
+                if room > 0:
+                    step = min(step, max(6, room / (count - 1)))
+            for i in range(count):
+                x = start_x + i * step
+                flat.append((icon, (x + icon_w / 2.0, float(mid_y))))
 
-        icon_w = icon.get_width()
-        start_x = content_x + label_w + 6
-        step = icon_w + gap
-        # Ha a deszka vegen kifutna, jobban egymasra csusztatjuk az ikonokat
-        # ahelyett, hogy lelognanak a fatol.
-        if count > 1:
-            room = (plank_w - start_x) - icon_w
-            if room > 0:
-                step = min(step, max(6, room / (count - 1)))
-        for i in range(count):
-            x = start_x + i * step
-            board.blit(icon, icon.get_rect(center=(int(x + icon_w / 2), mid_y)))
-        return board
+        theta = math.radians(angle)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        pieces = []
+        bounds = None
+        for surf, (ux, uy) in flat:
+            rot = pygame.transform.rotate(surf, angle)
+            dx = (ux - cx) * cos_t + (uy - cy) * sin_t
+            dy = -(ux - cx) * sin_t + (uy - cy) * cos_t
+            pieces.append((rot, (dx, dy)))
+            r = rot.get_rect(center=(int(round(dx)), int(round(dy))))
+            bounds = r if bounds is None else bounds.union(r)
+
+        return pieces, (bounds if bounds is not None else pygame.Rect(0, 0, 0, 0))
 
     def _party_board_offset(self, key, visible, now):
         """0.0 = teljesen bent, 1.0 = teljesen kint (a kepernyon kivul).
@@ -1232,12 +1252,13 @@ class ScoreGUI:
             offset = self._party_board_offset(key, count > 0 and not love_pack, now)
             if offset >= 1.0:
                 continue                      # teljesen kint, nincs mit rajzolni
-            board = boards[count]
+            pieces, bounds = boards[count]
             # 0.0 = bent (END_X), 1.0 = kint (START_X) - a ketto kozott
             # interpolalunk, igy a csuszas mindket vegpontja allithato.
             x = end_x + (start_x - end_x) * offset
-            rect = board.get_rect(center=(x, y))
-            self.screen.blit(board, rect)
+            for surf, (dx, dy) in pieces:
+                self.screen.blit(surf, surf.get_rect(center=(int(round(x + dx)), int(round(y + dy)))))
+            rect = bounds.move(int(round(x)), int(round(y)))
 
             # A deszka a TOP_FRAME (felhok) UTAN rajzolodik, hogy azokra
             # ratakarjon - viszont a leveles keretnek tovabbra is a deszka
