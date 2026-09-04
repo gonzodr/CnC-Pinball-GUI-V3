@@ -128,6 +128,27 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "combo5": ("Combo15000",),
     "combo6": ("Combo20000",),
 
+    # --- Pontos osszegu jackpotok ----------------------------------------
+    # A firmware a tenyleges, Hurry Up-szorzoval szamolt pontot kuldi.
+    # A ket hid jackpot-tablaja elter, ezert a regi modszam nem eleg.
+    # 125 frame / 30 fps; egyszeri klipek, nem loopolnak.
+    "jackpot_10000": ("JACKPOT_10000",),
+    "jackpot_15000": ("JACKPOT_15000",),
+    "jackpot_20000": ("JACKPOT_20000",),
+    "jackpot_25000": ("JACKPOT_25000",),
+    "jackpot_30000": ("JACKPOT_30000",),
+    "jackpot_50000": ("JACKPOT_50000",),
+    "jackpot_100000": ("JACKPOT_100000",),
+
+    # Regi firmware kompatibilitas: ne talaljunk ki osszeget a modszambol.
+    # Peldaul Jackpot6 a kishidon 30000, a nagyhidon csak 20000 volt.
+    # Csak akkor jatszhatok, ha a regi, megfelelo nevu klip is megvan.
+    "jackpot2": ("Jackpot2",),
+    "jackpot3": ("Jackpot3",),
+    "jackpot4": ("Jackpot4",),
+    "jackpot5": ("Jackpot5",),
+    "jackpot6": ("Jackpot6",),
+
     # --- Meg nincs PNG sequence -------------------------------------------
     # Ezeket a firmware kuldi, de a helyi konyvtarban meg nincs hozzajuk
     # sorozat, ezert egyelore nema marad a trigger.
@@ -135,11 +156,6 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "multiball2": ("Acapulco Gold",),
     "multiball3": ("Thai Stick",),
     "multiball4": ("Labrador",),
-    "jackpot2": ("Jackpot2",),
-    "jackpot3": ("Jackpot3",),
-    "jackpot4": ("Jackpot4",),
-    "jackpot5": ("Jackpot5",),
-    "jackpot6": ("Jackpot6",),
     "extrab": ("Extraball",),  # high-ramp EXTRA BALL collect; asset hianyzik
 }
 

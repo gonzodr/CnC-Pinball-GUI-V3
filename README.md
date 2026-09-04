@@ -57,6 +57,27 @@ a program magától létrehozza őket alapértékekkel, ha még nem léteznek.
 
 ## Architektúra
 
+### Jackpot PNG-videók
+
+A firmware `Jackpot_<pont>` sort küld (például `Jackpot_30000`), a GUI pedig
+a `JACKPOT_<pont>` sequence-mappát játssza le. Elkészült összegek:
+10000, 15000, 20000, 25000, 30000, 50000 és 100000. Mindegyik 125 képkocka,
+30 fps, egyszeri lejátszás (kb. 4,17 másodperc), utána visszatér a pontkijelző.
+
+A normál jackpotok változatlanok: a kishíd multiball-jackpotjai 10000/15000/20000/25000/30000,
+a nagyhídé 10000/15000/20000/20000/20000, a loopé 30000. Az új triggerek
+a Hurry Up szorzóját is figyelembe veszik. Jackpotnál a szorzás után kijövő
+40000 pont helyett 50000, 60000 helyett 100000 jár, és a videó is ezt mutatja.
+Így Hurry Up alatt az 10000/15000/20000/25000/30000 alap-jackpotból rendre
+20000/30000/50000/50000/100000 lesz. A bónusz változatlan, a többi pontforrás
+továbbra is egyszerűen 2x pontot ad. Hiányzó klip helyett nem jelenítünk meg
+másik pontösszeget.
+
+Ehhez a firmware-t és a GUI-t is frissíteni kell: a régi `Jackpot2..6` módazonosító
+nem különbözteti meg a két híd eltérő jutalmát. A PNG-k Gitből ki vannak zárva;
+a hét `JACKPOT_*` mappát külön kell a célgépen az aktív videókönyvtárba tenni
+(`CNC_PNG_VIDEO_ROOT`, vagy a `video_asset_paths.py` szerinti hely).
+
 ### Állapotgép (`state_machine.py`)
 
 A `StateMachine` egyetlen `AppState` enumot vezet, amit a `main.py` event
