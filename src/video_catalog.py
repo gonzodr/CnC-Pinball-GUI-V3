@@ -138,7 +138,10 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "jackpot_25000": ("JACKPOT_25000",),
     "jackpot_30000": ("JACKPOT_30000",),
     "jackpot_50000": ("JACKPOT_50000",),
-    "jackpot_100000": ("JACKPOT_100000",),
+    # A 100000-es klip JACKPOT_MASTER-re lett atnevezve; a regi nev
+    # masodik jeloltkent bent marad, hogy egy vissza nem konvertalt
+    # gepen se essen ki a video.
+    "jackpot_100000": ("JACKPOT_MASTER", "JACKPOT_100000"),
 
     # Regi firmware kompatibilitas: ne talaljunk ki osszeget a modszambol.
     # Peldaul Jackpot6 a kishidon 30000, a nagyhidon csak 20000 volt.
