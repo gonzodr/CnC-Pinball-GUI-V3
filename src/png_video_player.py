@@ -32,8 +32,13 @@ class ClipPlaybackInfo:
 
 
 class PngSequencePlayer:
-    """Stream 640x480 PNG sequences with bounded memory use."""
+    """Stream 640x480 PNG or JPEG sequences with bounded memory use."""
 
+    # Prioritas-sorrend. Egy mappan belul CSAK az elso megtalalt tipust
+    # hasznaljuk, sosem keverunk - igy a PNG->JPEG atallas kozben egy
+    # felig atmasolt mappa nem ad kevert vagy duplikalt kockasort.
+    # A JPEG all elol: ha egy klipnek mar van JPEG valtozata, az a friss.
+    FRAME_SUFFIXES = (".jpg", ".jpeg", ".png")
     FRAME_SIZE = (640, 480)
     FPS = 30.0
     CACHE_SIZE = 60
@@ -115,7 +120,7 @@ class PngSequencePlayer:
             (entry for entry in self.root.rglob("*") if entry.is_dir()),
             key=lambda entry: entry.relative_to(self.root).as_posix().lower(),
         ):
-            frames = sorted(directory.glob("*.png"), key=self._frame_sort_key)
+            frames = self._collect_frames(directory)
             if frames:
                 name = directory.relative_to(self.root).as_posix()
                 clips[name] = frames
@@ -123,6 +128,27 @@ class PngSequencePlayer:
                 if info is not None:
                     self.playback_info[name] = info
         return clips
+
+    @classmethod
+    def _collect_frames(cls, directory: Path) -> list[Path]:
+        """A mappa kockai, egyetlen kiterjesztesbol, prioritas szerint.
+
+        A vegzodest kisbetusitve nezzuk: a Pi fajlrendszere - a Windows-szal
+        ellentetben - kis/nagybetu-erzekeny, es egy .JPG-re vegzodo export
+        kulonben csendben lathatatlan maradna.
+        """
+        by_suffix: dict[str, list[Path]] = {}
+        for entry in directory.iterdir():
+            if not entry.is_file():
+                continue
+            suffix = entry.suffix.lower()
+            if suffix in cls.FRAME_SUFFIXES:
+                by_suffix.setdefault(suffix, []).append(entry)
+        for suffix in cls.FRAME_SUFFIXES:
+            found = by_suffix.get(suffix)
+            if found:
+                return sorted(found, key=cls._frame_sort_key)
+        return []
 
     def _read_playback_info(
         self, directory: Path, frame_count: int
