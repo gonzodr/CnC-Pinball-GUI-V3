@@ -142,6 +142,10 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     # masodik jeloltkent bent marad, hogy egy vissza nem konvertalt
     # gepen se essen ki a video.
     "jackpot_100000": ("JACKPOT_MASTER", "JACKPOT_100000"),
+    # A 200000-es kifizetes (nagyhid utani loop SpaceCoke alatt, illetve a
+    # 100000 Hurry Up-os duplazasa) a psychedelikus klipet kapja - abban a
+    # 200000 van kiirva, a JACKPOT_MASTER-ben 100000.
+    "jackpot_200000": ("PsychedelicJackpot", "PsyJackpot"),
 
     # Regi firmware kompatibilitas: ne talaljunk ki osszeget a modszambol.
     # Peldaul Jackpot6 a kishidon 30000, a nagyhidon csak 20000 volt.
