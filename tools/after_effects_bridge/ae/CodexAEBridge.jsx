@@ -2,7 +2,7 @@
 #targetengine "codex_ae_bridge"
 
 (function () {
-    var BRIDGE_VERSION = "0.1.41";
+    var BRIDGE_VERSION = "0.1.43";
     var POLL_MS = 200;
     var HEARTBEAT_MS = 750;
 
@@ -565,6 +565,46 @@
                 }
             }
             return { template: serializeItem(source), variants: output };
+        });
+    }
+
+    function commandDuplicateJackpotAssets(args) {
+        return withUndo("Codex: Jackpot illustrated score variants", function () {
+            var source = findComp(args.comp);
+            var specs = args.variants || [];
+            var folder = findOrCreateProjectFolder("JACKPOT_SCORE_ASSETS");
+            var hero = findLayer(source, "SCORE | 100,000 illustrated hero");
+            var width = hero.source.width, height = hero.source.height;
+            var results = [];
+            for (var v = 0; v < specs.length; v++) {
+                if (projectItemNameExists(specs[v].name)) throw new Error("Already exists: " + specs[v].name);
+                if (!(new File(specs[v].path)).exists) throw new Error("Missing asset: " + specs[v].path);
+            }
+            for (v = 0; v < specs.length; v++) {
+                var spec = specs[v];
+                var footage = importStill(spec.path, folder);
+                var plate = app.project.items.addComp("SCORE_ASSET_" + spec.amount, width, height, 1, source.duration, source.frameRate);
+                plate.parentFolder = folder;
+                var art = plate.layers.add(footage);
+                var fit = Math.min(width / footage.width, height / footage.height) * 100;
+                art.property("ADBE Transform Group").property("ADBE Scale").setValue([fit, fit]);
+                var copy = source.duplicate();
+                copy.name = spec.name;
+                var replacements = 0, bgId = null;
+                for (var i = 1; i <= copy.numLayers; i++) {
+                    var layer = copy.layer(i);
+                    if (layer.name.indexOf("SCORE |") === 0) {
+                        layer.replaceSource(plate, false);
+                        layer.name = layer.name.replace("100,000", spec.text);
+                        replacements++;
+                    }
+                    if (layer.source && layer.source.name === "bg") bgId = layer.source.id;
+                }
+                if (replacements !== 2 || bgId === null) throw new Error("Unexpected template structure");
+                copy.time = 2.3;
+                results.push({comp: serializeItem(copy), score_layers: replacements, shared_bg_id: bgId});
+            }
+            return {variants: results};
         });
     }
 
@@ -4553,6 +4593,270 @@
         });
     }
 
+    function addJackpotPuff(comp, name, center, start, front) {
+        var layer = comp.layers.addShape();
+        layer.name = name;
+        var colors = front
+            ? [[1.0, 0.82, 0.25], [1.0, 0.55, 0.06], [0.96, 0.10, 0.48]]
+            : [[0.29, 0.02, 0.48], [0.62, 0.03, 0.64], [0.04, 0.60, 0.92]];
+        var bubbles = [
+            [-112, 8, 112, 78], [-78, -54, 126, 96], [-22, -78, 142, 104],
+            [42, -72, 132, 102], [98, -34, 118, 88], [116, 28, 108, 82],
+            [62, 70, 136, 94], [0, 84, 154, 102], [-70, 66, 130, 92], [-122, 38, 106, 80]
+        ];
+        for (var i = 0; i < bubbles.length; i++) {
+            addOutlinedEllipseGroup(layer, [bubbles[i][2], bubbles[i][3]], [bubbles[i][0], bubbles[i][1]], colors[i % colors.length], null, 0, front ? 84 : 66);
+        }
+        var transform = layer.property("ADBE Transform Group");
+        transform.property("ADBE Position").setValue(center);
+        replaceKeyframes(transform.property("ADBE Scale"), [
+            [start, [0, 0, 100]], [start + 0.09, front ? [68, 58, 100] : [86, 74, 100]],
+            [start + 0.22, front ? [124, 112, 100] : [148, 132, 100]],
+            [start + 0.72, front ? [184, 164, 100] : [215, 190, 100]]
+        ]);
+        replaceKeyframes(transform.property("ADBE Rotate Z"), [[start, front ? -9 : 11], [start + 0.72, front ? 8 : -7]]);
+        replaceKeyframes(transform.property("ADBE Opacity"), [
+            [start, 0], [start + 0.035, front ? 96 : 78], [start + 0.24, front ? 68 : 46], [start + 0.72, 0]
+        ]);
+        try {
+            var turbulence = layer.property("ADBE Effect Parade").addProperty("ADBE Turbulent Displace");
+            turbulence.property(1).setValue(front ? 18 : 27);
+            turbulence.property(2).setValue(front ? 56 : 82);
+        } catch (ignoredJackpotPuffTurbulence) {}
+        try {
+            var blur = layer.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+            blur.property("ADBE Gaussian Blur 2-0001").setValue(front ? 3.5 : 7.5);
+            blur.property("ADBE Gaussian Blur 2-0002").setValue(1);
+        } catch (ignoredJackpotPuffBlur) {}
+        layer.blendingMode = front ? BlendingMode.SCREEN : BlendingMode.ADD;
+        layer.motionBlur = true;
+        return layer;
+    }
+
+    function addJackpotBurstParticle(comp, index, start, duration) {
+        var layer = comp.layers.addShape();
+        layer.name = "JACKPOT IMPACT | Burst particle " + pad(index + 1, 2);
+        var gold = [1.0, 0.65, 0.04];
+        var cream = [1.0, 0.91, 0.48];
+        var magenta = [0.96, 0.03, 0.48];
+        if (index % 4 === 0) {
+            var group = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+            var vectors = group.property("ADBE Vectors Group");
+            var star = vectors.addProperty("ADBE Vector Shape - Star");
+            star.property("ADBE Vector Star Type").setValue(1);
+            star.property("ADBE Vector Star Points").setValue(4);
+            star.property("ADBE Vector Star Inner Radius").setValue(2);
+            star.property("ADBE Vector Star Outer Radius").setValue(10 + (index % 3) * 4);
+            star.property("ADBE Vector Star Rotation").setValue(45);
+            var fill = vectors.addProperty("ADBE Vector Graphic - Fill");
+            fill.property("ADBE Vector Fill Color").setValue(index % 8 === 0 ? cream : magenta);
+        } else {
+            var w = 14 + (index % 3) * 5;
+            var h = 7 + (index % 2) * 4;
+            addOutlinedEllipseGroup(layer, [w, h], [0, 0], index % 5 === 0 ? magenta : gold, cream, 1.5, 100);
+        }
+        var angle = (index * 41 + 8) * Math.PI / 180;
+        var radius = 150 + (index % 6) * 30;
+        var center = [320, 255, 0];
+        var mid = [320 + Math.cos(angle) * radius * 0.58, 255 + Math.sin(angle) * radius * 0.40, 0];
+        var target = [320 + Math.cos(angle) * radius, 255 + Math.sin(angle) * radius * 0.72 + 12, 0];
+        var transform = layer.property("ADBE Transform Group");
+        replaceKeyframes(transform.property("ADBE Position"), [[start, center], [start + duration * 0.42, mid], [start + duration, target]]);
+        replaceKeyframes(transform.property("ADBE Scale"), [[start, [0, 0, 100]], [start + 0.09, [132, 132, 100]], [start + duration, [46, 46, 100]]]);
+        replaceKeyframes(transform.property("ADBE Rotate Z"), [[start, index * 13], [start + duration, index % 2 ? -250 : 285]]);
+        replaceKeyframes(transform.property("ADBE Opacity"), [[start, 0], [start + 0.06, 100], [start + duration * 0.72, 82], [start + duration, 0]]);
+        layer.blendingMode = BlendingMode.ADD;
+        layer.motionBlur = true;
+        return layer;
+    }
+
+    function addJackpotShockwave(comp, name, start, color, delay, strokeWidth) {
+        var layer = comp.layers.addShape();
+        layer.name = name;
+        addOutlinedEllipseGroup(layer, [260, 190], [0, 0], null, color, strokeWidth, 100);
+        var transform = layer.property("ADBE Transform Group");
+        transform.property("ADBE Position").setValue([320, 255, 0]);
+        var s = start + delay;
+        replaceKeyframes(transform.property("ADBE Scale"), [[s, [0, 0, 100]], [s + 0.18, [86, 86, 100]], [s + 0.52, [205, 205, 100]]]);
+        replaceKeyframes(transform.property("ADBE Opacity"), [[s, 0], [s + 0.04, 96], [s + 0.24, 42], [s + 0.52, 0]]);
+        layer.blendingMode = BlendingMode.ADD;
+        layer.motionBlur = true;
+        return layer;
+    }
+
+    function commandBuildJackpotLowrider(args) {
+        return withUndo("Codex: Build Jackpot Lowrider", function () {
+            var project = requireProject();
+            var compName = args.comp_name || "JACKPOT_MASTER";
+            var oldComp = null;
+            for (var i = 1; i <= project.numItems; i++) {
+                if (project.item(i) instanceof CompItem && project.item(i).name === compName) {
+                    oldComp = project.item(i);
+                    break;
+                }
+            }
+            if (oldComp) oldComp.remove();
+
+            var footageFolder = findOrCreateProjectFolder("03_FOOTAGE");
+            var compFolder = findOrCreateProjectFolder("01_COMPS");
+            var videoItem = importStill(args.video_path, footageFolder);
+            var titleItem = importStill(args.title_path, footageFolder);
+            var amountItem = importStill(args.amount_path, footageFolder);
+            videoItem.name = "Jackpot | MiniMax H3 take 09";
+            titleItem.name = "Jackpot | Illustrated title RGBA";
+            amountItem.name = "Jackpot | 100,000 RGBA";
+
+            var fps = args.fps || 30;
+            var trim = args.trim_start === undefined ? 1.0 : args.trim_start;
+            var duration = Math.max(1.0, videoItem.duration - trim);
+            var impact = args.impact_time === undefined ? 0.40 : args.impact_time;
+            var comp = project.items.addComp(compName, 640, 480, 1, duration, fps);
+            comp.parentFolder = compFolder;
+            comp.bgColor = [0.025, 0.004, 0.055];
+            comp.motionBlur = true;
+            comp.shutterAngle = 220;
+            comp.shutterPhase = -110;
+            comp.workAreaStart = 0;
+            comp.workAreaDuration = duration;
+
+            var background = comp.layers.add(videoItem);
+            background.name = "BG | MiniMax 09 trimmed from 1s";
+            background.startTime = -trim;
+            background.inPoint = 0;
+            background.outPoint = duration;
+            background.audioEnabled = false;
+            var bgT = background.property("ADBE Transform Group");
+            bgT.property("ADBE Anchor Point").setValue([videoItem.width / 2, videoItem.height / 2, 0]);
+            replaceKeyframes(bgT.property("ADBE Position"), [
+                [0, [320, 240, 0]], [impact - 0.02, [320, 240, 0]],
+                [impact + 0.03, [327, 235, 0]], [impact + 0.08, [314, 244, 0]],
+                [impact + 0.14, [324, 238, 0]], [impact + 0.22, [320, 240, 0]], [duration, [320, 240, 0]]
+            ]);
+            replaceKeyframes(bgT.property("ADBE Scale"), [
+                [0, [100, 100, 100]], [impact, [100, 100, 100]], [impact + 0.07, [103.4, 103.4, 100]],
+                [impact + 0.18, [99.7, 99.7, 100]], [impact + 0.32, [100, 100, 100]], [duration, [100, 100, 100]]
+            ]);
+
+            var purple = [0.37, 0.015, 0.62];
+            var magenta = [0.98, 0.025, 0.48];
+            var cyan = [0.02, 0.82, 1.0];
+            var gold = [1.0, 0.63, 0.035];
+            var cream = [1.0, 0.91, 0.48];
+
+            addJackpotShockwave(comp, "JACKPOT IMPACT | Gold shockwave", impact, gold, 0.00, 7);
+            addJackpotShockwave(comp, "JACKPOT IMPACT | Cyan shockwave", impact, cyan, 0.06, 4);
+            addJackpotShockwave(comp, "JACKPOT IMPACT | Magenta shockwave", impact, magenta, 0.12, 3);
+            addJackpotPuff(comp, "JACKPOT PUFF | Purple depth cloud", [320, 258, 0], impact - 0.01, false);
+            addJackpotPuff(comp, "JACKPOT PUFF | Gold-magenta hero cloud", [320, 254, 0], impact + 0.015, true);
+
+            var flash = addFullFrameLayer(comp, "JACKPOT IMPACT | Full-frame gold flash", cream, 0);
+            replaceKeyframes(flash.property("ADBE Transform Group").property("ADBE Opacity"), [
+                [0, 0], [impact - 0.025, 0], [impact + 0.025, 64], [impact + 0.10, 18], [impact + 0.20, 0], [duration, 0]
+            ]);
+            flash.blendingMode = BlendingMode.ADD;
+
+            for (i = 0; i < 22; i++) addJackpotBurstParticle(comp, i, impact + 0.01 + (i % 4) * 0.012, 0.72 + (i % 5) * 0.08);
+
+            var titleGlow = comp.layers.add(titleItem);
+            titleGlow.name = "TITLE | Magenta-gold impact aura";
+            titleGlow.blendingMode = BlendingMode.ADD;
+            titleGlow.motionBlur = true;
+            var titleGlowT = titleGlow.property("ADBE Transform Group");
+            titleGlowT.property("ADBE Anchor Point").setValue([titleItem.width / 2, titleItem.height / 2, 0]);
+            replaceKeyframes(titleGlowT.property("ADBE Position"), [[impact + 0.04, [320, 250, 0]], [impact + 0.42, [320, 130, 0]], [duration, [320, 128, 0]]]);
+            replaceKeyframes(titleGlowT.property("ADBE Scale"), [[impact + 0.04, [0, 0, 100]], [impact + 0.24, [35, 25, 100]], [impact + 0.52, [30, 30, 100]], [duration, [29.5, 29.5, 100]]]);
+            replaceKeyframes(titleGlowT.property("ADBE Rotate Z"), [[impact + 0.04, -22], [impact + 0.32, 5], [impact + 0.65, 0], [duration, 0]]);
+            replaceKeyframes(titleGlowT.property("ADBE Opacity"), [[impact + 0.04, 0], [impact + 0.15, 62], [impact + 0.58, 24], [impact + 0.90, 0], [duration, 0]]);
+            try {
+                var titleGlowBlur = titleGlow.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+                titleGlowBlur.property("ADBE Gaussian Blur 2-0001").setValue(20);
+                titleGlowBlur.property("ADBE Gaussian Blur 2-0002").setValue(1);
+            } catch (ignoredJackpotTitleGlowBlur) {}
+
+            var title = comp.layers.add(titleItem);
+            title.name = "TITLE | JACKPOT illustrated hero";
+            title.motionBlur = true;
+            var titleT = title.property("ADBE Transform Group");
+            titleT.property("ADBE Anchor Point").setValue([titleItem.width / 2, titleItem.height / 2, 0]);
+            replaceKeyframes(titleT.property("ADBE Position"), [
+                [impact + 0.04, [320, 250, 0]], [impact + 0.25, [320, 186, 0]], [impact + 0.43, [320, 114, 0]],
+                [impact + 0.62, [320, 137, 0]], [impact + 0.82, [320, 126, 0]],
+                [1.62, [320, 128, 0]], [2.48, [317, 125, 0]], [3.30, [323, 130, 0]], [duration, [320, 127, 0]]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Scale"), [
+                [impact + 0.04, [0, 0, 100]], [impact + 0.23, [34, 22, 100]], [impact + 0.42, [25.5, 32.5, 100]],
+                [impact + 0.62, [29.5, 25.5, 100]], [impact + 0.82, [27.5, 27.5, 100]],
+                [1.62, [27.8, 27.8, 100]], [2.48, [27.4, 27.4, 100]], [3.30, [27.9, 27.9, 100]], [duration, [27.5, 27.5, 100]]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Rotate Z"), [
+                [impact + 0.04, -18], [impact + 0.25, 7], [impact + 0.43, -4], [impact + 0.62, 2], [impact + 0.82, 0],
+                [2.48, -0.7], [3.30, 0.8], [duration, 0]
+            ]);
+            replaceKeyframes(titleT.property("ADBE Opacity"), [[impact + 0.04, 0], [impact + 0.13, 100], [duration, 100]]);
+
+            var amountGlow = comp.layers.add(amountItem);
+            amountGlow.name = "SCORE | Cyan impact echo";
+            amountGlow.blendingMode = BlendingMode.ADD;
+            amountGlow.motionBlur = true;
+            var amountGlowT = amountGlow.property("ADBE Transform Group");
+            amountGlowT.property("ADBE Anchor Point").setValue([amountItem.width / 2, amountItem.height / 2, 0]);
+            replaceKeyframes(amountGlowT.property("ADBE Position"), [[impact + 0.15, [320, 250, 0]], [impact + 0.55, [320, 394, 0]], [duration, [320, 395, 0]]]);
+            replaceKeyframes(amountGlowT.property("ADBE Scale"), [[impact + 0.15, [0, 0, 100]], [impact + 0.34, [29, 20, 100]], [impact + 0.63, [24, 24, 100]], [duration, [23, 23, 100]]]);
+            replaceKeyframes(amountGlowT.property("ADBE Opacity"), [[impact + 0.15, 0], [impact + 0.27, 55], [impact + 0.74, 18], [impact + 1.0, 0], [duration, 0]]);
+            try {
+                var amountGlowBlur = amountGlow.property("ADBE Effect Parade").addProperty("ADBE Gaussian Blur 2");
+                amountGlowBlur.property("ADBE Gaussian Blur 2-0001").setValue(17);
+                amountGlowBlur.property("ADBE Gaussian Blur 2-0002").setValue(1);
+            } catch (ignoredJackpotAmountGlowBlur) {}
+
+            var amount = comp.layers.add(amountItem);
+            amount.name = "SCORE | 100,000 illustrated hero";
+            amount.motionBlur = true;
+            var amountT = amount.property("ADBE Transform Group");
+            amountT.property("ADBE Anchor Point").setValue([amountItem.width / 2, amountItem.height / 2, 0]);
+            replaceKeyframes(amountT.property("ADBE Position"), [
+                [impact + 0.15, [320, 250, 0]], [impact + 0.36, [320, 335, 0]], [impact + 0.55, [320, 410, 0]],
+                [impact + 0.73, [320, 386, 0]], [impact + 0.92, [320, 398, 0]],
+                [1.72, [320, 395, 0]], [2.48, [323, 398, 0]], [3.30, [317, 393, 0]], [duration, [320, 396, 0]]
+            ]);
+            replaceKeyframes(amountT.property("ADBE Scale"), [
+                [impact + 0.15, [0, 0, 100]], [impact + 0.34, [28, 18, 100]], [impact + 0.55, [20, 28, 100]],
+                [impact + 0.73, [24.5, 20.5, 100]], [impact + 0.92, [22.3, 22.3, 100]],
+                [1.72, [22.6, 22.6, 100]], [2.48, [22.2, 22.2, 100]], [3.30, [22.7, 22.7, 100]], [duration, [22.3, 22.3, 100]]
+            ]);
+            replaceKeyframes(amountT.property("ADBE Rotate Z"), [
+                [impact + 0.15, 14], [impact + 0.36, -6], [impact + 0.55, 3.5], [impact + 0.73, -1.8], [impact + 0.92, 0],
+                [2.48, 0.6], [3.30, -0.7], [duration, 0]
+            ]);
+            replaceKeyframes(amountT.property("ADBE Opacity"), [[impact + 0.15, 0], [impact + 0.24, 100], [duration, 100]]);
+
+            var glintPositions = [[74, 126], [568, 132], [92, 370], [552, 366], [210, 238], [430, 242], [286, 72], [360, 442]];
+            for (i = 0; i < glintPositions.length; i++) {
+                var glint = addJointRolledGlint(comp, 80 + i, [glintPositions[i][0], glintPositions[i][1], 0], impact + 0.34 + i * 0.19, i % 3 === 0 ? cream : (i % 3 === 1 ? gold : cyan));
+                glint.name = "JACKPOT DETAIL | Hero glint " + pad(i + 1, 2);
+                glint.blendingMode = BlendingMode.ADD;
+            }
+
+            try { comp.markerProperty.setValueAtTime(0, new MarkerValue("SOURCE START = MiniMax frame at 1.0s")); } catch (ignoredJackpotStartMarker) {}
+            try { comp.markerProperty.setValueAtTime(impact, new MarkerValue("CAR LANDING + PUFF IMPACT")); } catch (ignoredJackpotImpactMarker) {}
+            try { comp.markerProperty.setValueAtTime(impact + 0.92, new MarkerValue("TITLE + SCORE HOLD")); } catch (ignoredJackpotHoldMarker) {}
+            comp.time = Math.min(duration - comp.frameDuration, 1.55);
+            comp.openInViewer();
+
+            if (args.save_path) {
+                var saveFile = new File(args.save_path);
+                project.save(saveFile);
+            }
+            return {
+                comp: { id: comp.id, name: comp.name, width: comp.width, height: comp.height, duration: comp.duration, fps: comp.frameRate, layers: comp.numLayers },
+                source_trim: trim,
+                landing_impact: impact,
+                title_hold: impact + 0.92,
+                save_path: project.file ? project.file.fsName : null
+            };
+        });
+    }
+
     function commandImportAsset(args) {
         return withUndo("Codex: Import asset", function () {
             var file = new File(args.path);
@@ -4778,6 +5082,7 @@
         if (action === "create_comp") return commandCreateComp(args);
         if (action === "duplicate_comp") return commandDuplicateComp(args);
         if (action === "duplicate_score_variants") return commandDuplicateScoreVariants(args);
+        if (action === "duplicate_jackpot_assets") return commandDuplicateJackpotAssets(args);
         if (action === "build_reward_variant") return commandBuildRewardVariant(args);
         if (action === "enhance_reward_variant") return commandEnhanceRewardVariant(args);
         if (action === "build_modular_reward_variant") return commandBuildModularRewardVariant(args);
@@ -4800,6 +5105,7 @@
         if (action === "build_joint_rolled_count_variants") return commandBuildJointRolledCountVariants(args);
         if (action === "build_love_pack_finale") return commandBuildLovePackFinale(args);
         if (action === "upgrade_hurry_up_assets") return commandUpgradeHurryUpAssets(args);
+        if (action === "build_jackpot_lowrider") return commandBuildJackpotLowrider(args);
         if (action === "import_asset") return commandImportAsset(args);
         if (action === "add_layer") return commandAddLayer(args);
         if (action === "add_text") return commandAddText(args);
