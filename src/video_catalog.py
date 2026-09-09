@@ -36,10 +36,10 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "point2": ("5000",),
     "point3": ("7500",),
     "point4": ("10000",),
-    "point5": ("15000",),
+    "point5": ("HURRY_SCORE_15000_MASTER", "15000"),
     "point6": ("20000",),
-    "point7": ("25000",),
-    "point8": ("30000",),
+    "point7": ("HURRY_SCORE_25000_MASTER", "25000"),
+    "point8": ("HURRY_SCORE_30000_MASTER", "30000"),
 
     # --- Beer / Bonus -----------------------------------------------------
     "beer1": ("BEEEER1",),
@@ -156,13 +156,16 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "jackpot5": ("Jackpot5",),
     "jackpot6": ("Jackpot6",),
 
-    # --- Meg nincs PNG sequence -------------------------------------------
-    # Ezeket a firmware kuldi, de a helyi konyvtarban meg nincs hozzajuk
-    # sorozat, ezert egyelore nema marad a trigger.
-    "multiball1": ("Michokan",),
-    "multiball2": ("Acapulco Gold",),
-    "multiball3": ("Thai Stick",),
-    "multiball4": ("Labrador",),
+    # --- Weed multiballok -------------------------------------------------
+    # A firmware Multiball1-et kuld az elso, ketgolyos Michoakan mod
+    # tenyleges indulasakor. Az uj 640x480 / 30 fps render neve szandekosan
+    # egyezik az assets/Videos alatti sequence mappaval.
+    "multiball1": ("MICHOAKAN_MULTIBALL_640x480", "Michokan"),
+    # A negy vegleges, 640x480 / 30 fps / 150 frame-es sequence. A regi
+    # neveket fallbackkent megtartjuk a korabbi telepitesekhez.
+    "multiball2": ("ACAPULCO_GOLD_MULTIBALL_640x480", "Acapulco Gold"),
+    "multiball3": ("THAI_STICK_MULTIBALL_640x480", "Thai Stick"),
+    "multiball4": ("LABRADOR_MULTIBALL", "Labrador"),
     "extrab": ("Extraball",),  # high-ramp EXTRA BALL collect; asset hianyzik
 }
 
