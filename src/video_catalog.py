@@ -157,13 +157,12 @@ SERIAL_VIDEO_CANDIDATES: dict[str, tuple[str, ...]] = {
     "jackpot6": ("Jackpot6",),
 
     # --- Weed multiballok -------------------------------------------------
-    # A firmware Multiball1-et kuld az elso, ketgolyos Michoakan mod
-    # tenyleges indulasakor. Az uj 640x480 / 30 fps render neve szandekosan
-    # egyezik az assets/Videos alatti sequence mappaval.
-    "multiball1": ("MICHOAKAN_MULTIBALL_640x480", "Michokan"),
+    # Vegleges sorrend: Acapulco (2 golyo), Michoakan (3), Thai Stick (4),
+    # Labrador (5). A firmware Multiball1..4 triggerjei ezt a sorrendet kovetik.
+    "multiball1": ("ACAPULCO_GOLD_MULTIBALL_640x480", "Acapulco Gold"),
     # A negy vegleges, 640x480 / 30 fps / 150 frame-es sequence. A regi
     # neveket fallbackkent megtartjuk a korabbi telepitesekhez.
-    "multiball2": ("ACAPULCO_GOLD_MULTIBALL_640x480", "Acapulco Gold"),
+    "multiball2": ("MICHOAKAN_MULTIBALL_640x480", "Michokan"),
     "multiball3": ("THAI_STICK_MULTIBALL_640x480", "Thai Stick"),
     "multiball4": ("LABRADOR_MULTIBALL", "Labrador"),
     "extrab": ("Extraball",),  # high-ramp EXTRA BALL collect; asset hianyzik

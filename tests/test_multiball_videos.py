@@ -16,14 +16,14 @@ from video_catalog import resolve_serial_video_name
 
 
 MULTIBALL_CLIPS = {
-    "Multiball1": "MICHOAKAN_MULTIBALL_640x480",
-    "Multiball2": "ACAPULCO_GOLD_MULTIBALL_640x480",
+    "Multiball1": "ACAPULCO_GOLD_MULTIBALL_640x480",
+    "Multiball2": "MICHOAKAN_MULTIBALL_640x480",
     "Multiball3": "THAI_STICK_MULTIBALL_640x480",
     "Multiball4": "LABRADOR_MULTIBALL",
 }
 
 
-class MichoakanMultiballVideoTests(unittest.TestCase):
+class WeedMultiballVideoTests(unittest.TestCase):
     def test_firmware_multiball_lines_resolve_to_final_sequences(self):
         available = tuple(MULTIBALL_CLIPS.values())
         for trigger, clip in MULTIBALL_CLIPS.items():
@@ -41,7 +41,7 @@ class MichoakanMultiballVideoTests(unittest.TestCase):
                 self.assertEqual(frames[-1].name, f"{clip}_00149.jpg")
 
     def test_firmware_still_emits_multiball1_at_mode_start(self):
-        firmware = ROOT.parent / "CnC_firmware4" / "CnC_firmware4.ino"
+        firmware = ROOT.parents[1] / "Firmware" / "CnC_firmware4" / "CnC_firmware4.ino"
         source = firmware.read_text(encoding="utf-8")
         self.assertIn('Serial.print("Multiball");', source)
         self.assertIn('Serial.println(lvl + 1); // Multiball1..Multiball4', source)
