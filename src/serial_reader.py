@@ -109,9 +109,11 @@ class SerialReader:
                 self._ser = None
 
     def send_raw(self, text: str) -> bool:
-        """Nyers szoveg kuldese az Arduinonak (pl. "Exit1" a nevbevitel
-        vegen). SZANDEKOSAN nincs sorvege-jel: a firmware Serial.readString()-je
-        a teljes stringet hasonlitja ("Exit1\\n" nem egyezne!)."""
+        """Nyers byte-szöveg küldése; a hívó adja meg a sorvéget is.
+
+        Az új firmware egyetlen nem blokkoló, újsoros parsert használ, ezért
+        parancshoz általában a :meth:`send_line` való.
+        """
         ser = self._ser
         if ser is None:
             print(f"[serial] send_raw('{text}') kihagyva - nincs elo kapcsolat")

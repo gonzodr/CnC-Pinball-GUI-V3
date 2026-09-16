@@ -595,7 +595,7 @@ class StateMachine:
         attract modban var. E nelkul a gep ORORKRE a hiscore-modban
         (intmon == 2) ragadna minden jatek utan!"""
         if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
-            self.serial_reader.send_raw(variant)
+            self.serial_reader.send_raw(variant + "\n")
 
     def _send_minigame_line(self, text: str) -> bool:
         if self.serial_reader is None:
