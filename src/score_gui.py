@@ -1548,6 +1548,16 @@ class ScoreGUI:
             )
             self.screen.blit(message_surf, message_surf.get_rect(center=(320, 386)))
 
+        # Jatek kozben 5x piros Start csak elesiti a rejtett kodot; ez a
+        # szandekosan diszkret sarga jelzes mutatja, hogy a Bal-Shoot-Jobb-
+        # Start sor most fog szervizmodba lepni.
+        if time.time() < getattr(state, "service_mode_armed_until", 0.0):
+            armed_surf = build_outlined_text_surface(
+                self.font_small, "SERVICE MODE ARMED",
+                (255, 220, 60), (55, 35, 0), outline_width=1,
+            )
+            self.screen.blit(armed_surf, armed_surf.get_rect(center=(320, 455)))
+
         
 
     def players_order(self):

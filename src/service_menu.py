@@ -182,6 +182,23 @@ class ServiceMenuController:
             if handler:
                 handler(event)
 
+    def handle_cabinet_input(self, command):
+        """A negy fizikai cabinet-gombot a mar letezo menuvezerlesre forditja.
+
+        Bal/Jobb a listakban fel/le, zold Shoot = Enter, piros Start = Esc.
+        Igy a billentyuzetes es a cabinetes ut ugyanazokat a validalt
+        kepernyo-handlereket hasznalja.
+        """
+        key_map = {
+            "SERVICE_LEFT": pygame.K_UP,
+            "SERVICE_RIGHT": pygame.K_DOWN,
+            "SERVICE_CONFIRM": pygame.K_ESCAPE,
+            "SERVICE_BACK": pygame.K_RETURN,
+        }
+        key = key_map.get(command)
+        if key is not None:
+            self.handle_pygame_events([pygame.event.Event(pygame.KEYDOWN, key=key)])
+
     def _handle_main(self, event):
         if event.key == pygame.K_UP:
             self.cursor = (self.cursor - 1) % len(self.MAIN_ITEMS)

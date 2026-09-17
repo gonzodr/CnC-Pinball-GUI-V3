@@ -143,6 +143,9 @@ def parse_line(line: str) -> Optional[GameEvent]:
 
         elif cmd in ["MULTIBALL_ON", "MULTIBALL_OFF", "ATTRACT", "PLAYERCOUNT_NEXT",
                      "START", "FLIPPER_LEFT", "FLIPPER_RIGHT", "PLAYER_PRESS", "PLUNGER",
+                     "SERVICE_MENU_ENTER", "SERVICE_LEFT", "SERVICE_RIGHT",
+                     "SERVICE_CONFIRM", "SERVICE_BACK", "SERVICE_ARMED",
+                     "SERVICE_DISARMED", "SERVICE_DRAINED",
                      "FLIPPER_LEFT_DOWN", "FLIPPER_LEFT_UP", "FLIPPER_RIGHT_DOWN",
                      "FLIPPER_RIGHT_UP", "PLUNGER_DOWN", "PLUNGER_UP"]:
             return GameEvent(cmd)

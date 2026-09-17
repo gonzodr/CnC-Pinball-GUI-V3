@@ -84,6 +84,9 @@ class StateMachine:
         }
         self.party_message = ""
         self.party_message_until = 0
+        # Az Arduino 5 Start utan kuldi. Csak a SCORE kepernyon jelenik meg,
+        # es a firmware 8 mp-es kodablakaval egyutt automatikusan elmulik.
+        self.service_mode_armed_until = 0.0
         # Hurry Up: mikor jar le, es milyen hosszu volt (a GUI 2X-kijelzojehez)
         self.hurry_up_until = 0.0
         self.hurry_up_seconds = 0.0
@@ -238,6 +241,14 @@ class StateMachine:
             "FLIPPER" in event.kind or "PLUNGER" in event.kind or event.kind == "PLAYER_PRESS"
         ):
             self.minigame.handle_event(event)
+            return
+
+        # A firmware szervizmodja ugyanazt a negy fizikai gombot kuldi fel,
+        # amit a menu pygame-billentyukent mar eddig is kezelt.
+        if self.state == AppState.SERVICE_MENU and event.kind in (
+            "SERVICE_LEFT", "SERVICE_RIGHT", "SERVICE_CONFIRM", "SERVICE_BACK",
+        ):
+            self.service_menu.handle_cabinet_input(event.kind)
             return
 
         if event.kind == "SCORE_UPDATE":
@@ -457,6 +468,13 @@ class StateMachine:
                 self._in_attract_loop = False
                 self.service_menu.reset()
                 self.state = AppState.SERVICE_MENU
+                self.service_mode_armed_until = 0.0
+
+        elif event.kind == "SERVICE_ARMED":
+            self.service_mode_armed_until = time.time() + 8.0
+
+        elif event.kind == "SERVICE_DISARMED":
+            self.service_mode_armed_until = 0.0
 
         elif event.kind == "DEV_THX":
             # IDEIGLENES teszt-esemeny: csak a Special Thanks kepernyo
@@ -596,6 +614,10 @@ class StateMachine:
         (intmon == 2) ragadna minden jatek utan!"""
         if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
             self.serial_reader.send_raw(variant + "\n")
+
+    def _send_service_exit_to_firmware(self):
+        if self.serial_reader is not None and hasattr(self.serial_reader, "send_raw"):
+            self.serial_reader.send_raw("SERVICE_EXIT\n")
 
     def _send_minigame_line(self, text: str) -> bool:
         if self.serial_reader is None:
@@ -827,6 +849,7 @@ class StateMachine:
                 # A szerviz menubol mindig az attract-loopba terunk vissza
                 # (nem a SCORE kepernyore) - real pinball gepeken is igy
                 # mukodik a szerviz menu utan.
+                self._send_service_exit_to_firmware()
                 self._enter_attract_loop()
 
     def consume_transition(self):
