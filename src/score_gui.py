@@ -2430,7 +2430,25 @@ class ScoreGUI:
 
         if controller.status_message:
             status_surf = self.font_service_item.render(controller.status_message, True, (120, 220, 120))
-            self.screen.blit(status_surf, (30, self.SCREEN_H - 60))
+            self.screen.blit(status_surf, (30, self.SCREEN_H - 82))
 
         hint_surf = self.font_service_hint.render(hint, True, (140, 140, 150))
-        self.screen.blit(hint_surf, (30, self.SCREEN_H - 28))
+        self.screen.blit(hint_surf, (30, self.SCREEN_H - 52))
+
+        # Cabinet-gomb legenda: a szinek fizikailag is azonnal osszekotik
+        # az also segitseget a piros/zold/sarga kezeloszervekkel.
+        legend_y = self.SCREEN_H - 20
+        legend = (
+            ((255, 55, 55), 34, "ESC / VISSZA"),
+            ((55, 220, 90), 205, "ENTER / OK"),
+        )
+        for color, dot_x, label in legend:
+            pygame.draw.circle(self.screen, color, (dot_x, legend_y), 6)
+            label_surf = self.font_service_hint.render(label, True, color)
+            self.screen.blit(label_surf, (dot_x + 11, legend_y - label_surf.get_height() // 2))
+
+        # A ket flippergomb egyforma sarga jelolest kap.
+        pygame.draw.circle(self.screen, (245, 205, 55), (386, legend_y), 6)
+        pygame.draw.circle(self.screen, (245, 205, 55), (402, legend_y), 6)
+        lr_surf = self.font_service_hint.render("BAL / JOBB", True, (245, 205, 55))
+        self.screen.blit(lr_surf, (414, legend_y - lr_surf.get_height() // 2))

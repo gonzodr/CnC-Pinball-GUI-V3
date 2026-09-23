@@ -185,19 +185,27 @@ class ServiceMenuController:
     def handle_cabinet_input(self, command):
         """A negy fizikai cabinet-gombot a mar letezo menuvezerlesre forditja.
 
-        Bal/Jobb a listakban fel/le, zold Shoot = Enter, piros Start = Esc.
-        Igy a billentyuzetes es a cabinetes ut ugyanazokat a validalt
-        kepernyo-handlereket hasznalja.
+        Listakban Bal/Jobb = fel/le. Az allithato kepernyokon viszont tenyleges
+        bal/jobb ertekmodositas kell; ott a zold gomb leptet a kovetkezo sorra.
+        Zold Shoot = Enter/OK, piros Start = Esc/vissza.
         """
-        key_map = {
-            "SERVICE_LEFT": pygame.K_UP,
-            "SERVICE_RIGHT": pygame.K_DOWN,
-            "SERVICE_CONFIRM": pygame.K_ESCAPE,
-            "SERVICE_BACK": pygame.K_RETURN,
+        horizontal_screens = {
+            "particle_editor", "minigame_difficulty", "analog_test", "light_test",
         }
-        key = key_map.get(command)
+        if command == "SERVICE_LEFT":
+            key = pygame.K_LEFT if self.screen in horizontal_screens else pygame.K_UP
+        elif command == "SERVICE_RIGHT":
+            key = pygame.K_RIGHT if self.screen in horizontal_screens else pygame.K_DOWN
+        elif command == "SERVICE_CONFIRM":
+            key = pygame.K_ESCAPE
+        elif command == "SERVICE_BACK":
+            key = pygame.K_RETURN
+        else:
+            key = None
         if key is not None:
-            self.handle_pygame_events([pygame.event.Event(pygame.KEYDOWN, key=key)])
+            self.handle_pygame_events([
+                pygame.event.Event(pygame.KEYDOWN, key=key, cabinet=True)
+            ])
 
     def _handle_main(self, event):
         if event.key == pygame.K_UP:
@@ -404,6 +412,9 @@ class ServiceMenuController:
         elif event.key == pygame.K_s:
             self._save_analog_thresholds()
         elif event.key == pygame.K_RETURN:
+            if getattr(event, "cabinet", False):
+                self.cursor = (self.cursor + 1) % count
+                return
             # A jelenlegi mert ertek koze allitas: gyors "tanitas" - a mert
             # ertek es a kuszob kozotti felezopontot veszi at.
             if self.cursor < len(self.analog_values) and self.cursor < len(self.analog_thresholds):
@@ -502,6 +513,8 @@ class ServiceMenuController:
             self.particle_settings.adjust(keys[self.cursor], -1)
         elif event.key == pygame.K_RIGHT:
             self.particle_settings.adjust(keys[self.cursor], +1)
+        elif event.key == pygame.K_RETURN and getattr(event, "cabinet", False):
+            self.cursor = (self.cursor + 1) % len(keys)
         elif event.key == pygame.K_r:
             self.particle_settings.reset_defaults()
             self.status_message = "Alaperelmezesek visszaallitva!"
@@ -525,6 +538,8 @@ class ServiceMenuController:
             self.status_message = (
                 f"{self.minigame_settings.difficulty_label(game_id)} elmentve"
             )
+        elif event.key == pygame.K_RETURN and getattr(event, "cabinet", False):
+            self.cursor = (self.cursor + 1) % len(games)
         elif event.key == pygame.K_r:
             game_id, _label = games[self.cursor]
             self.minigame_settings.reset_normal(game_id)

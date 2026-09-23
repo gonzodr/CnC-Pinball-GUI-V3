@@ -37,8 +37,24 @@ class CabinetServiceMenuTests(unittest.TestCase):
     def test_mapping_is_explicit(self):
         source = ServiceMenuController.handle_cabinet_input.__doc__ or ""
         self.assertIn("Bal/Jobb", source)
-        self.assertIn("zold Shoot = Enter", source)
+        self.assertIn("Zold Shoot = Enter", source)
         self.assertIn("piros Start = Esc", source)
+
+    def test_adjustable_submenu_uses_flippers_horizontally_and_green_for_next_row(self):
+        menu = object.__new__(ServiceMenuController)
+        menu.screen = "minigame_difficulty"
+        captured = []
+        menu.handle_pygame_events = lambda events: captured.extend(events)
+
+        menu.handle_cabinet_input("SERVICE_LEFT")
+        menu.handle_cabinet_input("SERVICE_RIGHT")
+        menu.handle_cabinet_input("SERVICE_BACK")
+
+        self.assertEqual(
+            [event.key for event in captured],
+            [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_RETURN],
+        )
+        self.assertTrue(all(getattr(event, "cabinet", False) for event in captured))
 
 
 if __name__ == "__main__":
