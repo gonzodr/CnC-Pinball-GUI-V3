@@ -24,7 +24,7 @@ import os
 import sys
 
 from particle_settings import ParticleSettingsManager
-from game_modes import GAME_MODE_NAMES, game_mode_available, normalize_game_mode
+from game_modes import GAME_MODE_NAMES, normalize_game_mode
 
 # A kmsdrm drivert KIZAROLAG Linuxon allitjuk be
 # A kmsdrm drivert KIZAROLAG akkor allitjuk be, ha Linuxon vagyunk
@@ -566,9 +566,7 @@ class ScoreGUI:
         self.active = False
 
         self.background = None
-        self.mode_select_panel = None
-        self._mode_select_cache = None
-        self._mode_select_cache_key = None
+        self._player_select_mode_id = None
         self.summary_anim_start = None
 
         # 640x480-hoz igazított átlós animációs úthossz (pixelben)
@@ -709,20 +707,9 @@ class ScoreGUI:
         self.font_name_letters = pygame.font.Font(modak_font_path, 48)
         self.font_name_hint = pygame.font.Font(modak_font_path, 16)
 
-        # Ideiglenes, asset-fuggetlen Game Mode selector wireframe-fontok.
-        self.font_mode_title = pygame.font.Font(modak_font_path, 38)
+        # Ideiglenes modfelirat a SCORE-kompozicio kozepen. A vegleges
+        # atlatszo mode-art assetek kesobb ugyanerre a helyre kerulnek.
         self.font_mode_selected = pygame.font.Font(modak_font_path, 46)
-        self.font_mode_item = pygame.font.Font(modak_font_path, 19)
-        self.font_mode_hint = pygame.font.Font(None, 22)
-
-        self.mode_select_panel = pygame.Surface((584, 424), pygame.SRCALPHA)
-        self.mode_select_panel.fill((10, 16, 12, 214))
-        pygame.draw.rect(
-            self.mode_select_panel, (210, 180, 75, 235),
-            self.mode_select_panel.get_rect(), 2, border_radius=18,
-        )
-        self._mode_select_cache = None
-        self._mode_select_cache_key = None
 
         # PRESS START (attract-mode) képernyő fontja
         self.font_press_start = pygame.font.Font(modak_font_path, 80)
@@ -734,7 +721,7 @@ class ScoreGUI:
         self.active = True
 
     def render_player_select(self, state):
-        """Szoveges wireframe; a vegleges mode-art assetek kesobb jonnek."""
+        """Az eredeti SCORE-layout, a pontszam helyen a kivalasztott moddal."""
         if not self.active:
             return
 
@@ -742,59 +729,11 @@ class ScoreGUI:
         mode_id = normalize_game_mode(
             state.selected_game_mode, state.game_mode_availability_mask, players
         )
-        cache_key = (players, mode_id, int(state.game_mode_availability_mask))
-        if self._mode_select_cache_key == cache_key and self._mode_select_cache is not None:
-            self.screen.blit(self._mode_select_cache, (0, 0))
-            return
-
-        self.screen.blit(self.background, (0, 0))
-        self.screen.blit(
-            self.mode_select_panel,
-            self.mode_select_panel.get_rect(center=(self.SCREEN_W // 2, self.SCREEN_H // 2)),
-        )
-
-        title = build_outlined_text_surface(
-            self.font_mode_title, "SELECT GAME MODE",
-            (255, 235, 130), self.COLOR_TEXT_OUTLINE, 2,
-        )
-        self.screen.blit(title, title.get_rect(center=(self.SCREEN_W // 2, 50)))
-
-        player_text = build_outlined_text_surface(
-            self.font_mode_item, f"PLAYERS: {players}",
-            (255, 255, 255), self.COLOR_TEXT_OUTLINE, 1,
-        )
-        self.screen.blit(player_text, player_text.get_rect(center=(self.SCREEN_W // 2, 92)))
-
-        selected = build_outlined_text_surface(
-            self.font_mode_selected, f"<  {GAME_MODE_NAMES[mode_id]}  >",
-            (255, 205, 45), self.COLOR_TEXT_OUTLINE, 3,
-        )
-        self.screen.blit(selected, selected.get_rect(center=(self.SCREEN_W // 2, 147)))
-
-        list_y = 207
-        for index, name in enumerate(GAME_MODE_NAMES):
-            available = game_mode_available(index, state.game_mode_availability_mask)
-            marker = ">" if index == mode_id else " "
-            suffix = "" if available else "  [2P+]"
-            color = (120, 120, 120) if not available else (
-                (255, 220, 75) if index == mode_id else (220, 235, 220)
-            )
-            line = build_outlined_text_surface(
-                self.font_mode_item, f"{marker} {name}{suffix}",
-                color, self.COLOR_TEXT_OUTLINE, 1,
-            )
-            self.screen.blit(line, line.get_rect(center=(self.SCREEN_W // 2, list_y + index * 27)))
-
-        hint1 = self.font_mode_hint.render(
-            "SHOOT: PLAYERS     FLIPPERS: MODE", True, (235, 235, 235)
-        )
-        hint2 = self.font_mode_hint.render(
-            "START: PLAY", True, (255, 220, 75)
-        )
-        self.screen.blit(hint1, hint1.get_rect(center=(self.SCREEN_W // 2, 405)))
-        self.screen.blit(hint2, hint2.get_rect(center=(self.SCREEN_W // 2, 435)))
-        self._mode_select_cache = self.screen.copy()
-        self._mode_select_cache_key = cache_key
+        self._player_select_mode_id = mode_id
+        try:
+            self.render(state)
+        finally:
+            self._player_select_mode_id = None
 
     def _load_assets(self):
         # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).
@@ -1472,6 +1411,8 @@ class ScoreGUI:
         if not self.active:
             return
 
+        player_select_mode = self._player_select_mode_id
+        is_player_select = player_select_mode is not None
         self.card_animator.set_active_count(state.active_player_count)
 
         # 1. BG reteg
@@ -1546,7 +1487,8 @@ class ScoreGUI:
 
         # 4b. Party-allapotdeszkak - a felho-reteg FOLE, hogy rajuk takarjanak
         # ott, ahol a felhok alja beleer a deszkak savjaba.
-        self._draw_party_boards(state)
+        if not is_player_select:
+            self._draw_party_boards(state)
 
         # 5. Kiirasok legfelul, a TOP_FRAME felhoire / a keret fole
         # "Ball: X" felirat a bal felhoben
@@ -1558,35 +1500,51 @@ class ScoreGUI:
         ball_rect = self._ball_label_cache.get_rect(center=(135, 90))
         self.screen.blit(self._ball_label_cache, ball_rect)
 
-        # "Player: X" felirat a jobb felhoben
-        if self._active_player_cache_key != state.current_player:
+        # Az eredeti jobb felho minden allapotban az aktualis jatekost
+        # mutatja. A valasztott letszamot az alul becsuszo papirok jelzik.
+        displayed_player = state.current_player
+        if self._active_player_cache_key != displayed_player:
             self._active_player_cache = self.font_active_player.render(
-                f"Player: {state.current_player}", True, self.COLOR_ACTIVE
+                f"Player: {displayed_player}", True, self.COLOR_ACTIVE
             )
-            self._active_player_cache_key = state.current_player
+            self._active_player_cache_key = displayed_player
         active_player_rect = self._active_player_cache.get_rect(center=(515, 90))
         self.screen.blit(self._active_player_cache, active_player_rect)
 
-        # Középső nagy pontszám elhelyezése és kézi igazítása
+        # Középen jatek kozben a pontszam, Player Select alatt ugyanazon a
+        # helyen a mod neve jelenik meg. Nincs kulon menu vagy panel.
         main_score_value = state.players[state.current_player]
-        if self._main_score_cache_key != main_score_value:
-            self._main_score_cache = build_outlined_text_surface(
-                self.font_score_big, f"{main_score_value:,}",
-                self.COLOR_TEXT, self.COLOR_TEXT_OUTLINE, outline_width=3, # picit vastagabb kontúr a nagyobb betűhöz
+        center_cache_key = (
+            ("mode", player_select_mode)
+            if is_player_select else ("score", main_score_value)
+        )
+        if self._main_score_cache_key != center_cache_key:
+            center_text = (
+                GAME_MODE_NAMES[player_select_mode]
+                if is_player_select else f"{main_score_value:,}"
             )
-            self._main_score_cache_key = main_score_value
+            self._main_score_cache = build_outlined_text_surface(
+                self.font_mode_selected if is_player_select else self.font_score_big,
+                center_text,
+                (255, 205, 45) if is_player_select else self.COLOR_TEXT,
+                self.COLOR_TEXT_OUTLINE,
+                outline_width=3,
+            )
+            self._main_score_cache_key = center_cache_key
 
         # Score-watchdog: ha valtozott a pontszam (nem az elso rendernel),
         # inditsuk/hosszabbitsuk a luktetest. A luktetes fazisat a SOROZAT
         # KEZDETEHEZ kotjuk (nem abszolut idohoz), igy a hullam mindig 100%-rol
         # indul es minden ciklus vegen visszaer 100%-ra.
         now = time.time()
-        if (self._score_pulse_prev_value is not None
+        if (not is_player_select
+                and self._score_pulse_prev_value is not None
                 and main_score_value != self._score_pulse_prev_value):
             if self._score_pulse_start is None:
                 self._score_pulse_start = now
             self._score_pulse_until = now + self.SCORE_PULSE_DURATION_SEC
-        self._score_pulse_prev_value = main_score_value
+        if not is_player_select:
+            self._score_pulse_prev_value = main_score_value
 
         # KÉZI FINOMHANGOLÁS:
         # Ha balra/jobbra akarod tolni: változtasd a 0-t (pl. +20 vagy -20)
@@ -1602,7 +1560,7 @@ class ScoreGUI:
         # hatarnal, ahol a meret pont 100% - igy nincs csuf visszaugras a
         # csucsrol. A ciklushatar mindig a SOROZAT kezdetehez kepest szamit.
         pulse_scale = 1.0
-        if self._score_pulse_start is not None:
+        if not is_player_select and self._score_pulse_start is not None:
             cycle = self.SCORE_PULSE_PERIOD_SEC
             cycles = max(1, math.ceil((self._score_pulse_until - self._score_pulse_start) / cycle))
             aligned_end = self._score_pulse_start + cycles * cycle
@@ -1612,7 +1570,25 @@ class ScoreGUI:
                 bump = 0.5 - 0.5 * math.cos(2 * math.pi * (now - self._score_pulse_start) / cycle)
                 pulse_scale = 1.0 + (self.SCORE_PULSE_MAX_SCALE - 1.0) * bump
 
-        if pulse_scale != 1.0:
+        if is_player_select:
+            max_mode_width = 430
+            mode_scale = min(1.0, max_mode_width / self._main_score_cache.get_width())
+            self._blit_scaled_centered(
+                self._main_score_cache, (center_x, center_y), mode_scale
+            )
+
+            # Ideiglenes, visszafogott iranyjelzesek. A kesobbi mode-art
+            # slide animacio ezeket valtozatlanul korbe tudja venni.
+            arrow_color = (255, 205, 45)
+            pygame.draw.polygon(
+                self.screen, arrow_color,
+                ((55, center_y), (73, center_y - 14), (73, center_y + 14)),
+            )
+            pygame.draw.polygon(
+                self.screen, arrow_color,
+                ((585, center_y), (567, center_y - 14), (567, center_y + 14)),
+            )
+        elif pulse_scale != 1.0:
             self._blit_scaled_centered(self._main_score_cache, (center_x, center_y), pulse_scale)
         else:
             score_rect = self._main_score_cache.get_rect(center=(center_x, center_y))
@@ -1621,9 +1597,12 @@ class ScoreGUI:
         # A sor/joint allast a ket oldalso deszka mutatja, a Love Packot a
         # doboz - az also szoveges kiirasok ezert megszuntek. Ami maradt: a
         # Hurry Up 2X-kijelzoje es a party_message esemeny-bejelentesei.
-        self._draw_hurry_up(state)
+        if not is_player_select:
+            self._draw_hurry_up(state)
 
-        if state.party_message and time.time() < state.party_message_until:
+        if (not is_player_select
+                and state.party_message
+                and time.time() < state.party_message_until):
             message_surf = build_outlined_text_surface(
                 self.font_small, state.party_message,
                 (255, 245, 185), (45, 15, 10), outline_width=2,
@@ -1633,7 +1612,8 @@ class ScoreGUI:
         # Jatek kozben 5x piros Start csak elesiti a rejtett kodot; ez a
         # szandekosan diszkret sarga jelzes mutatja, hogy a Bal-Shoot-Jobb-
         # Start sor most fog szervizmodba lepni.
-        if time.time() < getattr(state, "service_mode_armed_until", 0.0):
+        if (not is_player_select
+                and time.time() < getattr(state, "service_mode_armed_until", 0.0)):
             armed_surf = build_outlined_text_surface(
                 self.font_small, "SERVICE MODE ARMED",
                 (255, 220, 60), (55, 35, 0), outline_width=1,

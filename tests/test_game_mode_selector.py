@@ -63,10 +63,13 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(state.running_game_mode, 1)
         self.assertEqual(state.active_player_count, 4)
 
-    def test_wireframe_renderer_is_wired_into_main_dispatch(self):
+    def test_player_select_reuses_score_layout_without_menu_panel(self):
         gui_source = (SRC / "score_gui.py").read_text(encoding="utf-8")
         main_source = (SRC / "main.py").read_text(encoding="utf-8")
         self.assertIn("def render_player_select(self, state):", gui_source)
+        self.assertIn("self.render(state)", gui_source)
+        self.assertNotIn('"SELECT GAME MODE"', gui_source)
+        self.assertNotIn("mode_select_panel", gui_source)
         self.assertIn("gui.render_player_select(state)", main_source)
 
 
