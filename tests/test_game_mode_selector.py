@@ -8,12 +8,16 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from game_modes import GAME_MODE_MASK_ONE_PLAYER
+from game_modes import GAME_MODE_MASK_ONE_PLAYER, step_game_mode
 from protocol import GameEvent, parse_line
 from state_machine import AppState, StateMachine
 
 
 class GameModeProtocolTests(unittest.TestCase):
+    def test_mode_step_skips_coop_for_one_player_and_wraps(self):
+        self.assertEqual(step_game_mode(0, GAME_MODE_MASK_ONE_PLAYER, 1), 2)
+        self.assertEqual(step_game_mode(0, GAME_MODE_MASK_ONE_PLAYER, -1), 4)
+
     def test_valid_selector_snapshot(self):
         self.assertEqual(
             parse_line("GAME_MODE,2,29"),
@@ -41,6 +45,32 @@ class GameModeProtocolTests(unittest.TestCase):
 
 
 class GameModeStateTests(unittest.TestCase):
+    def test_pc_mock_can_select_players_modes_and_start(self):
+        state = StateMachine()
+        state.state = AppState.PLAYER_SELECT
+
+        state.handle_event(GameEvent("FLIPPER_RIGHT"))
+        self.assertEqual(state.selected_game_mode, 2)
+
+        state.handle_event(GameEvent("SCORE_UPDATE", (0, 2, 1, 1, 0, 0)))
+        state.handle_event(GameEvent("FLIPPER_LEFT"))
+        self.assertEqual(state.selected_game_mode, 1)
+
+        state.handle_event(GameEvent("START"))
+        self.assertEqual(state.state, AppState.SCORE)
+        self.assertEqual(state.running_game_mode, 1)
+        self.assertEqual(state.active_player_count, 2)
+
+    def test_pc_mock_falls_back_from_coop_when_players_wrap_to_one(self):
+        state = StateMachine()
+        state.state = AppState.PLAYER_SELECT
+        state.handle_event(GameEvent("SCORE_UPDATE", (0, 2, 1, 1, 0, 0)))
+        state.selected_game_mode = 1
+
+        state.handle_event(GameEvent("SCORE_UPDATE", (0, 1, 1, 1, 0, 0)))
+        self.assertEqual(state.selected_game_mode, 0)
+        self.assertEqual(state.game_mode_availability_mask, GAME_MODE_MASK_ONE_PLAYER)
+
     def test_snapshot_enters_player_select_and_score_updates_do_not_exit_it(self):
         state = StateMachine()
         state.handle_event(GameEvent("GAME_MODE_STATE", (2, 29)))

@@ -49,3 +49,15 @@ def game_mode_available(mode_id: int, availability_mask: int) -> bool:
         0 <= mode_id < GAME_MODE_COUNT
         and bool(sanitize_availability_mask(availability_mask) & (1 << mode_id))
     )
+
+
+def step_game_mode(mode_id: int, availability_mask: int, direction: int) -> int:
+    """Step cyclically to the next available mode in either direction."""
+    mask = sanitize_availability_mask(availability_mask)
+    current = normalize_game_mode(mode_id, mask)
+    step = -1 if int(direction) < 0 else 1
+    for offset in range(1, GAME_MODE_COUNT + 1):
+        candidate = (current + step * offset) % GAME_MODE_COUNT
+        if game_mode_available(candidate, mask):
+            return candidate
+    return GAME_STANDARD

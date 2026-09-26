@@ -17,6 +17,7 @@ from game_modes import (
     availability_mask_for_players,
     normalize_game_mode,
     sanitize_availability_mask,
+    step_game_mode,
 )
 
 class AppState(Enum):
@@ -298,6 +299,19 @@ class StateMachine:
             self.current_ball = ball
             self.current_bonus = bonus
             self.current_bonusx = bonusx
+
+            # A valodi firmware kulon GAME_MODE snapshotot is kuld. A PC-s
+            # mock csak SCORE_UPDATE-t general, ezert itt tartjuk vele
+            # szinkronban a Co-op 2P+ elerhetoseget es a fallbacket.
+            if self.state == AppState.PLAYER_SELECT:
+                self.game_mode_availability_mask = availability_mask_for_players(
+                    num_players
+                )
+                self.selected_game_mode = normalize_game_mode(
+                    self.selected_game_mode,
+                    self.game_mode_availability_mask,
+                    player_count=num_players,
+                )
             
             if self.state not in (
                 AppState.SUMMARY, AppState.HIGHSCORE, AppState.NAME_ENTRY,
@@ -464,11 +478,23 @@ class StateMachine:
                 self._pending_game_over = False
 
         elif event.kind == "FLIPPER_LEFT":
-            if self.state == AppState.NAME_ENTRY:
+            if self.state == AppState.PLAYER_SELECT:
+                self.selected_game_mode = step_game_mode(
+                    self.selected_game_mode,
+                    self.game_mode_availability_mask,
+                    -1,
+                )
+            elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.prev_char()
 
         elif event.kind == "FLIPPER_RIGHT":
-            if self.state == AppState.NAME_ENTRY:
+            if self.state == AppState.PLAYER_SELECT:
+                self.selected_game_mode = step_game_mode(
+                    self.selected_game_mode,
+                    self.game_mode_availability_mask,
+                    1,
+                )
+            elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.next_char()
 
         elif event.kind == "PLAYER_PRESS":
@@ -478,6 +504,16 @@ class StateMachine:
         elif event.kind == "START":
             if self.state == AppState.NAME_ENTRY:
                 self.name_entry.skip()
+            elif self.state == AppState.PLAYER_SELECT:
+                # PC-s mock inditas. A valodi gep ugyanezt a GAME_START
+                # soros uzenettel vegzi, ez az ag azt nem helyettesiti.
+                self.selected_game_mode = normalize_game_mode(
+                    self.selected_game_mode,
+                    self.game_mode_availability_mask,
+                    player_count=self.active_player_count,
+                )
+                self.running_game_mode = self.selected_game_mode
+                self.state = AppState.SCORE
             elif self.state in (AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO, AppState.BEAT_SCORE) or \
                     (self._in_attract_loop and self.state == AppState.HIGHSCORE):
                 # Barmely attract-kepernyorol (akar a teljes loopban, akar
