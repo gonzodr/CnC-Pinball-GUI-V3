@@ -24,6 +24,7 @@ import os
 import sys
 
 from particle_settings import ParticleSettingsManager
+from game_modes import GAME_MODE_NAMES, game_mode_available, normalize_game_mode
 
 # A kmsdrm drivert KIZAROLAG Linuxon allitjuk be
 # A kmsdrm drivert KIZAROLAG akkor allitjuk be, ha Linuxon vagyunk
@@ -565,6 +566,9 @@ class ScoreGUI:
         self.active = False
 
         self.background = None
+        self.mode_select_panel = None
+        self._mode_select_cache = None
+        self._mode_select_cache_key = None
         self.summary_anim_start = None
 
         # 640x480-hoz igazított átlós animációs úthossz (pixelben)
@@ -705,6 +709,21 @@ class ScoreGUI:
         self.font_name_letters = pygame.font.Font(modak_font_path, 48)
         self.font_name_hint = pygame.font.Font(modak_font_path, 16)
 
+        # Ideiglenes, asset-fuggetlen Game Mode selector wireframe-fontok.
+        self.font_mode_title = pygame.font.Font(modak_font_path, 38)
+        self.font_mode_selected = pygame.font.Font(modak_font_path, 46)
+        self.font_mode_item = pygame.font.Font(modak_font_path, 19)
+        self.font_mode_hint = pygame.font.Font(None, 22)
+
+        self.mode_select_panel = pygame.Surface((584, 424), pygame.SRCALPHA)
+        self.mode_select_panel.fill((10, 16, 12, 214))
+        pygame.draw.rect(
+            self.mode_select_panel, (210, 180, 75, 235),
+            self.mode_select_panel.get_rect(), 2, border_radius=18,
+        )
+        self._mode_select_cache = None
+        self._mode_select_cache_key = None
+
         # PRESS START (attract-mode) képernyő fontja
         self.font_press_start = pygame.font.Font(modak_font_path, 80)
 
@@ -713,6 +732,69 @@ class ScoreGUI:
 
         self._load_assets()
         self.active = True
+
+    def render_player_select(self, state):
+        """Szoveges wireframe; a vegleges mode-art assetek kesobb jonnek."""
+        if not self.active:
+            return
+
+        players = max(1, min(4, int(state.active_player_count)))
+        mode_id = normalize_game_mode(
+            state.selected_game_mode, state.game_mode_availability_mask, players
+        )
+        cache_key = (players, mode_id, int(state.game_mode_availability_mask))
+        if self._mode_select_cache_key == cache_key and self._mode_select_cache is not None:
+            self.screen.blit(self._mode_select_cache, (0, 0))
+            return
+
+        self.screen.blit(self.background, (0, 0))
+        self.screen.blit(
+            self.mode_select_panel,
+            self.mode_select_panel.get_rect(center=(self.SCREEN_W // 2, self.SCREEN_H // 2)),
+        )
+
+        title = build_outlined_text_surface(
+            self.font_mode_title, "SELECT GAME MODE",
+            (255, 235, 130), self.COLOR_TEXT_OUTLINE, 2,
+        )
+        self.screen.blit(title, title.get_rect(center=(self.SCREEN_W // 2, 50)))
+
+        player_text = build_outlined_text_surface(
+            self.font_mode_item, f"PLAYERS: {players}",
+            (255, 255, 255), self.COLOR_TEXT_OUTLINE, 1,
+        )
+        self.screen.blit(player_text, player_text.get_rect(center=(self.SCREEN_W // 2, 92)))
+
+        selected = build_outlined_text_surface(
+            self.font_mode_selected, f"<  {GAME_MODE_NAMES[mode_id]}  >",
+            (255, 205, 45), self.COLOR_TEXT_OUTLINE, 3,
+        )
+        self.screen.blit(selected, selected.get_rect(center=(self.SCREEN_W // 2, 147)))
+
+        list_y = 207
+        for index, name in enumerate(GAME_MODE_NAMES):
+            available = game_mode_available(index, state.game_mode_availability_mask)
+            marker = ">" if index == mode_id else " "
+            suffix = "" if available else "  [2P+]"
+            color = (120, 120, 120) if not available else (
+                (255, 220, 75) if index == mode_id else (220, 235, 220)
+            )
+            line = build_outlined_text_surface(
+                self.font_mode_item, f"{marker} {name}{suffix}",
+                color, self.COLOR_TEXT_OUTLINE, 1,
+            )
+            self.screen.blit(line, line.get_rect(center=(self.SCREEN_W // 2, list_y + index * 27)))
+
+        hint1 = self.font_mode_hint.render(
+            "SHOOT: PLAYERS     FLIPPERS: MODE", True, (235, 235, 235)
+        )
+        hint2 = self.font_mode_hint.render(
+            "START: PLAY", True, (255, 220, 75)
+        )
+        self.screen.blit(hint1, hint1.get_rect(center=(self.SCREEN_W // 2, 405)))
+        self.screen.blit(hint2, hint2.get_rect(center=(self.SCREEN_W // 2, 435)))
+        self._mode_select_cache = self.screen.copy()
+        self._mode_select_cache_key = cache_key
 
     def _load_assets(self):
         # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).

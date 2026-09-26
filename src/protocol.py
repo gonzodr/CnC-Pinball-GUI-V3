@@ -2,6 +2,11 @@
 
 from dataclasses import dataclass
 from typing import Optional
+from game_modes import (
+    GAME_MODE_MASK_ALL,
+    normalize_game_mode,
+    sanitize_availability_mask,
+)
 
 @dataclass
 class GameEvent:
@@ -30,6 +35,21 @@ def parse_line(line: str) -> Optional[GameEvent]:
                 int(parts[5]), # bonus
                 int(parts[6])  # bonusx index
             ))
+
+        elif cmd == "GAME_MODE" and len(parts) == 3:
+            mode_id = int(parts[1])
+            availability_mask = sanitize_availability_mask(int(parts[2]))
+            mode_id = normalize_game_mode(mode_id, availability_mask)
+            return GameEvent("GAME_MODE_STATE", (mode_id, availability_mask))
+
+        elif cmd == "GAME_START" and len(parts) == 3:
+            mode_id, player_count = map(int, parts[1:3])
+            if not 1 <= player_count <= 4:
+                return None
+            mode_id = normalize_game_mode(
+                mode_id, GAME_MODE_MASK_ALL, player_count=player_count
+            )
+            return GameEvent("GAME_START", (mode_id, player_count))
 
         elif cmd == "NEXT":
             return GameEvent("NEXT")

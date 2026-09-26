@@ -235,6 +235,8 @@ def main():
             # 5. Rajzolas, ha SCORE allapotban vagyunk
             if state.state == AppState.SCORE:
                 gui.render(state)
+            elif state.state == AppState.PLAYER_SELECT:
+                gui.render_player_select(state)
             elif state.state == AppState.SUMMARY:
                 gui.render_summary(state.summary_data)
             elif state.state == AppState.FINAL_SCORES:

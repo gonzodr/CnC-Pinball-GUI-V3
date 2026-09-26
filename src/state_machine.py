@@ -11,9 +11,17 @@ from service_menu import ServiceMenuController
 from minigame_settings import MinigameSettingsManager
 from munchies_abduction import MunchiesAbductionGame
 from video_catalog import resolve_serial_video_name
+from game_modes import (
+    GAME_STANDARD,
+    GAME_MODE_MASK_ONE_PLAYER,
+    availability_mask_for_players,
+    normalize_game_mode,
+    sanitize_availability_mask,
+)
 
 class AppState(Enum):
     SCORE = auto()
+    PLAYER_SELECT = auto()
     SUMMARY = auto()
     NAME_ENTRY = auto()
     HIGHSCORE = auto()
@@ -75,6 +83,9 @@ class StateMachine:
         self.active_player_count = 1
         self._previous_player_count = 1
         self.multiball_active = False
+        self.selected_game_mode = GAME_STANDARD
+        self.running_game_mode = GAME_STANDARD
+        self.game_mode_availability_mask = GAME_MODE_MASK_ONE_PLAYER
         
         self.current_bonus = 0
         self.current_bonusx = 0
@@ -186,10 +197,38 @@ class StateMachine:
             self.service_menu.handle_analog_event(event)
             return
 
-        if event.kind not in ("SCORE_UPDATE", "VIDEO", "VIDEO_STOP"):
+        if event.kind not in (
+            "SCORE_UPDATE", "VIDEO", "VIDEO_STOP", "GAME_MODE_STATE"
+        ):
             # Kapcsolo-teszthez (szerviz menu / input_test) - minden "valodi
             # gomb" jellegu esemenyt naplozunk, a zajos SCORE_UPDATE/VIDEO-t nem.
             self.recent_events.append((time.time(), event.kind))
+
+        if event.kind == "GAME_MODE_STATE":
+            mode_id, availability_mask = event.args
+            self.game_mode_availability_mask = sanitize_availability_mask(
+                availability_mask
+            )
+            self.selected_game_mode = normalize_game_mode(
+                mode_id, self.game_mode_availability_mask
+            )
+            self._in_attract_loop = False
+            self.state = AppState.PLAYER_SELECT
+            return
+
+        if event.kind == "GAME_START":
+            mode_id, player_count = event.args
+            self.active_player_count = player_count
+            self.game_mode_availability_mask = availability_mask_for_players(
+                player_count
+            )
+            self.selected_game_mode = normalize_game_mode(
+                mode_id, self.game_mode_availability_mask, player_count=player_count
+            )
+            self.running_game_mode = self.selected_game_mode
+            self._in_attract_loop = False
+            self.state = AppState.SCORE
+            return
 
         if event.kind == "MUNCHIES_ACK":
             session = event.args[0] if event.args else None
@@ -266,6 +305,7 @@ class StateMachine:
                 AppState.BEAT_SCORE, AppState.SERVICE_MENU,
                 AppState.MINIGAME,
                 AppState.PNG_VIDEO,
+                AppState.PLAYER_SELECT,
             ):
                 self.state = AppState.SCORE
                 self._in_attract_loop = False
@@ -444,13 +484,15 @@ class StateMachine:
                 # egy-egy kepernyo onallo dev-tesztelesekor) a Start
                 # kilepteti a jatekost a SCORE kepernyore.
                 self._in_attract_loop = False
-                self.state = AppState.SCORE
+                self.selected_game_mode = GAME_STANDARD
+                self.game_mode_availability_mask = GAME_MODE_MASK_ONE_PLAYER
+                self.state = AppState.PLAYER_SELECT
 
         elif event.kind == "ATTRACT":
             # Elinditja a teljes attract-loopot: Press Play -> Special
             # Thanks -> Press Play -> Hiscore -> elolrol, amig Start ki
             # nem lepteti (lasd fent).
-            if self.state == AppState.SCORE:
+            if self.state in (AppState.SCORE, AppState.PLAYER_SELECT):
                 self._enter_attract_loop()
 
         elif event.kind == "ESCAPE_TO_ATTRACT":
