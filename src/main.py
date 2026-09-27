@@ -246,9 +246,15 @@ def main():
             elif state.state == AppState.BEAT_SCORE:
                 gui.render_beat_score(state.score_manager.scores)
             elif state.state == AppState.HIGHSCORE:
-                gui.render_highscore(state.score_manager.scores)
+                gui.render_highscore(
+                    state.highscore_manager.scores, state.highscore_title
+                )
             elif state.state == AppState.NAME_ENTRY:
-                gui.render_name_entry(state.name_entry, state.pending_highscore_player)
+                gui.render_name_entry(
+                    state.name_entry,
+                    state.pending_highscore_player,
+                    state.name_entry_title,
+                )
             elif state.state == AppState.PRESS_START:
                 gui.render_press_start()
             elif state.state == AppState.SPECIAL_THANKS:

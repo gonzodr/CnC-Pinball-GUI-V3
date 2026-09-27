@@ -6,16 +6,21 @@ class ScoreManager:
     # src mappaba kerul, fuggetlenul attol, honnan (melyik munkakonyvtarbol)
     # inditjak a main.py-t.
     FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hiscores.json")
+    TEAM_FILE_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "team_hiscores.json"
+    )
 
-    def __init__(self):
+    def __init__(self, file_path=None, placeholder="---"):
+        self.file_path = file_path or self.FILE_PATH
+        self.placeholder = placeholder
         self.scores = self.load()
 
     def load(self):
-        default = [{"name": "---", "score": 0} for _ in range(10)]
-        if not os.path.exists(self.FILE_PATH):
+        default = [{"name": self.placeholder, "score": 0} for _ in range(10)]
+        if not os.path.exists(self.file_path):
             return default
         try:
-            with open(self.FILE_PATH, "r") as f:
+            with open(self.file_path, "r") as f:
                 data = json.load(f)
                 # Ha üres a fájl, vagy rövidebb mint 10, kiegészítjük
                 if not data:
@@ -32,7 +37,7 @@ class ScoreManager:
         self.save()
 
     def save(self):
-        with open(self.FILE_PATH, "w") as f:
+        with open(self.file_path, "w") as f:
             json.dump(self.scores, f)
 
     def is_highscore(self, score):
@@ -44,10 +49,12 @@ class ScoreManager:
         if 0 <= index < len(self.scores):
             del self.scores[index]
             while len(self.scores) < 10:
-                self.scores.append({"name": "---", "score": 0})
+                self.scores.append({"name": self.placeholder, "score": 0})
             self.save()
 
     def reset(self):
         """Az egesz tabla nullazasa (szerviz menu)."""
-        self.scores = [{"name": "---", "score": 0} for _ in range(10)]
+        self.scores = [
+            {"name": self.placeholder, "score": 0} for _ in range(10)
+        ]
         self.save()

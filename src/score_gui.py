@@ -2071,7 +2071,7 @@ class ScoreGUI:
             return self.leaf_bronze
         return None
 
-    def render_highscore(self, scores):
+    def render_highscore(self, scores, title_text="HIGHSCORES"):
         self.screen.blit(self.background3, (0, 0))  # HiScoreBg.png - nyers autós/dzsungel háttér
 
         # A nagy panel, ami elválasztja a táblázatot a háttértől
@@ -2080,10 +2080,13 @@ class ScoreGUI:
 
         # Cím
         title = build_outlined_text_surface(
-            self.font_hiscore_title, "HIGHSCORES",
+            self.font_hiscore_title, title_text,
             (255, 255, 255), self.COLOR_TEXT_OUTLINE, 2
         )
-        self.screen.blit(title, title.get_rect(center=(self.SCREEN_W // 2, self.HISCORE_TITLE_Y)))
+        title_scale = min(1.0, 500 / title.get_width())
+        self._blit_scaled_centered(
+            title, (self.SCREEN_W // 2, self.HISCORE_TITLE_Y), title_scale
+        )
 
         # Fejléc - külön-külön rajzolva, pontosan az oszlopok fölé igazítva
         pos_h = build_outlined_text_surface(
@@ -2144,14 +2147,16 @@ class ScoreGUI:
             self.screen.blit(s, (x, y - s.get_height() // 2))
             x += s.get_width()
 
-    def render_name_entry(self, name_entry, player_num=1):
-        """A hiscore név-beíró képernyő: 3 karakter, bal/jobb nyilakkal
+    def render_name_entry(self, name_entry, player_num=1, title_text=None):
+        """A hiscore név-beíró képernyő: karakterek bal/jobb nyilakkal
         váltva, zöld kurzorral az aktuális pozíció alatt."""
         self.screen.blit(self.name_entry_bg, (0, 0))
 
-        # Cím: "Player X"
+        # Standardban "Player X", CO-OP rekordnal "TEAM NAME".
+        if title_text is None:
+            title_text = f"Player {player_num}"
         title = build_outlined_text_surface(
-            self.font_name_title, f"Player {player_num}",
+            self.font_name_title, title_text,
             (255, 255, 255), self.COLOR_TEXT_OUTLINE, 2
         )
         self.screen.blit(title, title.get_rect(center=(self.SCREEN_W // 2, self.NAME_TITLE_Y)))
@@ -2162,10 +2167,16 @@ class ScoreGUI:
         right_rect = self.name_arrow_right.get_rect(center=(self.NAME_ARROW_RIGHT_X, self.NAME_LETTERS_Y))
         self.screen.blit(self.name_arrow_right, right_rect)
 
-        # 3 karakter + kurzor az aktuális pozíció alatt
+        # 3 karakteres initials vagy 8 karakteres team name + kurzor.
         chars = name_entry.get_chars()
+        if len(chars) <= 3:
+            letter_positions = self.NAME_LETTER_X
+        else:
+            left_x, right_x = 190, 450
+            step = (right_x - left_x) / (len(chars) - 1)
+            letter_positions = [round(left_x + i * step) for i in range(len(chars))]
         for i, ch in enumerate(chars):
-            x = self.NAME_LETTER_X[i]
+            x = letter_positions[i]
             letter_surf = build_outlined_text_surface(
                 self.font_name_letters, ch, (255, 255, 255), self.COLOR_TEXT_OUTLINE, 2
             )

@@ -1,4 +1,4 @@
-"""Hiscore név-beíró logika: 3 karakteres monogram kiválasztása.
+"""Hiscore név-beíró logika: állítható hosszúságú név kiválasztása.
 
 Vezérlés (a state_machine köti be a tényleges eseményekhez):
 - bal/jobb flipper: az aktuális pozíción lévő karakter előre/hátra léptetése
@@ -8,6 +8,7 @@ Vezérlés (a state_machine köti be a tényleges eseményekhez):
 """
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+TEAM_ALPHABET = ALPHABET + " "
 NAME_LENGTH = 3
 
 
@@ -15,9 +16,11 @@ class NameEntryController:
     def __init__(self):
         self.reset()
 
-    def reset(self):
-        """Új név-beírás indítása, mindhárom pozíció "A"-ra áll."""
-        self.char_indices = [0] * NAME_LENGTH
+    def reset(self, length=NAME_LENGTH, allow_space=False):
+        """Új név-beírás indítása, minden pozíció "A"-ra áll."""
+        self.length = max(1, int(length))
+        self.alphabet = TEAM_ALPHABET if allow_space else ALPHABET
+        self.char_indices = [0] * self.length
         self.cursor = 0
         self.done = False
 
@@ -25,13 +28,13 @@ class NameEntryController:
         if self.done:
             return
         i = self.cursor
-        self.char_indices[i] = (self.char_indices[i] - 1) % len(ALPHABET)
+        self.char_indices[i] = (self.char_indices[i] - 1) % len(self.alphabet)
 
     def next_char(self):
         if self.done:
             return
         i = self.cursor
-        self.char_indices[i] = (self.char_indices[i] + 1) % len(ALPHABET)
+        self.char_indices[i] = (self.char_indices[i] + 1) % len(self.alphabet)
 
     def confirm(self):
         """Lezárja az aktuális karaktert, a kurzor a következőre lép.
@@ -39,7 +42,7 @@ class NameEntryController:
         if self.done:
             return
         self.cursor += 1
-        if self.cursor >= NAME_LENGTH:
+        if self.cursor >= self.length:
             self.done = True
 
     def skip(self):
@@ -47,7 +50,7 @@ class NameEntryController:
         self.done = True
 
     def get_chars(self) -> list:
-        return [ALPHABET[i] for i in self.char_indices]
+        return [self.alphabet[i] for i in self.char_indices]
 
     def get_name(self) -> str:
-        return "".join(self.get_chars())
+        return "".join(self.get_chars()).rstrip()

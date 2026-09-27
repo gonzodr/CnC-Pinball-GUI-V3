@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from game_modes import GAME_MODE_MASK_ONE_PLAYER, step_game_mode
+from game_modes import GAME_COOP, GAME_MODE_MASK_ONE_PLAYER, step_game_mode
 from protocol import GameEvent, parse_line
 from score_gui import ScoreGUI
 from state_machine import AppState, StateMachine
@@ -198,6 +198,40 @@ class GameModeStateTests(unittest.TestCase):
         state.handle_event(GameEvent("GAME_START", (1, 4)))
         self.assertEqual(state.running_game_mode, 1)
         self.assertEqual(state.active_player_count, 4)
+
+    def test_coop_mirrors_team_score_and_progress_to_every_player(self):
+        state = StateMachine()
+        state.handle_event(GameEvent("GAME_START", (GAME_COOP, 3)))
+
+        state.handle_event(GameEvent("SCORE_UPDATE", (12345, 3, 2, 1, 50, 1)))
+        self.assertEqual(
+            {p: state.players[p] for p in range(1, 4)},
+            {1: 12345, 2: 12345, 3: 12345},
+        )
+
+        state.handle_event(GameEvent("PARTY_STATE", (2, 3, 2, 3, True)))
+        for player in range(1, 4):
+            self.assertEqual(
+                state.party_progress[player],
+                {"beers": 3, "joints": 2, "ufo_tier": 3, "weed_ready": True},
+            )
+
+    def test_coop_uses_separate_team_highscores_and_eight_character_name(self):
+        state = StateMachine()
+        state.handle_event(GameEvent("GAME_START", (GAME_COOP, 2)))
+        state.handle_event(GameEvent("SCORE_UPDATE", (50000, 2, 2, 3, 0, 0)))
+        state.team_score_manager.is_highscore = lambda score: True
+
+        state.handle_event(GameEvent("GAMEOVER"))
+        self.assertIs(state.highscore_manager, state.team_score_manager)
+        self.assertEqual(state.highscore_title, "TEAM HIGH SCORES")
+        self.assertEqual(state._pending_highscore_check, 50000)
+
+        state._resolve_after_summary()
+        self.assertEqual(state.state, AppState.NAME_ENTRY)
+        self.assertEqual(len(state.name_entry.get_chars()), 8)
+        self.assertIn(" ", state.name_entry.alphabet)
+        self.assertEqual(state.name_entry_title, "TEAM NAME")
 
     def test_player_select_reuses_score_layout_without_menu_panel(self):
         gui_source = (SRC / "score_gui.py").read_text(encoding="utf-8")

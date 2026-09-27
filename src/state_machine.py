@@ -12,6 +12,7 @@ from minigame_settings import MinigameSettingsManager
 from munchies_abduction import MunchiesAbductionGame
 from video_catalog import resolve_serial_video_name
 from game_modes import (
+    GAME_COOP,
     GAME_STANDARD,
     GAME_MODE_MASK_ONE_PLAYER,
     availability_mask_for_players,
@@ -73,6 +74,12 @@ class StateMachine:
     def __init__(self, serial_reader=None):
         self.serial_reader = serial_reader  # csak a szerviz menu Serial Monitor kepernyojehez
         self.score_manager = ScoreManager()
+        self.team_score_manager = ScoreManager(
+            ScoreManager.TEAM_FILE_PATH, placeholder="--------"
+        )
+        self.highscore_manager = self.score_manager
+        self.highscore_title = "HIGHSCORES"
+        self.name_entry_title = None
         self.thanks_manager = ThanksNamesManager()
         self.minigame_settings = MinigameSettingsManager()
         self.state = AppState.SCORE
@@ -190,6 +197,9 @@ class StateMachine:
         "ANALOG_SAVED", "ANALOG_ERROR", "ANALOG_STOPPED",
     )
 
+    def _is_coop_game(self):
+        return getattr(self, "running_game_mode", GAME_STANDARD) == GAME_COOP
+
     def handle_event(self, event: GameEvent):
         # Az analog teszt valaszai kizarolag a szerviz menue: ~5 Hz-en jonnek,
         # ezert nem naplozzuk oket a recent_events-be (elmosnak minden mast),
@@ -227,6 +237,16 @@ class StateMachine:
                 mode_id, self.game_mode_availability_mask, player_count=player_count
             )
             self.running_game_mode = self.selected_game_mode
+            self.highscore_manager = (
+                self.team_score_manager
+                if self._is_coop_game()
+                else self.score_manager
+            )
+            self.highscore_title = (
+                "TEAM HIGH SCORES"
+                if self._is_coop_game()
+                else "HIGHSCORES"
+            )
             self._in_attract_loop = False
             self.state = AppState.SCORE
             return
@@ -293,8 +313,12 @@ class StateMachine:
 
         if event.kind == "SCORE_UPDATE":
             score, num_players, player, ball, bonus, bonusx = event.args
-            self.players[player] = score
             self.active_player_count = num_players
+            if self._is_coop_game() and self.state != AppState.PLAYER_SELECT:
+                for team_player in range(1, num_players + 1):
+                    self.players[team_player] = score
+            else:
+                self.players[player] = score
             self.current_player = player
             self.current_ball = ball
             self.current_bonus = bonus
@@ -334,12 +358,17 @@ class StateMachine:
 
         elif event.kind == "PARTY_STATE":
             player, beers, joints, ufo_tier, weed_ready = event.args
-            self.party_progress[player] = {
+            progress = {
                 "beers": beers,
                 "joints": joints,
                 "ufo_tier": ufo_tier,
                 "weed_ready": weed_ready,
             }
+            if self._is_coop_game():
+                for team_player in range(1, self.active_player_count + 1):
+                    self.party_progress[team_player] = dict(progress)
+            else:
+                self.party_progress[player] = progress
 
         elif event.kind == "PARTY_EVENT":
             player, party_event = event.args
@@ -445,12 +474,28 @@ class StateMachine:
                 #    utolso golyojanal jon, es korabban az o pontja ment be.)
                 #    A tenyleges mentes csak a nevbeiras utan tortenik meg
                 #    (lasd tick() / NAME_ENTRY allapot).
-                winner = max(
-                    range(1, self.active_player_count + 1),
-                    key=lambda p: self.players.get(p, 0),
-                )
-                self._pending_highscore_check = self.players[winner]
-                self.pending_highscore_player = winner
+                if self._is_coop_game():
+                    self.highscore_manager = getattr(
+                        self, "team_score_manager", None
+                    )
+                    self.highscore_title = "TEAM HIGH SCORES"
+                    self.name_entry_title = "TEAM NAME"
+                    self._pending_highscore_check = self.players.get(
+                        self.current_player, 0
+                    )
+                    self.pending_highscore_player = 0
+                else:
+                    winner = max(
+                        range(1, self.active_player_count + 1),
+                        key=lambda p: self.players.get(p, 0),
+                    )
+                    self.highscore_manager = getattr(
+                        self, "score_manager", None
+                    )
+                    self.highscore_title = "HIGHSCORES"
+                    self.name_entry_title = None
+                    self._pending_highscore_check = self.players[winner]
+                    self.pending_highscore_player = winner
                 self._pending_game_over = True
 
                 # 1b. Pillanatkep mindenki vegso allasarol a FINAL_SCORES
@@ -513,6 +558,11 @@ class StateMachine:
                     player_count=self.active_player_count,
                 )
                 self.running_game_mode = self.selected_game_mode
+                self.highscore_manager = (
+                    self.team_score_manager
+                    if self._is_coop_game()
+                    else self.score_manager
+                )
                 self.state = AppState.SCORE
             elif self.state in (AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO, AppState.BEAT_SCORE) or \
                     (self._in_attract_loop and self.state == AppState.HIGHSCORE):
@@ -777,8 +827,16 @@ class StateMachine:
         """A SUMMARY (es tobb-jatekos eseten a rautan kovetkezo
         FINAL_SCORES) vege utan donti el, hova lepjunk: CSAK AKKOR
         nezzuk a rekordot, ha ez egy GAMEOVER volt."""
-        if self._pending_highscore_check is not None and self.score_manager.is_highscore(self._pending_highscore_check):
-            self.name_entry.reset()
+        if (
+            self._pending_highscore_check is not None
+            and self.highscore_manager.is_highscore(self._pending_highscore_check)
+        ):
+            if self._is_coop_game():
+                self.name_entry.reset(length=8, allow_space=True)
+                self.name_entry_title = "TEAM NAME"
+            else:
+                self.name_entry.reset()
+                self.name_entry_title = None
             self.state = AppState.NAME_ENTRY
             # _pending_highscore_check-et NEM töröljük - kell még
             # a NAME_ENTRY végén a tényleges mentéshez.
@@ -796,6 +854,9 @@ class StateMachine:
                 self.state = AppState.SCORE
 
     def _enter_attract_loop(self, start_index=0):
+        self.highscore_manager = self.score_manager
+        self.highscore_title = "HIGHSCORES"
+        self.name_entry_title = None
         self._in_attract_loop = True
         self._attract_index = start_index
         self._goto_attract_step()
@@ -893,7 +954,11 @@ class StateMachine:
 
         if self.state == AppState.SUMMARY:
             if time.time() >= self._summary_end_time:
-                if self._pending_game_over and self.final_player_count > 1:
+                if (
+                    self._pending_game_over
+                    and self.final_player_count > 1
+                    and not self._is_coop_game()
+                ):
                     # Tobb jatekos jatszott, es ez valodi jatekveg volt -
                     # eloszor mindenki vegso allasat mutatjuk (FINAL_SCORES),
                     # csak utana jon a hiscore-check.
@@ -908,7 +973,9 @@ class StateMachine:
 
         elif self.state == AppState.NAME_ENTRY:
             if self.name_entry.done:
-                self.score_manager.add_score(self.name_entry.get_name(), self._pending_highscore_check)
+                self.highscore_manager.add_score(
+                    self.name_entry.get_name(), self._pending_highscore_check
+                )
                 self._pending_highscore_check = None
                 self._highscore_end_time = time.time() + 5.0
                 self.state = AppState.HIGHSCORE
