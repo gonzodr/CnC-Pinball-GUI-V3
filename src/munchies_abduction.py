@@ -1719,6 +1719,8 @@ class MunchiesAbductionGame:
         self._countdown_label = _text(
             self.countdown_label_font, "GET READY!", (255, 99, 220), width=3
         ).convert_alpha()
+        self.challenge_player = None
+        self._countdown_player_label = None
         (self._intro_background, self._intro_title,
          self._intro_title_rect, self._intro_foreground) = self._load_intro_assets()
         (self._time_up_black, self._time_up_title,
@@ -1791,6 +1793,24 @@ class MunchiesAbductionGame:
             difficulty = 0
         self.difficulty_level = max(-3, min(3, difficulty))
         self.difficulty = DIFFICULTY_PROFILES[self.difficulty_level]
+
+    def set_challenge_player(self, player_num):
+        """Show the active standalone-challenge player in our own countdown."""
+        try:
+            player_num = int(player_num)
+        except (TypeError, ValueError):
+            player_num = 0
+        self.challenge_player = player_num if 1 <= player_num <= 4 else None
+        self._countdown_player_label = (
+            _text(
+                self.countdown_label_font,
+                f"PLAYER {self.challenge_player}",
+                (255, 255, 255),
+                width=3,
+            ).convert_alpha()
+            if self.challenge_player is not None
+            else None
+        )
 
     def prepare_for_replay(self):
         """Reset mutable session state while retaining all heavy resources.
@@ -3071,6 +3091,13 @@ class MunchiesAbductionGame:
         pygame.draw.circle(screen, (94, 25, 170), centre, radius - 9, 3)
         number_surface = self.countdown_numbers[number]
         screen.blit(number_surface, number_surface.get_rect(center=centre))
+        if self._countdown_player_label is not None:
+            screen.blit(
+                self._countdown_player_label,
+                self._countdown_player_label.get_rect(
+                    center=(WIDTH // 2, centre[1] - 112)
+                ),
+            )
         screen.blit(self._countdown_label,
                     self._countdown_label.get_rect(center=(WIDTH // 2, centre[1] + 105)))
 

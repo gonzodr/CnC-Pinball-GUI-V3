@@ -111,11 +111,11 @@ def parse_line(line: str) -> Optional[GameEvent]:
                 return None
             return GameEvent("MAYHEM_FINISH", (winner,))
 
-        elif cmd == "MUNCHIES_READY" and len(parts) == 3:
-            player, countdown = map(int, parts[1:3])
-            if not 1 <= player <= 4 or not 0 <= countdown <= 3:
+        elif cmd == "MUNCHIES_PLAYER" and len(parts) == 2:
+            player = int(parts[1])
+            if not 1 <= player <= 4:
                 return None
-            return GameEvent("MUNCHIES_READY", (player, countdown))
+            return GameEvent("MUNCHIES_PLAYER", (player,))
 
         elif cmd == "MUNCHIES_RESULT" and len(parts) == 3:
             player, total = map(int, parts[1:3])

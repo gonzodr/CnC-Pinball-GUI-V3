@@ -13,12 +13,14 @@ from game_modes import GAME_MUNCHIES
 from protocol import GameEvent, parse_line
 from state_machine import AppState, StateMachine
 
+MUNCHIES_SOURCE = (SRC / "munchies_abduction.py").read_text(encoding="utf-8")
+
 
 class MunchiesChallengeProtocolTests(unittest.TestCase):
     def test_challenge_messages_parse(self):
         self.assertEqual(
-            parse_line("MUNCHIES_READY,2,3"),
-            GameEvent("MUNCHIES_READY", (2, 3)),
+            parse_line("MUNCHIES_PLAYER,2"),
+            GameEvent("MUNCHIES_PLAYER", (2,)),
         )
         self.assertEqual(
             parse_line("MUNCHIES_RESULT,2,42000"),
@@ -31,7 +33,7 @@ class MunchiesChallengeProtocolTests(unittest.TestCase):
 
     def test_invalid_challenge_messages_are_rejected(self):
         for line in (
-            "MUNCHIES_READY,0,3", "MUNCHIES_READY,1,4",
+            "MUNCHIES_PLAYER,0", "MUNCHIES_PLAYER,5",
             "MUNCHIES_RESULT,5,1", "MUNCHIES_RESULT,1,-1",
             "MUNCHIES_FINISH,0",
         ):
@@ -61,7 +63,7 @@ class MunchiesChallengeStateTests(unittest.TestCase):
     def test_multiplayer_results_check_only_firmware_selected_winner(self):
         self.state.handle_event(GameEvent("GAME_START", (GAME_MUNCHIES, 3)))
         self.assertIs(self.state.highscore_manager, self.state.munchies_score_manager)
-        self.state.handle_event(GameEvent("MUNCHIES_READY", (1, 3)))
+        self.state.handle_event(GameEvent("MUNCHIES_PLAYER", (1,)))
         self.assertEqual(self.state.current_player, 1)
         self.state.handle_event(GameEvent("MUNCHIES_RESULT", (1, 10000)))
         self.state.handle_event(GameEvent("MUNCHIES_RESULT", (2, 50000)))
@@ -72,18 +74,22 @@ class MunchiesChallengeStateTests(unittest.TestCase):
         self.assertEqual(self.state._pending_highscore_check, 50000)
         self.assertEqual(self.state.pending_highscore_player, 2)
 
-    def test_pc_mock_start_runs_countdown_then_launches_preloaded_game(self):
+    def test_pc_mock_start_launches_preloaded_game_immediately(self):
         class FakeGame:
             finished = False
 
             def __init__(self):
                 self.activated = False
+                self.challenge_player = None
 
             def set_difficulty(self, _difficulty):
                 pass
 
             def activate(self):
                 self.activated = True
+
+            def set_challenge_player(self, player_num):
+                self.challenge_player = player_num
 
             def update(self, _dt):
                 pass
@@ -95,13 +101,14 @@ class MunchiesChallengeStateTests(unittest.TestCase):
         self.state._preloaded_minigame = game
         self.state.handle_event(GameEvent("START"))
         self.assertTrue(self.state._mock_munchies_challenge)
-        self.assertEqual(self.state.munchies_countdown, 3)
-
-        deadline = self.state._mock_munchies_countdown_end
-        with patch("state_machine.time.monotonic", return_value=deadline + 0.01):
-            self.state.tick()
         self.assertEqual(self.state.state, AppState.MINIGAME)
         self.assertTrue(game.activated)
+        self.assertEqual(game.challenge_player, 1)
+
+    def test_player_label_is_part_of_the_minigame_countdown(self):
+        self.assertIn("def set_challenge_player(self, player_num):", MUNCHIES_SOURCE)
+        self.assertIn("self._countdown_player_label", MUNCHIES_SOURCE)
+        self.assertIn('f"PLAYER {self.challenge_player}"', MUNCHIES_SOURCE)
 
 
 if __name__ == "__main__":

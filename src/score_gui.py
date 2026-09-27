@@ -1967,34 +1967,6 @@ class ScoreGUI:
         if self._bonus_spark_burst is not None:
             self._bonus_spark_burst.draw(self.screen)
 
-    def render_munchies_challenge_overlay(self, state):
-        """Player hand-off/countdown for the standalone Munchies challenge."""
-        if not self.active:
-            return
-        phase = getattr(state, "munchies_challenge_phase", "")
-        if phase == "READY":
-            headline = f"READY PLAYER {state.current_player}"
-            detail = str(state.munchies_countdown) if state.munchies_countdown else "GO!"
-        elif phase == "RESULT":
-            headline = f"PLAYER {state.current_player} COMPLETE"
-            detail = f"{state.players.get(state.current_player, 0):,}"
-        else:
-            headline = "MUNCHIES CHALLENGE"
-            detail = "GET READY"
-
-        panel = pygame.Surface((440, 70), pygame.SRCALPHA)
-        pygame.draw.rect(panel, (0, 35, 30, 210), panel.get_rect(), border_radius=14)
-        pygame.draw.rect(panel, (70, 245, 185, 235), panel.get_rect(), 2, border_radius=14)
-        title_surf = build_outlined_text_surface(
-            self.font_small, headline, (120, 255, 195), self.COLOR_TEXT_OUTLINE, 2
-        )
-        detail_surf = build_outlined_text_surface(
-            self.font_small, detail, (255, 255, 255), self.COLOR_TEXT_OUTLINE, 1
-        )
-        panel.blit(title_surf, title_surf.get_rect(center=(220, 22)))
-        panel.blit(detail_surf, detail_surf.get_rect(center=(220, 50)))
-        self.screen.blit(panel, panel.get_rect(center=(320, 390)))
-
     def render_mayhem_overlay(self, state):
         """Compact live status fed exclusively by the firmware coordinator."""
         if not self.active:

@@ -153,9 +153,7 @@ class StateMachine:
 
         self.munchies_challenge_active = False
         self.munchies_challenge_phase = ""
-        self.munchies_countdown = 0
         self._mock_munchies_challenge = False
-        self._mock_munchies_countdown_end = 0.0
 
         self._in_attract_loop = False
         self._attract_index = 0
@@ -295,13 +293,11 @@ class StateMachine:
                 self.munchies_challenge_phase = "READY"
             return
 
-        if event.kind == "MUNCHIES_READY":
-            player_num, countdown = event.args
+        if event.kind == "MUNCHIES_PLAYER":
+            player_num = event.args[0]
             self.munchies_challenge_active = True
-            self.munchies_challenge_phase = "READY"
+            self.munchies_challenge_phase = "RUNNING"
             self.current_player = player_num
-            self.munchies_countdown = countdown
-            self.state = AppState.SCORE
             return
 
         if event.kind == "MUNCHIES_RESULT":
@@ -713,16 +709,14 @@ class StateMachine:
                 self._select_highscore_profile()
                 self.state = AppState.SCORE
                 if self.running_game_mode == GAME_MUNCHIES:
-                    # PC-s mockban nincs firmware, amely MUNCHIES_READY es
-                    # MG_START sorokat kuldene, ezert ugyanazt a challenge
-                    # lifecycle-t helyben inditjuk el.
+                    # PC-s mockban nincs firmware, amely MG_START-ot kuldene,
+                    # ezert ugyanazt a challenge lifecycle-t helyben inditjuk.
                     self.players = {1: 0, 2: 0, 3: 0, 4: 0}
                     self.current_player = 1
                     self.munchies_challenge_active = True
-                    self.munchies_challenge_phase = "READY"
-                    self.munchies_countdown = 3
+                    self.munchies_challenge_phase = "RUNNING"
                     self._mock_munchies_challenge = True
-                    self._mock_munchies_countdown_end = time.monotonic() + 3.0
+                    self.handle_event(GameEvent("MUNCHIES_START"))
             elif self.state in (AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO, AppState.BEAT_SCORE) or \
                     (self._in_attract_loop and self.state == AppState.HIGHSCORE):
                 # Barmely attract-kepernyorol (akar a teljes loopban, akar
@@ -827,6 +821,10 @@ class StateMachine:
                 if getattr(self, "running_game_mode", GAME_STANDARD) == GAME_MUNCHIES:
                     self.munchies_challenge_active = True
                     self.munchies_challenge_phase = "RUNNING"
+                    if hasattr(self.minigame, "set_challenge_player"):
+                        self.minigame.set_challenge_player(self.current_player)
+                elif hasattr(self.minigame, "set_challenge_player"):
+                    self.minigame.set_challenge_player(None)
                 self.state = AppState.MINIGAME
                 if session is not None:
                     self._send_minigame_line(f"MG_READY,{session}")
@@ -1038,18 +1036,6 @@ class StateMachine:
             self.service_menu.tick(protocol_now)
         self._service_minigame_protocol(protocol_now)
 
-        if (
-            self._mock_munchies_challenge
-            and self.state == AppState.SCORE
-            and self.munchies_challenge_phase == "READY"
-        ):
-            remaining = max(
-                0, int(self._mock_munchies_countdown_end - protocol_now) + 1
-            )
-            self.munchies_countdown = remaining
-            if protocol_now >= self._mock_munchies_countdown_end:
-                self.handle_event(GameEvent("MUNCHIES_START"))
-
         if self.state == AppState.MINIGAME and self.minigame is not None:
             now = protocol_now
             self.minigame.update(now - self._minigame_last_tick)
@@ -1083,10 +1069,9 @@ class StateMachine:
                 if self._mock_munchies_challenge:
                     if self.current_player < self.active_player_count:
                         self.current_player += 1
-                        self.munchies_challenge_phase = "READY"
-                        self.munchies_countdown = 3
-                        self._mock_munchies_countdown_end = now + 3.0
+                        self.munchies_challenge_phase = "RUNNING"
                         self.state = AppState.SCORE
+                        self.handle_event(GameEvent("MUNCHIES_START"))
                     else:
                         winner = max(
                             range(1, self.active_player_count + 1),
