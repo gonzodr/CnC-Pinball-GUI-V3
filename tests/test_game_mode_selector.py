@@ -105,7 +105,21 @@ class GameModeStateTests(unittest.TestCase):
 
     def test_mode_art_is_scaled_down_fifteen_percent(self):
         self.assertEqual(ScoreGUI.MODE_ART_SCALE, 0.85)
-        self.assertLess(ScoreGUI.MODE_ART_BASE_Y, 0)
+        self.assertEqual(
+            set(ScoreGUI.MODE_ART_Y_OFFSETS),
+            {0, 1, 2, 3, 4},
+        )
+        self.assertEqual(
+            (
+                ScoreGUI.MODE_ART_Y_STANDARD,
+                ScoreGUI.MODE_ART_Y_COOP,
+                ScoreGUI.MODE_ART_Y_QUICK,
+                ScoreGUI.MODE_ART_Y_MUNCHIES,
+                ScoreGUI.MODE_ART_Y_MAYHEM,
+            ),
+            (-25, -25, -25, -25, -25),
+        )
+        self.assertTrue(all(y < 0 for y in ScoreGUI.MODE_ART_Y_OFFSETS.values()))
 
     def test_all_mode_background_assets_are_exact_display_size(self):
         score_assets = SRC / "assets" / "SCORE"

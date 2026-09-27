@@ -259,8 +259,21 @@ class ScoreGUI:
     FADE_DURATION_SEC = 0.25
     MODE_BACKGROUND_FADE_SEC = 1.2
     MODE_ART_SCALE = 0.85
-    MODE_ART_BASE_Y = -25
     MODE_ART_SLIDE_SEC = 0.6
+    # Modonkenti kezi Y-finomhangolas (640x480-as kompoziciohoz).
+    # Pozitiv ertek lejjebb, negativ ertek feljebb tolja az adott kepet.
+    MODE_ART_Y_STANDARD = -25
+    MODE_ART_Y_COOP = -25
+    MODE_ART_Y_QUICK = -25
+    MODE_ART_Y_MUNCHIES = -25
+    MODE_ART_Y_MAYHEM = -25
+    MODE_ART_Y_OFFSETS = {
+        GAME_STANDARD: MODE_ART_Y_STANDARD,
+        GAME_COOP: MODE_ART_Y_COOP,
+        GAME_QUICK: MODE_ART_Y_QUICK,
+        GAME_MUNCHIES: MODE_ART_Y_MUNCHIES,
+        GAME_MULTIBALL_MAYHEM: MODE_ART_Y_MAYHEM,
+    }
 
     # 640x480-ra átszámolt fix pozíciók (eredeti * 0.8)
     CARD_LAYOUT = [
@@ -882,7 +895,8 @@ class ScoreGUI:
                 (self.SCREEN_W, self.SCREEN_H), pygame.SRCALPHA
             )
             art_x = (self.SCREEN_W - target_size[0]) // 2
-            composed.blit(art, (art_x, self.MODE_ART_BASE_Y))
+            art_y = self.MODE_ART_Y_OFFSETS.get(mode_id, -25)
+            composed.blit(art, (art_x, art_y))
             self.mode_art[mode_id] = composed
         
         # SUMMARY hatter (auto-belso naplementes kep) - NEM ugyanaz, mint a
