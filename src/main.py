@@ -242,6 +242,8 @@ def main():
                 gui.render(state)
                 if state.mayhem_active:
                     gui.render_mayhem_overlay(state)
+                elif state.munchies_challenge_active:
+                    gui.render_munchies_challenge_overlay(state)
             elif state.state == AppState.PLAYER_SELECT:
                 gui.render_player_select(state)
             elif state.state == AppState.SUMMARY:

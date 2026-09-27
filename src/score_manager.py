@@ -15,6 +15,9 @@ class ScoreManager:
     MAYHEM_FILE_PATH = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "mayhem_hiscores.json"
     )
+    MUNCHIES_FILE_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "munchies_hiscores.json"
+    )
 
     def __init__(self, file_path=None, placeholder="---"):
         self.file_path = file_path or self.FILE_PATH

@@ -15,6 +15,7 @@ from game_modes import (
     GAME_COOP,
     GAME_QUICK,
     GAME_STANDARD,
+    GAME_MUNCHIES,
     GAME_MULTIBALL_MAYHEM,
     GAME_MODE_MASK_ONE_PLAYER,
     availability_mask_for_players,
@@ -81,6 +82,7 @@ class StateMachine:
         )
         self.quick_score_manager = ScoreManager(ScoreManager.QUICK_FILE_PATH)
         self.mayhem_score_manager = ScoreManager(ScoreManager.MAYHEM_FILE_PATH)
+        self.munchies_score_manager = ScoreManager(ScoreManager.MUNCHIES_FILE_PATH)
         self.highscore_manager = self.score_manager
         self.highscore_title = "HIGHSCORES"
         self.name_entry_title = None
@@ -148,6 +150,10 @@ class StateMachine:
         self.mayhem_super_lit = False
         self.mayhem_stage_ends_at = 0.0
         self.mayhem_bonus_seconds = 0
+
+        self.munchies_challenge_active = False
+        self.munchies_challenge_phase = ""
+        self.munchies_countdown = 0
 
         self._in_attract_loop = False
         self._attract_index = 0
@@ -229,6 +235,10 @@ class StateMachine:
             self.highscore_manager = getattr(self, "mayhem_score_manager", None)
             self.highscore_title = "MULTIBALL MAYHEM HIGH SCORES"
             self.name_entry_title = None
+        elif getattr(self, "running_game_mode", GAME_STANDARD) == GAME_MUNCHIES:
+            self.highscore_manager = getattr(self, "munchies_score_manager", None)
+            self.highscore_title = "MUNCHIES HIGH SCORES"
+            self.name_entry_title = None
         else:
             self.highscore_manager = getattr(self, "score_manager", None)
             self.highscore_title = "HIGHSCORES"
@@ -277,6 +287,38 @@ class StateMachine:
             self.mayhem_active = self.running_game_mode == GAME_MULTIBALL_MAYHEM
             if self.mayhem_active:
                 self.mayhem_phase = "WAITING FOR BALLS"
+            self.munchies_challenge_active = self.running_game_mode == GAME_MUNCHIES
+            if self.munchies_challenge_active:
+                self.munchies_challenge_phase = "READY"
+            return
+
+        if event.kind == "MUNCHIES_READY":
+            player_num, countdown = event.args
+            self.munchies_challenge_active = True
+            self.munchies_challenge_phase = "READY"
+            self.current_player = player_num
+            self.munchies_countdown = countdown
+            self.state = AppState.SCORE
+            return
+
+        if event.kind == "MUNCHIES_RESULT":
+            player_num, total = event.args
+            self.players[player_num] = total
+            self.munchies_challenge_phase = "RESULT"
+            return
+
+        if event.kind == "MUNCHIES_FINISH":
+            winner = event.args[0]
+            self.munchies_challenge_active = False
+            self.final_scores = dict(self.players)
+            self.final_player_count = self.active_player_count
+            self.final_scores_title = "MUNCHIES RESULTS"
+            self._select_highscore_profile()
+            self._pending_highscore_check = self.players.get(winner, 0)
+            self.pending_highscore_player = winner
+            self._pending_game_over = True
+            self._final_scores_end_time = time.time() + self.FINAL_SCORES_DURATION_SEC
+            self.state = AppState.FINAL_SCORES
             return
 
         if event.kind == "MAYHEM_PLAYER":
@@ -767,6 +809,9 @@ class StateMachine:
                 self._minigame_next_heartbeat = now
                 self._minigame_last_tick = now
                 self._in_attract_loop = False
+                if getattr(self, "running_game_mode", GAME_STANDARD) == GAME_MUNCHIES:
+                    self.munchies_challenge_active = True
+                    self.munchies_challenge_phase = "RUNNING"
                 self.state = AppState.MINIGAME
                 if session is not None:
                     self._send_minigame_line(f"MG_READY,{session}")
