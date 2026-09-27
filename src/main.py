@@ -177,6 +177,11 @@ def main():
                     if state.state == AppState.SERVICE_MENU:
                         state.service_menu.handle_fkey(fkey)
                 else:
+                    mock_input.set_game_mode(
+                        state.selected_game_mode
+                        if state.state == AppState.PLAYER_SELECT
+                        else state.running_game_mode
+                    )
                     for mock_event in mock_input.poll_events(pygame_events):
                         state.handle_event(mock_event)
 

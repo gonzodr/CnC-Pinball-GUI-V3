@@ -11,6 +11,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from game_modes import GAME_COOP, GAME_MODE_MASK_ONE_PLAYER, step_game_mode
+from mock_input import MockInputController
 from protocol import GameEvent, parse_line
 from score_gui import ScoreGUI
 from state_machine import AppState, StateMachine
@@ -55,6 +56,10 @@ class GameModeProtocolTests(unittest.TestCase):
 
 
 class GameModeStateTests(unittest.TestCase):
+    @staticmethod
+    def _keydown(key):
+        return pygame.event.Event(pygame.KEYDOWN, key=key, mod=0)
+
     def test_mode_background_fade_duration_and_endpoints(self):
         self.assertGreaterEqual(ScoreGUI.MODE_BACKGROUND_FADE_SEC, 1.0)
         self.assertLessEqual(ScoreGUI.MODE_BACKGROUND_FADE_SEC, 1.5)
@@ -173,6 +178,25 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(state.state, AppState.SCORE)
         self.assertEqual(state.running_game_mode, 1)
         self.assertEqual(state.active_player_count, 2)
+
+    def test_pc_mock_coop_score_survives_player_round_trip(self):
+        mock = MockInputController()
+        mock._num_players = 2
+        mock.set_game_mode(GAME_COOP)
+
+        with patch("mock_input.random.random", return_value=0.0):
+            p1_score = mock.poll_events([self._keydown(pygame.K_w)])[-1]
+            p2_start = mock.poll_events([self._keydown(pygame.K_b)])[-1]
+            p2_score = mock.poll_events([self._keydown(pygame.K_w)])[-1]
+            p1_return = mock.poll_events([self._keydown(pygame.K_b)])[-1]
+
+        self.assertEqual((p1_score.args[0], p1_score.args[2]), (1500, 1))
+        self.assertEqual((p2_start.args[0], p2_start.args[2]), (1750, 2))
+        self.assertEqual((p2_score.args[0], p2_score.args[2]), (3250, 2))
+        self.assertEqual((p1_return.args[0], p1_return.args[2]), (3500, 1))
+        self.assertTrue(all(event.args[6] == GAME_COOP for event in (
+            p1_score, p2_start, p2_score, p1_return
+        )))
 
     def test_pc_mock_falls_back_from_coop_when_players_wrap_to_one(self):
         state = StateMachine()

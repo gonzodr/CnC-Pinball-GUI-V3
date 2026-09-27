@@ -2,6 +2,7 @@
 
 import random
 import pygame
+from game_modes import GAME_COOP, GAME_STANDARD
 from protocol import GameEvent
 
 class MockInputController:
@@ -11,6 +12,7 @@ class MockInputController:
         self._player = 1
         self._ball = 1
         self._scores = {1: 0, 2: 0, 3: 0, 4: 0}
+        self._game_mode = GAME_STANDARD
         self._bonus = 0
         self._bonusx = 0  # 0..4 (x1, x2, x4, x6, x8)
         # Party-szamlalok a Joint/Beer allapotdeszkak teszteleséhez.
@@ -18,6 +20,13 @@ class MockInputController:
         # lepkedunk 0..3 kozott, hogy a be/kicsuszas ellenorizheto legyen.
         self._joints = 0
         self._beers = 0
+
+    def set_game_mode(self, mode_id):
+        """A PC-s szimulator ugyanazt a ponttulajdonost hasznalja, mint a firmware."""
+        self._game_mode = int(mode_id)
+
+    def _score_owner(self):
+        return 1 if self._game_mode == GAME_COOP else self._player
 
     def poll_events(self, pygame_events) -> list[GameEvent]:
         events = []
@@ -100,7 +109,7 @@ class MockInputController:
 
             # 2. Pontszerzés (W)
             elif key == pygame.K_w:
-                self._scores[self._player] += 1500
+                self._scores[self._score_owner()] += 1500
                 self._bonus += 250
                 # Szorzó növelése (néha)
                 if random.random() > 0.8 and self._bonusx < 4:
@@ -142,7 +151,7 @@ class MockInputController:
                     
                     # Logika: hozzáadjuk a bónuszt a jelenlegihez
                     mult = self._get_multiplier(self._bonusx)
-                    self._scores[self._player] += (self._bonus * mult)
+                    self._scores[self._score_owner()] += (self._bonus * mult)
                     
                     # Következő játékos / labda
                     if self._player >= self._num_players:
@@ -173,12 +182,13 @@ class MockInputController:
     def _generate_score_event(self):
         """Hajszálpontosan azt a formátumot küldi, amit a StateMachine vár."""
         return GameEvent("SCORE_UPDATE", (
-            self._scores[self._player],
+            self._scores[self._score_owner()],
             self._num_players,
             self._player,
             self._ball,
             self._bonus,
-            self._bonusx
+            self._bonusx,
+            self._game_mode,
         ))
 
     def _get_multiplier(self, bonusx_index):
