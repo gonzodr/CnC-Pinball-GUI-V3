@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 import pygame
 
 
@@ -11,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from game_modes import GAME_MODE_MASK_ONE_PLAYER, step_game_mode
 from protocol import GameEvent, parse_line
+from score_gui import ScoreGUI
 from state_machine import AppState, StateMachine
 
 
@@ -46,6 +48,34 @@ class GameModeProtocolTests(unittest.TestCase):
 
 
 class GameModeStateTests(unittest.TestCase):
+    def test_mode_background_fade_duration_and_endpoints(self):
+        self.assertGreaterEqual(ScoreGUI.MODE_BACKGROUND_FADE_SEC, 1.0)
+        self.assertLessEqual(ScoreGUI.MODE_BACKGROUND_FADE_SEC, 1.5)
+
+        gui = ScoreGUI.__new__(ScoreGUI)
+        gui.screen = pygame.Surface((2, 2))
+        gui.mode_backgrounds = {
+            0: pygame.Surface((2, 2)),
+            1: pygame.Surface((2, 2)),
+        }
+        gui.mode_backgrounds[0].fill((255, 0, 0))
+        gui.mode_backgrounds[1].fill((0, 0, 255))
+        gui._mode_background_current_id = 0
+        gui._mode_background_previous_id = None
+        gui._mode_background_fade_start = 0.0
+
+        with patch("score_gui.time.time", return_value=10.0):
+            gui._draw_mode_background(1)
+        self.assertEqual(gui.screen.get_at((0, 0))[:3], (255, 0, 0))
+
+        with patch(
+            "score_gui.time.time",
+            return_value=10.01 + ScoreGUI.MODE_BACKGROUND_FADE_SEC,
+        ):
+            gui._draw_mode_background(1)
+        self.assertEqual(gui.screen.get_at((0, 0))[:3], (0, 0, 255))
+        self.assertIsNone(gui._mode_background_previous_id)
+
     def test_all_mode_background_assets_are_exact_display_size(self):
         score_assets = SRC / "assets" / "SCORE"
         for filename in (

@@ -257,6 +257,7 @@ class ScoreGUI:
     # self.screen-re, NEM kozbenso SRCALPHA feluletre), mint amit a LOGO
     # kepernyo pszichedelikus hattere mar bizonyitottan hasznal ARM-on.
     FADE_DURATION_SEC = 0.25
+    MODE_BACKGROUND_FADE_SEC = 1.2
 
     # 640x480-ra átszámolt fix pozíciók (eredeti * 0.8)
     CARD_LAYOUT = [
@@ -575,6 +576,9 @@ class ScoreGUI:
 
         self.background = None
         self.mode_backgrounds = {}
+        self._mode_background_current_id = GAME_STANDARD
+        self._mode_background_previous_id = None
+        self._mode_background_fade_start = 0.0
         self._player_select_mode_id = None
         self.summary_anim_start = None
 
@@ -743,6 +747,42 @@ class ScoreGUI:
             self.render(state)
         finally:
             self._player_select_mode_id = None
+
+    def _draw_mode_background(self, requested_mode):
+        """Hatterszin-atmenet, a folotte levo SCORE retegek mozgatasa nelkul."""
+        mode_id = (
+            requested_mode
+            if requested_mode in self.mode_backgrounds else GAME_STANDARD
+        )
+        now = time.time()
+        if mode_id != self._mode_background_current_id:
+            self._mode_background_previous_id = self._mode_background_current_id
+            self._mode_background_current_id = mode_id
+            self._mode_background_fade_start = now
+
+        current = self.mode_backgrounds[self._mode_background_current_id]
+        self.screen.blit(current, (0, 0))
+
+        previous_id = self._mode_background_previous_id
+        if previous_id is None:
+            return
+
+        progress = (now - self._mode_background_fade_start) / self.MODE_BACKGROUND_FADE_SEC
+        if progress >= 1.0:
+            self._mode_background_previous_id = None
+            return
+
+        previous = self.mode_backgrounds.get(previous_id)
+        if previous is None:
+            self._mode_background_previous_id = None
+            return
+
+        # Kozvetlen RGB-surface -> display blit global alfaval. Nem epul
+        # koztes, szeles SRCALPHA surface, igy a Pi 3 ARM/SDL korlatait is
+        # ugyanugy elkeruli, mint a mar bevalt teljes-kepernyos fade.
+        previous.set_alpha(round(255 * (1.0 - max(0.0, progress))))
+        self.screen.blit(previous, (0, 0))
+        previous.set_alpha(None)
 
     def _load_assets(self):
         # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).
@@ -1450,10 +1490,7 @@ class ScoreGUI:
             if is_player_select
             else getattr(state, "running_game_mode", GAME_STANDARD)
         )
-        mode_background = self.mode_backgrounds.get(
-            background_mode, self.mode_backgrounds[GAME_STANDARD]
-        )
-        self.screen.blit(mode_background, (0, 0))
+        self._draw_mode_background(background_mode)
 
         # 1b. Fust a hatter fole (a BG reteg resze), a MIDDLE_FRAME ala.
         # Idoalapu, ugyanaz a loop-tempo, mint a tobbi score-animacio.
