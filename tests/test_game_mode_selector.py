@@ -46,6 +46,13 @@ class GameModeProtocolTests(unittest.TestCase):
         )
         self.assertIsNone(parse_line("GAME_START,2,5"))
 
+    def test_score_snapshot_accepts_latched_running_mode(self):
+        self.assertEqual(
+            parse_line("score,42000,2,2,1,0,0,1"),
+            GameEvent("SCORE_UPDATE", (42000, 2, 2, 1, 0, 0, 1)),
+        )
+        self.assertIsNone(parse_line("score,42000,2,2,1,0,0,99"))
+
 
 class GameModeStateTests(unittest.TestCase):
     def test_mode_background_fade_duration_and_endpoints(self):
@@ -215,6 +222,22 @@ class GameModeStateTests(unittest.TestCase):
                 state.party_progress[player],
                 {"beers": 3, "joints": 2, "ufo_tier": 3, "weed_ready": True},
             )
+
+    def test_score_snapshot_repairs_running_mode_before_player_switch(self):
+        state = StateMachine()
+        state.state = AppState.SCORE
+
+        state.handle_event(
+            GameEvent("SCORE_UPDATE", (12000, 2, 1, 1, 0, 0, GAME_COOP))
+        )
+        state.handle_event(
+            GameEvent("SCORE_UPDATE", (17000, 2, 2, 1, 0, 0, GAME_COOP))
+        )
+
+        self.assertEqual(state.running_game_mode, GAME_COOP)
+        self.assertIs(state.highscore_manager, state.team_score_manager)
+        self.assertEqual(state.players[1], 17000)
+        self.assertEqual(state.players[2], 17000)
 
     def test_coop_uses_separate_team_highscores_and_eight_character_name(self):
         state = StateMachine()

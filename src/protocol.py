@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional
 from game_modes import (
+    GAME_MODE_COUNT,
     GAME_MODE_MASK_ALL,
     normalize_game_mode,
     sanitize_availability_mask,
@@ -27,14 +28,22 @@ def parse_line(line: str) -> Optional[GameEvent]:
         # Az Arduino SendData() ezt küldi: 
         # score, score_value, num_players, player, ball, bonus, bonusx
         if cmd == "SCORE" and len(parts) >= 7:
-            return GameEvent("SCORE_UPDATE", (
+            score_args = (
                 int(parts[1]), # score
                 int(parts[2]), # num_players
                 int(parts[3]), # player
                 int(parts[4]), # ball
                 int(parts[5]), # bonus
                 int(parts[6])  # bonusx index
-            ))
+            )
+            # Uj firmware: a futas elejen lezart mod az utolso mezo. A regi
+            # hetmezos SCORE sor tovabbra is teljesen kompatibilis marad.
+            if len(parts) >= 8:
+                running_mode = int(parts[7])
+                if not 0 <= running_mode < GAME_MODE_COUNT:
+                    return None
+                score_args += (running_mode,)
+            return GameEvent("SCORE_UPDATE", score_args)
 
         elif cmd == "GAME_MODE" and len(parts) == 3:
             mode_id = int(parts[1])

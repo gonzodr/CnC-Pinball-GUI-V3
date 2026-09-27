@@ -312,8 +312,29 @@ class StateMachine:
             return
 
         if event.kind == "SCORE_UPDATE":
-            score, num_players, player, ball, bonus, bonusx = event.args
+            score, num_players, player, ball, bonus, bonusx = event.args[:6]
             self.active_player_count = num_players
+            if len(event.args) >= 7:
+                # A firmware minden score snapshotban visszaigazolja az
+                # inditaskor lezart rulesetet. Igy egy elveszett GAME_START
+                # sor vagy kesobbi selector-allapot sem szakithatja ket
+                # kulon jatekospontra a CO-OP csapatot.
+                running_mode = normalize_game_mode(
+                    event.args[6],
+                    availability_mask_for_players(num_players),
+                    player_count=num_players,
+                )
+                self.running_game_mode = running_mode
+                self.highscore_manager = (
+                    self.team_score_manager
+                    if self._is_coop_game()
+                    else self.score_manager
+                )
+                self.highscore_title = (
+                    "TEAM HIGH SCORES"
+                    if self._is_coop_game()
+                    else "HIGHSCORES"
+                )
             if self._is_coop_game() and self.state != AppState.PLAYER_SELECT:
                 for team_player in range(1, num_players + 1):
                     self.players[team_player] = score
