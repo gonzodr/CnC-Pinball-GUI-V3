@@ -240,12 +240,17 @@ def main():
             # 5. Rajzolas, ha SCORE allapotban vagyunk
             if state.state == AppState.SCORE:
                 gui.render(state)
+                if state.mayhem_active:
+                    gui.render_mayhem_overlay(state)
             elif state.state == AppState.PLAYER_SELECT:
                 gui.render_player_select(state)
             elif state.state == AppState.SUMMARY:
                 gui.render_summary(state.summary_data)
             elif state.state == AppState.FINAL_SCORES:
-                gui.render_final_scores(state.final_scores, state.final_player_count)
+                gui.render_final_scores(
+                    state.final_scores, state.final_player_count,
+                    state.final_scores_title,
+                )
             elif state.state == AppState.LOGO:
                 gui.render_logo()
             elif state.state == AppState.BEAT_SCORE:

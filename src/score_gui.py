@@ -1957,7 +1957,50 @@ class ScoreGUI:
         if self._bonus_spark_burst is not None:
             self._bonus_spark_burst.draw(self.screen)
 
-    def render_final_scores(self, final_scores: dict, player_count: int):
+    def render_mayhem_overlay(self, state):
+        """Compact live status fed exclusively by the firmware coordinator."""
+        if not self.active:
+            return
+        stage_names = (
+            "", "ACAPULCO GOLD", "MICHOACAN", "THAI STICK", "LABRADOR"
+        )
+        phase = getattr(state, "mayhem_phase", "")
+        if phase == "READY":
+            headline = f"READY PLAYER {state.current_player}"
+            detail = str(state.mayhem_countdown) if state.mayhem_countdown else "GO!"
+        elif phase == "STAGE":
+            stage = max(1, min(4, state.mayhem_stage))
+            remaining = max(0, int(state.mayhem_stage_ends_at - time.monotonic()) + 1)
+            headline = f"{stage_names[stage]}  •  {remaining}s"
+            detail = (
+                "SUPER JACKPOT LIT"
+                if state.mayhem_super_lit
+                else f"JACKPOTS {state.mayhem_jackpots}/{state.mayhem_required}"
+            )
+        elif phase == "BALLS RETURNING":
+            headline = "BALLS RETURNING"
+            detail = (
+                f"NEXT STAGE +{state.mayhem_bonus_seconds}s"
+                if state.mayhem_bonus_seconds else "WAIT FOR TROUGH"
+            )
+        else:
+            headline = "MULTIBALL MAYHEM"
+            detail = "WAITING FOR BALLS"
+
+        panel = pygame.Surface((440, 70), pygame.SRCALPHA)
+        pygame.draw.rect(panel, (10, 24, 7, 205), panel.get_rect(), border_radius=14)
+        pygame.draw.rect(panel, (220, 170, 35, 230), panel.get_rect(), 2, border_radius=14)
+        title_surf = build_outlined_text_surface(
+            self.font_small, headline, (255, 220, 65), self.COLOR_TEXT_OUTLINE, 2
+        )
+        detail_surf = build_outlined_text_surface(
+            self.font_small, detail, (255, 255, 255), self.COLOR_TEXT_OUTLINE, 1
+        )
+        panel.blit(title_surf, title_surf.get_rect(center=(220, 22)))
+        panel.blit(detail_surf, detail_surf.get_rect(center=(220, 50)))
+        self.screen.blit(panel, panel.get_rect(center=(320, 390)))
+
+    def render_final_scores(self, final_scores: dict, player_count: int, title=None):
         """Tobb-jatekos vegeredmeny kepernyo: csak akkor jon elo, ha 2+
         jatekos jatszott es a jatek valodi GAMEOVER-rel ert veget. Minden
         jatekos vegso pontszamat mutatja 2x2 racsban, a gyoztest (legmagasabb
@@ -2026,6 +2069,13 @@ class ScoreGUI:
         # 4. Frame reteg - a kiirasok FOLOTT (a keret kozepe atlatszo, igy a
         # pontszamok atlatszanak), de a particle-ok ALATT.
         self.screen.blit(self.final_scores_frame, (0, 0))
+
+        if title:
+            title_surf = build_outlined_text_surface(
+                self.font_hiscore_title, title, self.FINAL_SCORES_WINNER_COLOR,
+                self.COLOR_TEXT_OUTLINE, 2,
+            )
+            self.screen.blit(title_surf, title_surf.get_rect(center=(320, 35)))
 
         # 5. Ismetlodo kis tuzijatek-robbanasok a gyoztes(ek) korul - ezek
         # kerulnek legfelulre, a frame FOLE is atloghatnak

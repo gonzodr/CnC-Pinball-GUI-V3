@@ -15,6 +15,7 @@ from game_modes import (
     GAME_COOP,
     GAME_QUICK,
     GAME_STANDARD,
+    GAME_MULTIBALL_MAYHEM,
     GAME_MODE_MASK_ONE_PLAYER,
     availability_mask_for_players,
     normalize_game_mode,
@@ -79,6 +80,7 @@ class StateMachine:
             ScoreManager.TEAM_FILE_PATH, placeholder="--------"
         )
         self.quick_score_manager = ScoreManager(ScoreManager.QUICK_FILE_PATH)
+        self.mayhem_score_manager = ScoreManager(ScoreManager.MAYHEM_FILE_PATH)
         self.highscore_manager = self.score_manager
         self.highscore_title = "HIGHSCORES"
         self.name_entry_title = None
@@ -135,6 +137,17 @@ class StateMachine:
         self.final_scores = {1: 0, 2: 0, 3: 0, 4: 0}
         self.final_player_count = 1
         self._final_scores_end_time = 0.0
+        self.final_scores_title = None
+
+        self.mayhem_active = False
+        self.mayhem_phase = ""
+        self.mayhem_stage = 0
+        self.mayhem_countdown = 0
+        self.mayhem_jackpots = 0
+        self.mayhem_required = 0
+        self.mayhem_super_lit = False
+        self.mayhem_stage_ends_at = 0.0
+        self.mayhem_bonus_seconds = 0
 
         self._in_attract_loop = False
         self._attract_index = 0
@@ -212,6 +225,10 @@ class StateMachine:
             self.highscore_manager = getattr(self, "quick_score_manager", None)
             self.highscore_title = "QUICK GAME HIGH SCORES"
             self.name_entry_title = None
+        elif getattr(self, "running_game_mode", GAME_STANDARD) == GAME_MULTIBALL_MAYHEM:
+            self.highscore_manager = getattr(self, "mayhem_score_manager", None)
+            self.highscore_title = "MULTIBALL MAYHEM HIGH SCORES"
+            self.name_entry_title = None
         else:
             self.highscore_manager = getattr(self, "score_manager", None)
             self.highscore_title = "HIGHSCORES"
@@ -257,6 +274,78 @@ class StateMachine:
             self._select_highscore_profile()
             self._in_attract_loop = False
             self.state = AppState.SCORE
+            self.mayhem_active = self.running_game_mode == GAME_MULTIBALL_MAYHEM
+            if self.mayhem_active:
+                self.mayhem_phase = "WAITING FOR BALLS"
+            return
+
+        if event.kind == "MAYHEM_PLAYER":
+            self.mayhem_active = True
+            self.mayhem_phase = "WAITING FOR BALLS"
+            self.current_player = event.args[0]
+            self.state = AppState.SCORE
+            return
+
+        if event.kind == "MAYHEM_READY":
+            player_num, countdown = event.args
+            self.mayhem_active = True
+            self.mayhem_phase = "READY"
+            self.current_player = player_num
+            self.mayhem_countdown = countdown
+            self.state = AppState.SCORE
+            return
+
+        if event.kind == "MAYHEM_STAGE":
+            player_num, stage, seconds, required = event.args
+            self.mayhem_active = True
+            self.mayhem_phase = "STAGE"
+            self.current_player = player_num
+            self.current_ball = stage
+            self.mayhem_stage = stage
+            self.mayhem_required = required
+            self.mayhem_jackpots = 0
+            self.mayhem_super_lit = False
+            self.mayhem_stage_ends_at = time.monotonic() + seconds
+            self.state = AppState.SCORE
+            return
+
+        if event.kind == "MAYHEM_PROGRESS":
+            stage, jackpots, required, super_lit = event.args
+            self.mayhem_stage = stage
+            self.mayhem_jackpots = jackpots
+            self.mayhem_required = required
+            self.mayhem_super_lit = super_lit
+            return
+
+        if event.kind == "MAYHEM_SUPER_LIT":
+            self.mayhem_super_lit = True
+            return
+
+        if event.kind == "MAYHEM_STAGE_END":
+            stage, jackpots, bonus_seconds = event.args
+            self.mayhem_phase = "BALLS RETURNING"
+            self.mayhem_stage = stage
+            self.mayhem_jackpots = jackpots
+            self.mayhem_bonus_seconds = bonus_seconds
+            return
+
+        if event.kind == "MAYHEM_RESULT":
+            player_num, total = event.args
+            self.players[player_num] = total
+            return
+
+        if event.kind == "MAYHEM_FINISH":
+            winner = event.args[0]
+            self.mayhem_active = False
+            self.final_scores = dict(self.players)
+            self.final_player_count = self.active_player_count
+            self.final_scores_title = "MULTIBALL MAYHEM RESULTS"
+            self._select_highscore_profile()
+            self._pending_highscore_check = self.players.get(winner, 0)
+            self.pending_highscore_player = winner
+            self._pending_game_over = True
+            self._final_scores_end_time = time.time() + self.FINAL_SCORES_DURATION_SEC
+            self.state = AppState.FINAL_SCORES
             return
 
         if event.kind == "MUNCHIES_ACK":
@@ -518,6 +607,7 @@ class StateMachine:
                 #     kepernyohoz, MIELOTT a players dict nullazodik.
                 self.final_scores = dict(self.players)
                 self.final_player_count = self.active_player_count
+                self.final_scores_title = None
 
                 # 2. Csak EZUTÁN nullázzuk a változókat
                 self.players = {1: 0, 2: 0, 3: 0, 4: 0}

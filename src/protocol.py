@@ -60,6 +60,57 @@ def parse_line(line: str) -> Optional[GameEvent]:
             )
             return GameEvent("GAME_START", (mode_id, player_count))
 
+        elif cmd == "MAYHEM_PLAYER" and len(parts) == 2:
+            player = int(parts[1])
+            if not 1 <= player <= 4:
+                return None
+            return GameEvent("MAYHEM_PLAYER", (player,))
+
+        elif cmd == "MAYHEM_READY" and len(parts) == 3:
+            player, countdown = map(int, parts[1:3])
+            if not 1 <= player <= 4 or not 0 <= countdown <= 5:
+                return None
+            return GameEvent("MAYHEM_READY", (player, countdown))
+
+        elif cmd == "MAYHEM_STAGE" and len(parts) == 5:
+            player, stage, seconds, required = map(int, parts[1:5])
+            if not 1 <= player <= 4 or not 1 <= stage <= 4:
+                return None
+            if not 1 <= seconds <= 120 or not 1 <= required <= 99:
+                return None
+            return GameEvent("MAYHEM_STAGE", (player, stage, seconds, required))
+
+        elif cmd == "MAYHEM_PROGRESS" and len(parts) == 5:
+            stage, jackpots, required, super_lit = map(int, parts[1:5])
+            if not 1 <= stage <= 4 or jackpots < 0 or required < 1:
+                return None
+            if super_lit not in (0, 1):
+                return None
+            return GameEvent(
+                "MAYHEM_PROGRESS", (stage, jackpots, required, bool(super_lit))
+            )
+
+        elif cmd == "MAYHEM_SUPER_LIT" and len(parts) == 1:
+            return GameEvent("MAYHEM_SUPER_LIT")
+
+        elif cmd == "MAYHEM_STAGE_END" and len(parts) == 4:
+            stage, jackpots, bonus_seconds = map(int, parts[1:4])
+            if not 1 <= stage <= 4 or jackpots < 0 or not 0 <= bonus_seconds <= 10:
+                return None
+            return GameEvent("MAYHEM_STAGE_END", (stage, jackpots, bonus_seconds))
+
+        elif cmd == "MAYHEM_RESULT" and len(parts) == 3:
+            player, total = map(int, parts[1:3])
+            if not 1 <= player <= 4 or total < 0:
+                return None
+            return GameEvent("MAYHEM_RESULT", (player, total))
+
+        elif cmd == "MAYHEM_FINISH" and len(parts) == 2:
+            winner = int(parts[1])
+            if not 1 <= winner <= 4:
+                return None
+            return GameEvent("MAYHEM_FINISH", (winner,))
+
         elif cmd == "NEXT":
             return GameEvent("NEXT")
 
