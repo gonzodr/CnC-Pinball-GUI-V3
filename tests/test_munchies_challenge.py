@@ -72,6 +72,37 @@ class MunchiesChallengeStateTests(unittest.TestCase):
         self.assertEqual(self.state._pending_highscore_check, 50000)
         self.assertEqual(self.state.pending_highscore_player, 2)
 
+    def test_pc_mock_start_runs_countdown_then_launches_preloaded_game(self):
+        class FakeGame:
+            finished = False
+
+            def __init__(self):
+                self.activated = False
+
+            def set_difficulty(self, _difficulty):
+                pass
+
+            def activate(self):
+                self.activated = True
+
+            def update(self, _dt):
+                pass
+
+        game = FakeGame()
+        self.state.state = AppState.PLAYER_SELECT
+        self.state.active_player_count = 2
+        self.state.selected_game_mode = GAME_MUNCHIES
+        self.state._preloaded_minigame = game
+        self.state.handle_event(GameEvent("START"))
+        self.assertTrue(self.state._mock_munchies_challenge)
+        self.assertEqual(self.state.munchies_countdown, 3)
+
+        deadline = self.state._mock_munchies_countdown_end
+        with patch("state_machine.time.monotonic", return_value=deadline + 0.01):
+            self.state.tick()
+        self.assertEqual(self.state.state, AppState.MINIGAME)
+        self.assertTrue(game.activated)
+
 
 if __name__ == "__main__":
     unittest.main()
