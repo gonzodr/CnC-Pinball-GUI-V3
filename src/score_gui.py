@@ -258,6 +258,10 @@ class ScoreGUI:
     # kepernyo pszichedelikus hattere mar bizonyitottan hasznal ARM-on.
     FADE_DURATION_SEC = 0.25
     MODE_BACKGROUND_FADE_SEC = 1.2
+    MODE_ART_Y_OFFSETS = {
+        GAME_MUNCHIES: -30,
+        GAME_MULTIBALL_MAYHEM: -35,
+    }
 
     # 640x480-ra átszámolt fix pozíciók (eredeti * 0.8)
     CARD_LAYOUT = [
@@ -576,6 +580,7 @@ class ScoreGUI:
 
         self.background = None
         self.mode_backgrounds = {}
+        self.mode_art = {}
         self._mode_background_current_id = GAME_STANDARD
         self._mode_background_previous_id = None
         self._mode_background_fade_start = 0.0
@@ -720,8 +725,7 @@ class ScoreGUI:
         self.font_name_letters = pygame.font.Font(modak_font_path, 48)
         self.font_name_hint = pygame.font.Font(modak_font_path, 16)
 
-        # Ideiglenes modfelirat a SCORE-kompozicio kozepen. A vegleges
-        # atlatszo mode-art assetek kesobb ugyanerre a helyre kerulnek.
+        # Tartalek modfelirat arra az esetre, ha egy mode-art asset hianyozna.
         self.font_mode_selected = pygame.font.Font(modak_font_path, 46)
 
         # PRESS START (attract-mode) képernyő fontja
@@ -812,6 +816,27 @@ class ScoreGUI:
                 )
                 mode_bg = scale_fn(mode_bg, (self.SCREEN_W, self.SCREEN_H))
             self.mode_backgrounds[mode_id] = mode_bg
+
+        # Atlatszo, teljes kepernyos mode-art retegek. A rajzok kozepen
+        # helyezkednek el, mikozben a TOP_FRAME felhoi, also levelei es a
+        # jatekos-papirok a megszokott SCORE-kompozicioban takarjak oket.
+        mode_art_dir = os.path.join(score_dir, "MODE_ART")
+        self.mode_art = {}
+        for mode_id, filename in (
+            (GAME_STANDARD, "MODE_ART_STANDARD.png"),
+            (GAME_COOP, "MODE_ART_COOP.png"),
+            (GAME_QUICK, "MODE_ART_QUICK.png"),
+            (GAME_MUNCHIES, "MODE_ART_MUNCHIES.png"),
+            (GAME_MULTIBALL_MAYHEM, "MODE_ART_MAYHEM.png"),
+        ):
+            art = pygame.image.load(os.path.join(mode_art_dir, filename)).convert_alpha()
+            if art.get_size() != (self.SCREEN_W, self.SCREEN_H):
+                scale_fn = (
+                    pygame.transform.smoothscale
+                    if _smoothscale_supported() else pygame.transform.scale
+                )
+                art = scale_fn(art, (self.SCREEN_W, self.SCREEN_H))
+            self.mode_art[mode_id] = art
         
         # SUMMARY hatter (auto-belso naplementes kep) - NEM ugyanaz, mint a
         # name entry BGR2-je (az a zold-leveles), konnyu osszekeverni!
@@ -1499,6 +1524,15 @@ class ScoreGUI:
             frame = self.score_bg_smoke[smoke_idx]
             self.screen.blit(frame, frame.get_rect(center=self.SCORE_BG_SMOKE_CENTER))
 
+        # 1c. Player Select mode-art. Csak valasztas kozben latszik; a futó
+        # SCORE-kepernyon tovabbra is a pontszam marad kozepen.
+        selected_mode_art = (
+            self.mode_art.get(player_select_mode) if is_player_select else None
+        )
+        if selected_mode_art is not None:
+            art_y = self.MODE_ART_Y_OFFSETS.get(player_select_mode, 0)
+            self.screen.blit(selected_mode_art, (0, art_y))
+
         # 2. MIDDLE_FRAME (leveles keret a papirok mogott)
         self.screen.blit(self.score_middle_frame, (0, 0))
 
@@ -1585,14 +1619,16 @@ class ScoreGUI:
         active_player_rect = self._active_player_cache.get_rect(center=(515, 90))
         self.screen.blit(self._active_player_cache, active_player_rect)
 
-        # Középen jatek kozben a pontszam, Player Select alatt ugyanazon a
-        # helyen a mod neve jelenik meg. Nincs kulon menu vagy panel.
+        # Középen jatek kozben a pontszam latszik. Player Select alatt az
+        # atlatszo mode-art veszi at a helyet; ha hianyzik, szoveges fallback
+        # marad, kulon menu vagy panel nelkul.
         main_score_value = state.players[state.current_player]
+        has_mode_art = selected_mode_art is not None
         center_cache_key = (
             ("mode", player_select_mode)
             if is_player_select else ("score", main_score_value)
         )
-        if self._main_score_cache_key != center_cache_key:
+        if (not has_mode_art and self._main_score_cache_key != center_cache_key):
             center_text = (
                 GAME_MODE_NAMES[player_select_mode]
                 if is_player_select else f"{main_score_value:,}"
@@ -1645,22 +1681,23 @@ class ScoreGUI:
                 pulse_scale = 1.0 + (self.SCORE_PULSE_MAX_SCALE - 1.0) * bump
 
         if is_player_select:
-            max_mode_width = 430
-            mode_scale = min(1.0, max_mode_width / self._main_score_cache.get_width())
-            self._blit_scaled_centered(
-                self._main_score_cache, (center_x, center_y), mode_scale
-            )
+            if not has_mode_art:
+                max_mode_width = 430
+                mode_scale = min(1.0, max_mode_width / self._main_score_cache.get_width())
+                self._blit_scaled_centered(
+                    self._main_score_cache, (center_x, center_y), mode_scale
+                )
 
-            # Ideiglenes, visszafogott iranyjelzesek. A kesobbi mode-art
-            # slide animacio ezeket valtozatlanul korbe tudja venni.
+            # Visszafogott iranyjelzesek; kesobb a slide animacio mellett is
+            # valtozatlanul hasznalhatok.
             arrow_color = (255, 205, 45)
             pygame.draw.polygon(
                 self.screen, arrow_color,
-                ((55, center_y), (73, center_y - 14), (73, center_y + 14)),
+                ((20, center_y), (36, center_y - 13), (36, center_y + 13)),
             )
             pygame.draw.polygon(
                 self.screen, arrow_color,
-                ((585, center_y), (567, center_y - 14), (567, center_y + 14)),
+                ((620, center_y), (604, center_y - 13), (604, center_y + 13)),
             )
         elif pulse_scale != 1.0:
             self._blit_scaled_centered(self._main_score_cache, (center_x, center_y), pulse_scale)

@@ -91,6 +91,21 @@ class GameModeStateTests(unittest.TestCase):
                     (640, 480),
                 )
 
+    def test_all_mode_art_assets_are_transparent_and_exact_display_size(self):
+        mode_art_dir = SRC / "assets" / "SCORE" / "MODE_ART"
+        for filename in (
+            "MODE_ART_STANDARD.png",
+            "MODE_ART_COOP.png",
+            "MODE_ART_QUICK.png",
+            "MODE_ART_MUNCHIES.png",
+            "MODE_ART_MAYHEM.png",
+        ):
+            with self.subTest(filename=filename):
+                art = pygame.image.load(mode_art_dir / filename)
+                self.assertEqual(art.get_size(), (640, 480))
+                self.assertTrue(art.get_flags() & pygame.SRCALPHA)
+                self.assertEqual(art.get_at((0, 0)).a, 0)
+
     def test_pc_mock_can_select_players_modes_and_start(self):
         state = StateMachine()
         state.state = AppState.PLAYER_SELECT
