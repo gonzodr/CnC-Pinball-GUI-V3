@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+import pygame
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,21 @@ class GameModeProtocolTests(unittest.TestCase):
 
 
 class GameModeStateTests(unittest.TestCase):
+    def test_all_mode_background_assets_are_exact_display_size(self):
+        score_assets = SRC / "assets" / "SCORE"
+        for filename in (
+            "BACKGROUND.png",
+            "BACKGROUND_COOP.png",
+            "BACKGROUND_QUICK.png",
+            "BACKGROUND_MUNCHIES.png",
+            "BACKGROUND_MAYHEM.png",
+        ):
+            with self.subTest(filename=filename):
+                self.assertEqual(
+                    pygame.image.load(score_assets / filename).get_size(),
+                    (640, 480),
+                )
+
     def test_pc_mock_can_select_players_modes_and_start(self):
         state = StateMachine()
         state.state = AppState.PLAYER_SELECT

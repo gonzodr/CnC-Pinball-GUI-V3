@@ -24,7 +24,15 @@ import os
 import sys
 
 from particle_settings import ParticleSettingsManager
-from game_modes import GAME_MODE_NAMES, normalize_game_mode
+from game_modes import (
+    GAME_STANDARD,
+    GAME_COOP,
+    GAME_QUICK,
+    GAME_MUNCHIES,
+    GAME_MULTIBALL_MAYHEM,
+    GAME_MODE_NAMES,
+    normalize_game_mode,
+)
 
 # A kmsdrm drivert KIZAROLAG Linuxon allitjuk be
 # A kmsdrm drivert KIZAROLAG akkor allitjuk be, ha Linuxon vagyunk
@@ -566,6 +574,7 @@ class ScoreGUI:
         self.active = False
 
         self.background = None
+        self.mode_backgrounds = {}
         self._player_select_mode_id = None
         self.summary_anim_start = None
 
@@ -737,11 +746,32 @@ class ScoreGUI:
 
     def _load_assets(self):
         # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).
-        bg_path = os.path.join(ASSETS_DIR, "SCORE", "BACKGROUND.png")
+        score_dir = os.path.join(ASSETS_DIR, "SCORE")
+        bg_path = os.path.join(score_dir, "BACKGROUND.png")
         bg_raw = pygame.image.load(bg_path).convert()
         self.background = pygame.transform.smoothscale(
             bg_raw, (self.SCREEN_W, self.SCREEN_H)
         )
+
+        # A mode-hatterek csak a szinkezest/hangulatot cserelik; a SCORE
+        # kerete, felhoi es jatekos-papirjai valtozatlan retegek maradnak.
+        # Mindegyik asset eleve 640x480, ezert a Pi-n nincs futasideju
+        # skalazas vagy extra kepfeldolgozas.
+        self.mode_backgrounds = {GAME_STANDARD: self.background}
+        for mode_id, filename in (
+            (GAME_COOP, "BACKGROUND_COOP.png"),
+            (GAME_QUICK, "BACKGROUND_QUICK.png"),
+            (GAME_MUNCHIES, "BACKGROUND_MUNCHIES.png"),
+            (GAME_MULTIBALL_MAYHEM, "BACKGROUND_MAYHEM.png"),
+        ):
+            mode_bg = pygame.image.load(os.path.join(score_dir, filename)).convert()
+            if mode_bg.get_size() != (self.SCREEN_W, self.SCREEN_H):
+                scale_fn = (
+                    pygame.transform.smoothscale
+                    if _smoothscale_supported() else pygame.transform.scale
+                )
+                mode_bg = scale_fn(mode_bg, (self.SCREEN_W, self.SCREEN_H))
+            self.mode_backgrounds[mode_id] = mode_bg
         
         # SUMMARY hatter (auto-belso naplementes kep) - NEM ugyanaz, mint a
         # name entry BGR2-je (az a zold-leveles), konnyu osszekeverni!
@@ -761,7 +791,6 @@ class ScoreGUI:
         # A render() rteg-sorrendje: BACKGROUND -> MIDDLE_FRAME -> papirok
         # (inaktiv: baked CigSHADOW; aktiv: Bubik + PL_BOT glow + papir +
         # PL_TOP glow) -> TOP_FRAME -> kiirasok.
-        score_dir = os.path.join(ASSETS_DIR, "SCORE")
         self.score_middle_frame = pygame.image.load(
             os.path.join(score_dir, "MIDDLE_FRAME.png")
         ).convert_alpha()
@@ -1416,7 +1445,15 @@ class ScoreGUI:
         self.card_animator.set_active_count(state.active_player_count)
 
         # 1. BG reteg
-        self.screen.blit(self.background, (0, 0))
+        background_mode = (
+            player_select_mode
+            if is_player_select
+            else getattr(state, "running_game_mode", GAME_STANDARD)
+        )
+        mode_background = self.mode_backgrounds.get(
+            background_mode, self.mode_backgrounds[GAME_STANDARD]
+        )
+        self.screen.blit(mode_background, (0, 0))
 
         # 1b. Fust a hatter fole (a BG reteg resze), a MIDDLE_FRAME ala.
         # Idoalapu, ugyanaz a loop-tempo, mint a tobbi score-animacio.
