@@ -765,6 +765,11 @@ class ScoreGUI:
         finally:
             self._player_select_mode_id = None
 
+    @staticmethod
+    def _gameplay_background_mode(running_mode):
+        """Co-op only: selection tint fades back to the normal playfield BG."""
+        return GAME_STANDARD if running_mode == GAME_COOP else running_mode
+
     def _draw_mode_background(self, requested_mode):
         """Hatterszin-atmenet, a folotte levo SCORE retegek mozgatasa nelkul."""
         mode_id = (
@@ -1576,6 +1581,11 @@ class ScoreGUI:
             if is_player_select
             else getattr(state, "running_game_mode", GAME_STANDARD)
         )
+        # A Co-op szinezett hattere csak a valasztas visszajelzese. Startkor
+        # ugyanazon az 1.2 mp-es crossfade motoron ter vissza a normal score
+        # hatterre; a tobbi mod jatek-hattere egyelore valtozatlan marad.
+        if not is_player_select:
+            background_mode = self._gameplay_background_mode(background_mode)
         self._draw_mode_background(background_mode)
 
         # 1b. Fust a hatter fole (a BG reteg resze), a MIDDLE_FRAME ala.

@@ -93,6 +93,12 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(gui.screen.get_at((0, 0))[:3], (0, 0, 255))
         self.assertIsNone(gui._mode_background_previous_id)
 
+    def test_coop_gameplay_fades_back_to_standard_background_only(self):
+        self.assertEqual(ScoreGUI._gameplay_background_mode(GAME_COOP), 0)
+        self.assertEqual(
+            ScoreGUI._gameplay_background_mode(GAME_QUICK), GAME_QUICK
+        )
+
     def test_mode_art_slides_with_cubic_ease_out(self):
         gui = ScoreGUI.__new__(ScoreGUI)
         gui.SCREEN_W = 20
