@@ -258,10 +258,9 @@ class ScoreGUI:
     # kepernyo pszichedelikus hattere mar bizonyitottan hasznal ARM-on.
     FADE_DURATION_SEC = 0.25
     MODE_BACKGROUND_FADE_SEC = 1.2
-    MODE_ART_Y_OFFSETS = {
-        GAME_MUNCHIES: -30,
-        GAME_MULTIBALL_MAYHEM: -35,
-    }
+    MODE_ART_SCALE = 0.85
+    MODE_ART_BASE_Y = -25
+    MODE_ART_SLIDE_SEC = 0.6
 
     # 640x480-ra átszámolt fix pozíciók (eredeti * 0.8)
     CARD_LAYOUT = [
@@ -584,6 +583,7 @@ class ScoreGUI:
         self._mode_background_current_id = GAME_STANDARD
         self._mode_background_previous_id = None
         self._mode_background_fade_start = 0.0
+        self._mode_art_slide_direction = 1
         self._player_select_mode_id = None
         self.summary_anim_start = None
 
@@ -760,6 +760,12 @@ class ScoreGUI:
         )
         now = time.time()
         if mode_id != self._mode_background_current_id:
+            previous_mode = self._mode_background_current_id
+            forward_steps = (mode_id - previous_mode) % len(GAME_MODE_NAMES)
+            backward_steps = (previous_mode - mode_id) % len(GAME_MODE_NAMES)
+            self._mode_art_slide_direction = (
+                1 if forward_steps <= backward_steps else -1
+            )
             self._mode_background_previous_id = self._mode_background_current_id
             self._mode_background_current_id = mode_id
             self._mode_background_fade_start = now
@@ -789,33 +795,36 @@ class ScoreGUI:
         previous.set_alpha(None)
 
     def _draw_mode_art(self, mode_id):
-        """A mode-art azonos idozitessel keresztfade-el, mint a hatter."""
+        """A mode-art iranyhelyes, cubic ease-out oldalvaltasat rajzolja."""
         current = self.mode_art.get(mode_id)
         if current is None:
             return None
 
-        current_y = self.MODE_ART_Y_OFFSETS.get(mode_id, 0)
-        self.screen.blit(current, (0, current_y))
-
         previous_id = self._mode_background_previous_id
         if previous_id is None:
+            self.screen.blit(current, (0, 0))
             return current
 
         previous = self.mode_art.get(previous_id)
         if previous is None:
+            self.screen.blit(current, (0, 0))
             return current
 
         progress = (
             (time.time() - self._mode_background_fade_start)
-            / self.MODE_BACKGROUND_FADE_SEC
+            / self.MODE_ART_SLIDE_SEC
         )
         if progress >= 1.0:
+            self.screen.blit(current, (0, 0))
             return current
 
-        previous_y = self.MODE_ART_Y_OFFSETS.get(previous_id, 0)
-        previous.set_alpha(round(255 * (1.0 - max(0.0, progress))))
-        self.screen.blit(previous, (0, previous_y))
-        previous.set_alpha(None)
+        progress = max(0.0, progress)
+        eased = 1.0 - (1.0 - progress) ** 3
+        direction = self._mode_art_slide_direction
+        current_x = round(direction * self.SCREEN_W * (1.0 - eased))
+        previous_x = round(-direction * self.SCREEN_W * eased)
+        self.screen.blit(current, (current_x, 0))
+        self.screen.blit(previous, (previous_x, 0))
         return current
 
     def _load_assets(self):
@@ -847,9 +856,9 @@ class ScoreGUI:
                 mode_bg = scale_fn(mode_bg, (self.SCREEN_W, self.SCREEN_H))
             self.mode_backgrounds[mode_id] = mode_bg
 
-        # Atlatszo, teljes kepernyos mode-art retegek. A rajzok kozepen
-        # helyezkednek el, mikozben a TOP_FRAME felhoi, also levelei es a
-        # jatekos-papirok a megszokott SCORE-kompozicioban takarjak oket.
+        # Atlatszo, teljes kepernyos mode-art retegek. Betolteskor egyszer
+        # 85%-ra kicsinyitjuk es feljebb kompozitaljuk oket; futas kozben mar
+        # csak a kesz 640x480-as feluleteket kell oldalra blittelni.
         mode_art_dir = os.path.join(score_dir, "MODE_ART")
         self.mode_art = {}
         for mode_id, filename in (
@@ -860,13 +869,21 @@ class ScoreGUI:
             (GAME_MULTIBALL_MAYHEM, "MODE_ART_MAYHEM.png"),
         ):
             art = pygame.image.load(os.path.join(mode_art_dir, filename)).convert_alpha()
-            if art.get_size() != (self.SCREEN_W, self.SCREEN_H):
-                scale_fn = (
-                    pygame.transform.smoothscale
-                    if _smoothscale_supported() else pygame.transform.scale
-                )
-                art = scale_fn(art, (self.SCREEN_W, self.SCREEN_H))
-            self.mode_art[mode_id] = art
+            target_size = (
+                round(self.SCREEN_W * self.MODE_ART_SCALE),
+                round(self.SCREEN_H * self.MODE_ART_SCALE),
+            )
+            scale_fn = (
+                pygame.transform.smoothscale
+                if _smoothscale_supported() else pygame.transform.scale
+            )
+            art = scale_fn(art, target_size)
+            composed = pygame.Surface(
+                (self.SCREEN_W, self.SCREEN_H), pygame.SRCALPHA
+            )
+            art_x = (self.SCREEN_W - target_size[0]) // 2
+            composed.blit(art, (art_x, self.MODE_ART_BASE_Y))
+            self.mode_art[mode_id] = composed
         
         # SUMMARY hatter (auto-belso naplementes kep) - NEM ugyanaz, mint a
         # name entry BGR2-je (az a zold-leveles), konnyu osszekeverni!
