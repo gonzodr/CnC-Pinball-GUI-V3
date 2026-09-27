@@ -9,6 +9,9 @@ class ScoreManager:
     TEAM_FILE_PATH = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "team_hiscores.json"
     )
+    QUICK_FILE_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "quick_hiscores.json"
+    )
 
     def __init__(self, file_path=None, placeholder="---"):
         self.file_path = file_path or self.FILE_PATH

@@ -10,7 +10,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from game_modes import GAME_COOP, GAME_MODE_MASK_ONE_PLAYER, step_game_mode
+from game_modes import (
+    GAME_COOP,
+    GAME_QUICK,
+    GAME_MODE_MASK_ONE_PLAYER,
+    step_game_mode,
+)
 from mock_input import MockInputController
 from protocol import GameEvent, parse_line
 from score_gui import ScoreGUI
@@ -279,6 +284,29 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(len(state.name_entry.get_chars()), 8)
         self.assertIn(" ", state.name_entry.alphabet)
         self.assertEqual(state.name_entry_title, "TEAM NAME")
+
+    def test_quick_uses_its_own_highscore_table(self):
+        state = StateMachine()
+        state.handle_event(GameEvent("GAME_START", (GAME_QUICK, 2)))
+
+        self.assertIs(state.highscore_manager, state.quick_score_manager)
+        self.assertEqual(state.highscore_title, "QUICK GAME HIGH SCORES")
+        self.assertNotEqual(
+            state.quick_score_manager.file_path,
+            state.score_manager.file_path,
+        )
+
+        state.handle_event(
+            GameEvent("SCORE_UPDATE", (40000, 2, 1, 3, 0, 0, GAME_QUICK))
+        )
+        state.handle_event(
+            GameEvent("SCORE_UPDATE", (55000, 2, 2, 3, 0, 0, GAME_QUICK))
+        )
+        state.handle_event(GameEvent("GAMEOVER"))
+
+        self.assertIs(state.highscore_manager, state.quick_score_manager)
+        self.assertEqual(state._pending_highscore_check, 55000)
+        self.assertEqual(state.pending_highscore_player, 2)
 
     def test_player_select_reuses_score_layout_without_menu_panel(self):
         gui_source = (SRC / "score_gui.py").read_text(encoding="utf-8")

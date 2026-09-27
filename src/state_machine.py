@@ -13,6 +13,7 @@ from munchies_abduction import MunchiesAbductionGame
 from video_catalog import resolve_serial_video_name
 from game_modes import (
     GAME_COOP,
+    GAME_QUICK,
     GAME_STANDARD,
     GAME_MODE_MASK_ONE_PLAYER,
     availability_mask_for_players,
@@ -77,6 +78,7 @@ class StateMachine:
         self.team_score_manager = ScoreManager(
             ScoreManager.TEAM_FILE_PATH, placeholder="--------"
         )
+        self.quick_score_manager = ScoreManager(ScoreManager.QUICK_FILE_PATH)
         self.highscore_manager = self.score_manager
         self.highscore_title = "HIGHSCORES"
         self.name_entry_title = None
@@ -200,6 +202,21 @@ class StateMachine:
     def _is_coop_game(self):
         return getattr(self, "running_game_mode", GAME_STANDARD) == GAME_COOP
 
+    def _select_highscore_profile(self):
+        """A futó rulesethez tartozó, egymástól teljesen külön ranglista."""
+        if self._is_coop_game():
+            self.highscore_manager = getattr(self, "team_score_manager", None)
+            self.highscore_title = "TEAM HIGH SCORES"
+            self.name_entry_title = "TEAM NAME"
+        elif getattr(self, "running_game_mode", GAME_STANDARD) == GAME_QUICK:
+            self.highscore_manager = getattr(self, "quick_score_manager", None)
+            self.highscore_title = "QUICK GAME HIGH SCORES"
+            self.name_entry_title = None
+        else:
+            self.highscore_manager = getattr(self, "score_manager", None)
+            self.highscore_title = "HIGHSCORES"
+            self.name_entry_title = None
+
     def handle_event(self, event: GameEvent):
         # Az analog teszt valaszai kizarolag a szerviz menue: ~5 Hz-en jonnek,
         # ezert nem naplozzuk oket a recent_events-be (elmosnak minden mast),
@@ -237,16 +254,7 @@ class StateMachine:
                 mode_id, self.game_mode_availability_mask, player_count=player_count
             )
             self.running_game_mode = self.selected_game_mode
-            self.highscore_manager = (
-                self.team_score_manager
-                if self._is_coop_game()
-                else self.score_manager
-            )
-            self.highscore_title = (
-                "TEAM HIGH SCORES"
-                if self._is_coop_game()
-                else "HIGHSCORES"
-            )
+            self._select_highscore_profile()
             self._in_attract_loop = False
             self.state = AppState.SCORE
             return
@@ -325,16 +333,7 @@ class StateMachine:
                     player_count=num_players,
                 )
                 self.running_game_mode = running_mode
-                self.highscore_manager = (
-                    self.team_score_manager
-                    if self._is_coop_game()
-                    else self.score_manager
-                )
-                self.highscore_title = (
-                    "TEAM HIGH SCORES"
-                    if self._is_coop_game()
-                    else "HIGHSCORES"
-                )
+                self._select_highscore_profile()
             if self._is_coop_game() and self.state != AppState.PLAYER_SELECT:
                 for team_player in range(1, num_players + 1):
                     self.players[team_player] = score
@@ -510,11 +509,7 @@ class StateMachine:
                         range(1, self.active_player_count + 1),
                         key=lambda p: self.players.get(p, 0),
                     )
-                    self.highscore_manager = getattr(
-                        self, "score_manager", None
-                    )
-                    self.highscore_title = "HIGHSCORES"
-                    self.name_entry_title = None
+                    self._select_highscore_profile()
                     self._pending_highscore_check = self.players[winner]
                     self.pending_highscore_player = winner
                 self._pending_game_over = True
@@ -579,11 +574,7 @@ class StateMachine:
                     player_count=self.active_player_count,
                 )
                 self.running_game_mode = self.selected_game_mode
-                self.highscore_manager = (
-                    self.team_score_manager
-                    if self._is_coop_game()
-                    else self.score_manager
-                )
+                self._select_highscore_profile()
                 self.state = AppState.SCORE
             elif self.state in (AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO, AppState.BEAT_SCORE) or \
                     (self._in_attract_loop and self.state == AppState.HIGHSCORE):
