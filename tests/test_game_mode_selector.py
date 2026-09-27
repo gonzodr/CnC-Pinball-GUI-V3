@@ -76,6 +76,30 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(gui.screen.get_at((0, 0))[:3], (0, 0, 255))
         self.assertIsNone(gui._mode_background_previous_id)
 
+    def test_mode_art_uses_the_same_crossfade_timing(self):
+        gui = ScoreGUI.__new__(ScoreGUI)
+        gui.screen = pygame.Surface((2, 2), pygame.SRCALPHA)
+        gui.mode_art = {
+            0: pygame.Surface((2, 2), pygame.SRCALPHA),
+            1: pygame.Surface((2, 2), pygame.SRCALPHA),
+        }
+        gui.mode_art[0].fill((255, 0, 0, 255))
+        gui.mode_art[1].fill((0, 0, 255, 255))
+        gui._mode_background_previous_id = 0
+        gui._mode_background_fade_start = 10.0
+
+        with patch("score_gui.time.time", return_value=10.0):
+            gui._draw_mode_art(1)
+        self.assertEqual(gui.screen.get_at((0, 0))[:3], (255, 0, 0))
+
+        gui.screen.fill((0, 0, 0, 0))
+        with patch(
+            "score_gui.time.time",
+            return_value=10.01 + ScoreGUI.MODE_BACKGROUND_FADE_SEC,
+        ):
+            gui._draw_mode_art(1)
+        self.assertEqual(gui.screen.get_at((0, 0))[:3], (0, 0, 255))
+
     def test_all_mode_background_assets_are_exact_display_size(self):
         score_assets = SRC / "assets" / "SCORE"
         for filename in (

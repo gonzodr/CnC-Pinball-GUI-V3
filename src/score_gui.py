@@ -788,6 +788,36 @@ class ScoreGUI:
         self.screen.blit(previous, (0, 0))
         previous.set_alpha(None)
 
+    def _draw_mode_art(self, mode_id):
+        """A mode-art azonos idozitessel keresztfade-el, mint a hatter."""
+        current = self.mode_art.get(mode_id)
+        if current is None:
+            return None
+
+        current_y = self.MODE_ART_Y_OFFSETS.get(mode_id, 0)
+        self.screen.blit(current, (0, current_y))
+
+        previous_id = self._mode_background_previous_id
+        if previous_id is None:
+            return current
+
+        previous = self.mode_art.get(previous_id)
+        if previous is None:
+            return current
+
+        progress = (
+            (time.time() - self._mode_background_fade_start)
+            / self.MODE_BACKGROUND_FADE_SEC
+        )
+        if progress >= 1.0:
+            return current
+
+        previous_y = self.MODE_ART_Y_OFFSETS.get(previous_id, 0)
+        previous.set_alpha(round(255 * (1.0 - max(0.0, progress))))
+        self.screen.blit(previous, (0, previous_y))
+        previous.set_alpha(None)
+        return current
+
     def _load_assets(self):
         # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).
         score_dir = os.path.join(ASSETS_DIR, "SCORE")
@@ -1527,11 +1557,8 @@ class ScoreGUI:
         # 1c. Player Select mode-art. Csak valasztas kozben latszik; a futó
         # SCORE-kepernyon tovabbra is a pontszam marad kozepen.
         selected_mode_art = (
-            self.mode_art.get(player_select_mode) if is_player_select else None
+            self._draw_mode_art(player_select_mode) if is_player_select else None
         )
-        if selected_mode_art is not None:
-            art_y = self.MODE_ART_Y_OFFSETS.get(player_select_mode, 0)
-            self.screen.blit(selected_mode_art, (0, art_y))
 
         # 2. MIDDLE_FRAME (leveles keret a papirok mogott)
         self.screen.blit(self.score_middle_frame, (0, 0))
