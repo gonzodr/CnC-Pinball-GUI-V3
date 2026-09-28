@@ -100,11 +100,9 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(gui.screen.get_at((0, 0))[:3], (0, 0, 255))
         self.assertIsNone(gui._mode_background_previous_id)
 
-    def test_coop_gameplay_fades_back_to_standard_background_only(self):
+    def test_coop_and_quick_gameplay_fade_back_to_standard_background(self):
         self.assertEqual(ScoreGUI._gameplay_background_mode(GAME_COOP), 0)
-        self.assertEqual(
-            ScoreGUI._gameplay_background_mode(GAME_QUICK), GAME_QUICK
-        )
+        self.assertEqual(ScoreGUI._gameplay_background_mode(GAME_QUICK), 0)
 
     def test_mode_art_slides_with_cubic_ease_out(self):
         gui = ScoreGUI.__new__(ScoreGUI)
@@ -140,6 +138,7 @@ class GameModeStateTests(unittest.TestCase):
             {0, 1, 2, 3, 4},
         )
         self.assertEqual(
+            tuple(ScoreGUI.MODE_ART_Y_OFFSETS.values()),
             (
                 ScoreGUI.MODE_ART_Y_STANDARD,
                 ScoreGUI.MODE_ART_Y_COOP,
@@ -147,9 +146,10 @@ class GameModeStateTests(unittest.TestCase):
                 ScoreGUI.MODE_ART_Y_MUNCHIES,
                 ScoreGUI.MODE_ART_Y_MAYHEM,
             ),
-            (-25, -25, -25, -25, -25),
         )
-        self.assertTrue(all(y < 0 for y in ScoreGUI.MODE_ART_Y_OFFSETS.values()))
+        self.assertTrue(
+            all(isinstance(y, int) for y in ScoreGUI.MODE_ART_Y_OFFSETS.values())
+        )
 
     def test_confirmed_mode_art_has_light_wiggle_and_fades_out(self):
         self.assertEqual(
@@ -161,7 +161,9 @@ class GameModeStateTests(unittest.TestCase):
         gui.SCREEN_H = 20
         gui.screen = pygame.Surface((20, 20), pygame.SRCALPHA)
         gui.mode_art = {0: pygame.Surface((20, 20), pygame.SRCALPHA)}
-        gui.mode_art[0].fill((255, 0, 0, 255))
+        gui._mode_background_previous_id = None
+        gui.mode_art[0].fill((0, 0, 0, 0))
+        pygame.draw.rect(gui.mode_art[0], (255, 0, 0, 255), (5, 5, 10, 10))
 
         gui._draw_mode_art(0, 0.0)
         self.assertEqual(gui.screen.get_at((10, 10)).a, 255)
@@ -174,6 +176,13 @@ class GameModeStateTests(unittest.TestCase):
         gui.screen.fill((0, 0, 0, 0))
         gui._draw_mode_art(0, 1.3)
         self.assertEqual(gui.screen.get_at((10, 10)).a, 0)
+
+        # Ujranyitaskor a PNG atlatszo resze tovabbra is atlatszo maradjon;
+        # a regi set_alpha(None) itt fekete, atlatszatlan teglalapot okozott.
+        gui.screen.fill((0, 0, 0, 0))
+        gui._draw_mode_art(0)
+        self.assertEqual(gui.screen.get_at((0, 0)).a, 0)
+        self.assertEqual(gui.screen.get_at((10, 10))[:3], (255, 0, 0))
 
     def test_mode_navigation_is_locked_during_confirmation(self):
         state = StateMachine()

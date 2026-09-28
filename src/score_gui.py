@@ -266,11 +266,11 @@ class ScoreGUI:
     MODE_CONFIRM_WIGGLE_PX = 5
     # Modonkenti kezi Y-finomhangolas (640x480-as kompoziciohoz).
     # Pozitiv ertek lejjebb, negativ ertek feljebb tolja az adott kepet.
-    MODE_ART_Y_STANDARD = -25
-    MODE_ART_Y_COOP = -25
-    MODE_ART_Y_QUICK = -25
-    MODE_ART_Y_MUNCHIES = -25
-    MODE_ART_Y_MAYHEM = -25
+    MODE_ART_Y_STANDARD = 0
+    MODE_ART_Y_COOP = 0
+    MODE_ART_Y_QUICK = 0
+    MODE_ART_Y_MUNCHIES = -15
+    MODE_ART_Y_MAYHEM = -20
     MODE_ART_Y_OFFSETS = {
         GAME_STANDARD: MODE_ART_Y_STANDARD,
         GAME_COOP: MODE_ART_Y_COOP,
@@ -771,8 +771,12 @@ class ScoreGUI:
 
     @staticmethod
     def _gameplay_background_mode(running_mode):
-        """Co-op only: selection tint fades back to the normal playfield BG."""
-        return GAME_STANDARD if running_mode == GAME_COOP else running_mode
+        """Selection-only tints that return to the normal green playfield."""
+        return (
+            GAME_STANDARD
+            if running_mode in (GAME_COOP, GAME_QUICK)
+            else running_mode
+        )
 
     def _draw_mode_background(self, requested_mode):
         """Hatterszin-atmenet, a folotte levo SCORE retegek mozgatasa nelkul."""
@@ -840,9 +844,12 @@ class ScoreGUI:
                 ),
             )
             alpha = round(255 * (1.0 - fade_progress ** 2))
+            original_alpha = current.get_alpha()
             current.set_alpha(alpha)
             self.screen.blit(current, (wiggle_x, 0))
-            current.set_alpha(None)
+            # SRCALPHA mode-artnal a None kikapcsolna a pixelenkenti alfat,
+            # amitől a kovetkezo selector-nyitaskor fekete teglalap lenne.
+            current.set_alpha(original_alpha)
             return current
 
         previous_id = self._mode_background_previous_id
