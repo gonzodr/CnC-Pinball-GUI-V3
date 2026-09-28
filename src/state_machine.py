@@ -707,6 +707,7 @@ class StateMachine:
                     self.game_mode_availability_mask,
                     -1,
                 )
+                self._mock_mode_audio.navigate(-1)
             elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.prev_char()
 
@@ -717,6 +718,7 @@ class StateMachine:
                     self.game_mode_availability_mask,
                     1,
                 )
+                self._mock_mode_audio.navigate(1)
             elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.next_char()
 
@@ -750,6 +752,7 @@ class StateMachine:
                 self.selected_game_mode = GAME_STANDARD
                 self.game_mode_availability_mask = GAME_MODE_MASK_ONE_PLAYER
                 self.state = AppState.PLAYER_SELECT
+                self._mock_mode_audio.start_selector()
 
         elif event.kind == "ATTRACT":
             # Elinditja a teljes attract-loopot: Press Play -> Special
@@ -1038,6 +1041,7 @@ class StateMachine:
                 self.state = AppState.SCORE
 
     def _enter_attract_loop(self, start_index=0):
+        self._mock_mode_audio.stop_selector()
         self.highscore_manager = self.score_manager
         self.highscore_title = "HIGHSCORES"
         self.name_entry_title = None

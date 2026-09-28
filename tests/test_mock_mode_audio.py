@@ -9,7 +9,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from game_modes import GAME_MUNCHIES, GAME_QUICK
-from mock_mode_audio import MODE_VOICES, SELECT_EFFECT, MockModeAudio
+from mock_mode_audio import (
+    MODE_VOICES,
+    NAV_KEYS,
+    NAV_WHOOSH,
+    SELECTOR_GROOVE,
+    SELECT_EFFECT,
+    MockModeAudio,
+)
 
 
 class FakeSound:
@@ -24,11 +31,30 @@ class MockModeAudioTests(unittest.TestCase):
     def _loaded_player(self):
         player = MockModeAudio(enabled=True, asset_dir="unused")
         player._loaded = True
-        filenames = {SELECT_EFFECT}
+        filenames = {SELECT_EFFECT, NAV_WHOOSH, *NAV_KEYS.values()}
         for voices in MODE_VOICES.values():
             filenames.update(voices)
         player._sounds = {filename: FakeSound() for filename in filenames}
         return player
+
+    def test_selector_music_is_one_shot_and_navigation_layers_key_with_whoosh(self):
+        player = self._loaded_player()
+        with (
+            patch("mock_mode_audio.Path.is_file", return_value=True),
+            patch("mock_mode_audio.pygame.mixer.music.load") as load,
+            patch("mock_mode_audio.pygame.mixer.music.play") as play,
+        ):
+            player.start_selector()
+        load.assert_called_once_with(str(Path("unused") / SELECTOR_GROOVE))
+        play.assert_called_once_with(loops=0)
+
+        player.navigate(-1)
+        self.assertEqual(player._sounds[NAV_KEYS[-1]].play_count, 1)
+        self.assertEqual(player._sounds[NAV_WHOOSH].play_count, 1)
+
+        player.navigate(1)
+        self.assertEqual(player._sounds[NAV_KEYS[1]].play_count, 1)
+        self.assertEqual(player._sounds[NAV_WHOOSH].play_count, 2)
 
     def test_quick_layers_select_fx_with_one_random_character_voice(self):
         player = self._loaded_player()

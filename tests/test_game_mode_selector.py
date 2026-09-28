@@ -217,6 +217,16 @@ class GameModeStateTests(unittest.TestCase):
         class FakeModeAudio:
             def __init__(self):
                 self.played = []
+                self.navigated = []
+
+            def start_selector(self):
+                pass
+
+            def stop_selector(self):
+                pass
+
+            def navigate(self, direction):
+                self.navigated.append(direction)
 
             def play(self, mode_id):
                 self.played.append(mode_id)
@@ -227,10 +237,12 @@ class GameModeStateTests(unittest.TestCase):
 
         state.handle_event(GameEvent("FLIPPER_RIGHT"))
         self.assertEqual(state.selected_game_mode, 2)
+        self.assertEqual(state._mock_mode_audio.navigated, [1])
 
         state.handle_event(GameEvent("SCORE_UPDATE", (0, 2, 1, 1, 0, 0)))
         state.handle_event(GameEvent("FLIPPER_LEFT"))
         self.assertEqual(state.selected_game_mode, 1)
+        self.assertEqual(state._mock_mode_audio.navigated, [1, -1])
 
         state.handle_event(GameEvent("START"))
         self.assertEqual(state.state, AppState.PLAYER_SELECT)
