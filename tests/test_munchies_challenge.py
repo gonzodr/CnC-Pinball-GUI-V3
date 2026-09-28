@@ -100,6 +100,15 @@ class MunchiesChallengeStateTests(unittest.TestCase):
         self.state.selected_game_mode = GAME_MUNCHIES
         self.state._preloaded_minigame = game
         self.state.handle_event(GameEvent("START"))
+        self.assertEqual(self.state.state, AppState.PLAYER_SELECT)
+        with patch(
+            "state_machine.time.monotonic",
+            return_value=(
+                self.state.mode_confirm_started_at
+                + self.state.MODE_CONFIRM_DURATION_SEC
+            ),
+        ):
+            self.state.tick()
         self.assertTrue(self.state._mock_munchies_challenge)
         self.assertEqual(self.state.state, AppState.MINIGAME)
         self.assertTrue(game.activated)

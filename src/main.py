@@ -31,6 +31,11 @@ SERIAL_PORT = "/dev/ttyACM0"   # ellenorizd a Pi-n: `ls /dev/ttyACM*` vagy `/dev
 SERIAL_BAUDRATE = 115200
 TARGET_FPS = 30                # 30 FPS bovven eleg egy pontszam-GUI-hoz
 
+# PC-s mock hangelozetes. A Raspberry Pi-n/eles gepen maradjon False, mert
+# ott ugyanezeket a hangokat az Arduino WAV Trigger jatsza le.
+ENABLE_MOCK_MODE_AUDIO = False
+MOCK_MODE_AUDIO_DIR = r"F:\Projects\cheech and chong\sound\OrigySD 2026"
+
 FIRMWARE_UPDATE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware_update.py")
 
 # A kulon repoban elo CnC Light Editor (fenyeffekt szerkeszto). A GUI venv
@@ -96,7 +101,11 @@ def main():
     serial_reader = SerialReader(SERIAL_PORT, SERIAL_BAUDRATE)
     serial_reader.start()
 
-    state = StateMachine(serial_reader)
+    state = StateMachine(
+        serial_reader,
+        mock_mode_audio_enabled=ENABLE_MOCK_MODE_AUDIO,
+        mock_mode_audio_dir=MOCK_MODE_AUDIO_DIR,
+    )
 
     gui = ScoreGUI()
     gui.acquire_display()   # induláskor is a GUI kapja a kijelzőt (attract-loop, nem VIDEO)

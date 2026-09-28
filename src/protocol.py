@@ -51,6 +51,12 @@ def parse_line(line: str) -> Optional[GameEvent]:
             mode_id = normalize_game_mode(mode_id, availability_mask)
             return GameEvent("GAME_MODE_STATE", (mode_id, availability_mask))
 
+        elif cmd == "GAME_MODE_CONFIRM" and len(parts) == 2:
+            mode_id = int(parts[1])
+            if not 0 <= mode_id < GAME_MODE_COUNT:
+                return None
+            return GameEvent("GAME_MODE_CONFIRM", (mode_id,))
+
         elif cmd == "GAME_START" and len(parts) == 3:
             mode_id, player_count = map(int, parts[1:3])
             if not 1 <= player_count <= 4:

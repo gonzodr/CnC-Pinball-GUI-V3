@@ -260,6 +260,10 @@ class ScoreGUI:
     MODE_BACKGROUND_FADE_SEC = 1.2
     MODE_ART_SCALE = 0.85
     MODE_ART_SLIDE_SEC = 0.6
+    MODE_CONFIRM_DURATION_SEC = 1.3
+    MODE_CONFIRM_FADE_START_SEC = 0.28
+    MODE_CONFIRM_WIGGLE_SEC = 0.30
+    MODE_CONFIRM_WIGGLE_PX = 5
     # Modonkenti kezi Y-finomhangolas (640x480-as kompoziciohoz).
     # Pozitiv ertek lejjebb, negativ ertek feljebb tolja az adott kepet.
     MODE_ART_Y_STANDARD = -25
@@ -812,11 +816,34 @@ class ScoreGUI:
         self.screen.blit(previous, (0, 0))
         previous.set_alpha(None)
 
-    def _draw_mode_art(self, mode_id):
+    def _draw_mode_art(self, mode_id, confirmation_elapsed=None):
         """A mode-art iranyhelyes, cubic ease-out oldalvaltasat rajzolja."""
         current = self.mode_art.get(mode_id)
         if current is None:
             return None
+
+        if confirmation_elapsed is not None:
+            duration = self.MODE_CONFIRM_DURATION_SEC
+            elapsed = max(0.0, confirmation_elapsed)
+            wiggle_progress = min(1.0, elapsed / self.MODE_CONFIRM_WIGGLE_SEC)
+            wiggle_x = round(
+                math.sin(wiggle_progress * math.pi * 4.0)
+                * self.MODE_CONFIRM_WIGGLE_PX
+                * (1.0 - wiggle_progress)
+            )
+            fade_progress = max(
+                0.0,
+                min(
+                    1.0,
+                    (elapsed - self.MODE_CONFIRM_FADE_START_SEC)
+                    / (duration - self.MODE_CONFIRM_FADE_START_SEC),
+                ),
+            )
+            alpha = round(255 * (1.0 - fade_progress ** 2))
+            current.set_alpha(alpha)
+            self.screen.blit(current, (wiggle_x, 0))
+            current.set_alpha(None)
+            return current
 
         previous_id = self._mode_background_previous_id
         if previous_id is None:
@@ -1597,8 +1624,18 @@ class ScoreGUI:
 
         # 1c. Player Select mode-art. Csak valasztas kozben latszik; a futó
         # SCORE-kepernyon tovabbra is a pontszam marad kozepen.
+        confirmation_elapsed = None
+        if (
+            is_player_select
+            and getattr(state, "mode_confirm_active", False)
+            and getattr(state, "mode_confirm_mode", None) == player_select_mode
+        ):
+            confirmation_elapsed = (
+                time.monotonic() - state.mode_confirm_started_at
+            )
         selected_mode_art = (
-            self._draw_mode_art(player_select_mode) if is_player_select else None
+            self._draw_mode_art(player_select_mode, confirmation_elapsed)
+            if is_player_select else None
         )
 
         # 2. MIDDLE_FRAME (leveles keret a papirok mogott)

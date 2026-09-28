@@ -52,6 +52,13 @@ class GameModeProtocolTests(unittest.TestCase):
         )
         self.assertIsNone(parse_line("GAME_START,2,5"))
 
+    def test_mode_confirmation_protocol(self):
+        self.assertEqual(
+            parse_line("GAME_MODE_CONFIRM,2"),
+            GameEvent("GAME_MODE_CONFIRM", (2,)),
+        )
+        self.assertIsNone(parse_line("GAME_MODE_CONFIRM,5"))
+
     def test_score_snapshot_accepts_latched_running_mode(self):
         self.assertEqual(
             parse_line("score,42000,2,2,1,0,0,1"),
@@ -144,6 +151,38 @@ class GameModeStateTests(unittest.TestCase):
         )
         self.assertTrue(all(y < 0 for y in ScoreGUI.MODE_ART_Y_OFFSETS.values()))
 
+    def test_confirmed_mode_art_has_light_wiggle_and_fades_out(self):
+        self.assertEqual(
+            ScoreGUI.MODE_CONFIRM_DURATION_SEC,
+            StateMachine.MODE_CONFIRM_DURATION_SEC,
+        )
+        gui = ScoreGUI.__new__(ScoreGUI)
+        gui.SCREEN_W = 20
+        gui.SCREEN_H = 20
+        gui.screen = pygame.Surface((20, 20), pygame.SRCALPHA)
+        gui.mode_art = {0: pygame.Surface((20, 20), pygame.SRCALPHA)}
+        gui.mode_art[0].fill((255, 0, 0, 255))
+
+        gui._draw_mode_art(0, 0.0)
+        self.assertEqual(gui.screen.get_at((10, 10)).a, 255)
+
+        gui.screen.fill((0, 0, 0, 0))
+        gui._draw_mode_art(0, ScoreGUI.MODE_CONFIRM_WIGGLE_SEC / 8.0)
+        self.assertEqual(gui.screen.get_at((0, 10)).a, 0)
+        self.assertEqual(gui.screen.get_at((10, 10)).a, 255)
+
+        gui.screen.fill((0, 0, 0, 0))
+        gui._draw_mode_art(0, 1.3)
+        self.assertEqual(gui.screen.get_at((10, 10)).a, 0)
+
+    def test_mode_navigation_is_locked_during_confirmation(self):
+        state = StateMachine()
+        state.state = AppState.PLAYER_SELECT
+        state.selected_game_mode = GAME_QUICK
+        state.handle_event(GameEvent("GAME_MODE_CONFIRM", (GAME_QUICK,)))
+        state.handle_event(GameEvent("FLIPPER_RIGHT"))
+        self.assertEqual(state.selected_game_mode, GAME_QUICK)
+
     def test_all_mode_background_assets_are_exact_display_size(self):
         score_assets = SRC / "assets" / "SCORE"
         for filename in (
@@ -175,7 +214,15 @@ class GameModeStateTests(unittest.TestCase):
                 self.assertEqual(art.get_at((0, 0)).a, 0)
 
     def test_pc_mock_can_select_players_modes_and_start(self):
+        class FakeModeAudio:
+            def __init__(self):
+                self.played = []
+
+            def play(self, mode_id):
+                self.played.append(mode_id)
+
         state = StateMachine()
+        state._mock_mode_audio = FakeModeAudio()
         state.state = AppState.PLAYER_SELECT
 
         state.handle_event(GameEvent("FLIPPER_RIGHT"))
@@ -186,6 +233,15 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(state.selected_game_mode, 1)
 
         state.handle_event(GameEvent("START"))
+        self.assertEqual(state.state, AppState.PLAYER_SELECT)
+        self.assertTrue(state.mode_confirm_active)
+        self.assertEqual(state._mock_mode_audio.played, [GAME_COOP])
+
+        with patch(
+            "state_machine.time.monotonic",
+            return_value=state.mode_confirm_started_at + state.MODE_CONFIRM_DURATION_SEC,
+        ):
+            state.tick()
         self.assertEqual(state.state, AppState.SCORE)
         self.assertEqual(state.running_game_mode, 1)
         self.assertEqual(state.active_player_count, 2)

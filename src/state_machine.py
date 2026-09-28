@@ -11,6 +11,7 @@ from service_menu import ServiceMenuController
 from minigame_settings import MinigameSettingsManager
 from munchies_abduction import MunchiesAbductionGame
 from video_catalog import resolve_serial_video_name
+from mock_mode_audio import MockModeAudio
 from game_modes import (
     GAME_COOP,
     GAME_QUICK,
@@ -73,9 +74,18 @@ class StateMachine:
     MINIGAME_HEARTBEAT_SEC = 0.50
     MINIGAME_DONE_RETRY_SEC = 0.25
     MINIGAME_DONE_RETRY_WINDOW_SEC = 3.0
+    MODE_CONFIRM_DURATION_SEC = 1.3
 
-    def __init__(self, serial_reader=None):
+    def __init__(
+        self,
+        serial_reader=None,
+        mock_mode_audio_enabled=False,
+        mock_mode_audio_dir=None,
+    ):
         self.serial_reader = serial_reader  # csak a szerviz menu Serial Monitor kepernyojehez
+        self._mock_mode_audio = MockModeAudio(
+            mock_mode_audio_enabled, mock_mode_audio_dir
+        )
         self.score_manager = ScoreManager()
         self.team_score_manager = ScoreManager(
             ScoreManager.TEAM_FILE_PATH, placeholder="--------"
@@ -100,6 +110,10 @@ class StateMachine:
         self.selected_game_mode = GAME_STANDARD
         self.running_game_mode = GAME_STANDARD
         self.game_mode_availability_mask = GAME_MODE_MASK_ONE_PLAYER
+        self.mode_confirm_active = False
+        self.mode_confirm_mode = GAME_STANDARD
+        self.mode_confirm_started_at = 0.0
+        self._mock_mode_start_pending = False
         
         self.current_bonus = 0
         self.current_bonusx = 0
@@ -271,6 +285,21 @@ class StateMachine:
             self.state = AppState.PLAYER_SELECT
             return
 
+        if event.kind == "GAME_MODE_CONFIRM":
+            mode_id = normalize_game_mode(
+                event.args[0],
+                self.game_mode_availability_mask,
+                player_count=self.active_player_count,
+            )
+            self.selected_game_mode = mode_id
+            self.mode_confirm_mode = mode_id
+            self.mode_confirm_started_at = time.monotonic()
+            self.mode_confirm_active = True
+            self._mock_mode_start_pending = False
+            self._in_attract_loop = False
+            self.state = AppState.PLAYER_SELECT
+            return
+
         if event.kind == "GAME_START":
             mode_id, player_count = event.args
             self.active_player_count = player_count
@@ -281,6 +310,8 @@ class StateMachine:
                 mode_id, self.game_mode_availability_mask, player_count=player_count
             )
             self.running_game_mode = self.selected_game_mode
+            self.mode_confirm_active = False
+            self._mock_mode_start_pending = False
             self._mock_munchies_challenge = False
             self._select_highscore_profile()
             self._in_attract_loop = False
@@ -670,7 +701,7 @@ class StateMachine:
                 self._pending_game_over = False
 
         elif event.kind == "FLIPPER_LEFT":
-            if self.state == AppState.PLAYER_SELECT:
+            if self.state == AppState.PLAYER_SELECT and not self.mode_confirm_active:
                 self.selected_game_mode = step_game_mode(
                     self.selected_game_mode,
                     self.game_mode_availability_mask,
@@ -680,7 +711,7 @@ class StateMachine:
                 self.name_entry.prev_char()
 
         elif event.kind == "FLIPPER_RIGHT":
-            if self.state == AppState.PLAYER_SELECT:
+            if self.state == AppState.PLAYER_SELECT and not self.mode_confirm_active:
                 self.selected_game_mode = step_game_mode(
                     self.selected_game_mode,
                     self.game_mode_availability_mask,
@@ -697,26 +728,19 @@ class StateMachine:
             if self.state == AppState.NAME_ENTRY:
                 self.name_entry.skip()
             elif self.state == AppState.PLAYER_SELECT:
-                # PC-s mock inditas. A valodi gep ugyanezt a GAME_START
-                # soros uzenettel vegzi, ez az ag azt nem helyettesiti.
-                self.selected_game_mode = normalize_game_mode(
-                    self.selected_game_mode,
-                    self.game_mode_availability_mask,
-                    player_count=self.active_player_count,
-                )
-                self.running_game_mode = self.selected_game_mode
-                self._mock_munchies_challenge = False
-                self._select_highscore_profile()
-                self.state = AppState.SCORE
-                if self.running_game_mode == GAME_MUNCHIES:
-                    # PC-s mockban nincs firmware, amely MG_START-ot kuldene,
-                    # ezert ugyanazt a challenge lifecycle-t helyben inditjuk.
-                    self.players = {1: 0, 2: 0, 3: 0, 4: 0}
-                    self.current_player = 1
-                    self.munchies_challenge_active = True
-                    self.munchies_challenge_phase = "RUNNING"
-                    self._mock_munchies_challenge = True
-                    self.handle_event(GameEvent("MUNCHIES_START"))
+                # PC-s mockban az Arduino GAME_MODE_CONFIRM -> 1.3 s ->
+                # GAME_START sorrendjet helyben reprodukaljuk.
+                if not self.mode_confirm_active:
+                    self.selected_game_mode = normalize_game_mode(
+                        self.selected_game_mode,
+                        self.game_mode_availability_mask,
+                        player_count=self.active_player_count,
+                    )
+                    self.mode_confirm_mode = self.selected_game_mode
+                    self.mode_confirm_started_at = time.monotonic()
+                    self.mode_confirm_active = True
+                    self._mock_mode_start_pending = True
+                    self._mock_mode_audio.play(self.selected_game_mode)
             elif self.state in (AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO, AppState.BEAT_SCORE) or \
                     (self._in_attract_loop and self.state == AppState.HIGHSCORE):
                 # Barmely attract-kepernyorol (akar a teljes loopban, akar
@@ -1035,6 +1059,25 @@ class StateMachine:
         if self.state == AppState.SERVICE_MENU:
             self.service_menu.tick(protocol_now)
         self._service_minigame_protocol(protocol_now)
+
+        if (
+            self._mock_mode_start_pending
+            and self.state == AppState.PLAYER_SELECT
+            and protocol_now - self.mode_confirm_started_at
+                >= self.MODE_CONFIRM_DURATION_SEC
+        ):
+            mode_id = self.mode_confirm_mode
+            player_count = self.active_player_count
+            self.handle_event(GameEvent("GAME_START", (mode_id, player_count)))
+            if mode_id == GAME_MUNCHIES:
+                # PC-s mockban nincs firmware, amely MG_START-ot kuldene,
+                # ezert ugyanazt a challenge lifecycle-t helyben inditjuk.
+                self.players = {1: 0, 2: 0, 3: 0, 4: 0}
+                self.current_player = 1
+                self.munchies_challenge_active = True
+                self.munchies_challenge_phase = "RUNNING"
+                self._mock_munchies_challenge = True
+                self.handle_event(GameEvent("MUNCHIES_START"))
 
         if self.state == AppState.MINIGAME and self.minigame is not None:
             now = protocol_now
