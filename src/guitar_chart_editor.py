@@ -272,7 +272,31 @@ def build_guitar_heatmap(audio_path, duration_ms, width=None, height=192):
                   for lane in range(3)) for column in raw_columns]
 
 
-def candidates_from_guitar_heatmap(heatmap, duration_ms, min_gap_ms=90):
+def build_activity_envelope(samples, column_count):
+    """Return absolute guitar-stem loudness per heatmap column, normalized."""
+    if not samples or column_count <= 0:
+        return []
+    samples_per_column = len(samples) / column_count
+    raw = []
+    for column in range(column_count):
+        start = round(column * samples_per_column)
+        end = max(start + 1, round((column + 1) * samples_per_column))
+        frame = samples[start:min(end, len(samples))]
+        raw.append(math.sqrt(sum(value * value for value in frame)
+                             / max(1, len(frame))))
+    ordered = sorted(raw)
+    noise = ordered[min(len(ordered) - 1, round(len(ordered) * 0.10))]
+    reference = ordered[min(len(ordered) - 1, round(len(ordered) * 0.95))]
+    scale = max(1.0, reference - noise)
+    normalized = [clamp((value - noise) / scale, 0.0, 1.0) for value in raw]
+    # Harom oszlopos simitas: a blokkhatartol nem keletkezik hamis attack.
+    return [sum(normalized[max(0, i - 1):min(len(normalized), i + 2)])
+            / len(normalized[max(0, i - 1):min(len(normalized), i + 2)])
+            for i in range(len(normalized))]
+
+
+def candidates_from_guitar_heatmap(heatmap, duration_ms, min_gap_ms=90,
+                                   activity=None):
     """Find guitar-rhythm attacks from positive spectral flux."""
     if len(heatmap) < 4 or duration_ms <= 0:
         return []
@@ -297,8 +321,33 @@ def candidates_from_guitar_heatmap(heatmap, duration_ms, min_gap_ms=90):
         deviation = statistics.median(abs(value - median) for value in positive)
         lane_thresholds.append(max(0.035, median + 1.5 * deviation))
 
-    scores = [max(row[lane] / lane_thresholds[lane] for lane in range(3))
-              for row in flux]
+    spectral_scores = [
+        max(row[lane] / lane_thresholds[lane] for lane in range(3))
+        for row in flux
+    ]
+    if activity is None or len(activity) != len(heatmap):
+        activity = [1.0] * len(heatmap)
+    activity_flux = []
+    for index, value in enumerate(activity):
+        history = activity[max(0, index - 6):index]
+        baseline = statistics.median(history) if history else value
+        activity_flux.append(max(0.0, value - baseline))
+    positive_activity_flux = [value for value in activity_flux if value > 0]
+    activity_threshold = (
+        max(0.025, statistics.median(positive_activity_flux) * 1.5)
+        if positive_activity_flux else 1.0
+    )
+    scores = []
+    for index, spectral_score in enumerate(spectral_scores):
+        # A relative spektrumcsucs csak akkor ervenyes, ha a guitar stem
+        # abszolut hangereje sem halk. Ez szuri ki a szunetben felerositett
+        # dob/cin athallast.
+        if activity[index] < 0.13:
+            scores.append(0.0)
+            continue
+        onset_boost = activity_flux[index] / activity_threshold
+        scores.append(spectral_score * (0.45 + activity[index])
+                      + onset_boost * 0.70)
     gap_columns = max(1, round(min_gap_ms / duration_ms * len(heatmap)))
     peaks = []
     for index in range(1, len(scores) - 1):
@@ -700,6 +749,9 @@ class GuitarChartEditor:
         self.drag_offset_ms = 0.0
         self.guitar_heatmap = None
         self.guitar_heatmap_duration_ms = 0.0
+        self.guitar_activity = None
+        self.guitar_stem_path = None
+        self.auditioning_guitar = False
         self.view_span_ms = 6000.0
         self.status, self.status_until = "", 0.0
         self.leave_confirm_until = 0.0
@@ -731,6 +783,13 @@ class GuitarChartEditor:
         self.document, self.mode = document, "editor"
         self.guitar_heatmap = None
         self.guitar_heatmap_duration_ms = 0.0
+        self.guitar_activity = None
+        companion = document.audio_path.with_name(
+            f"{document.audio_path.stem}.guitar.wav")
+        cached = cached_guitar_stem_path(document.audio_path)
+        self.guitar_stem_path = companion if companion.is_file() else (
+            cached if cached.is_file() else None)
+        self.auditioning_guitar = False
         self.tap_times.clear()
         self.set_status("Chart betoltve" if document.chart_path.is_file()
                         else "Uj chart")
@@ -743,6 +802,9 @@ class GuitarChartEditor:
         self.dragging_edge = None
         self.guitar_heatmap = None
         self.guitar_heatmap_duration_ms = 0.0
+        self.guitar_activity = None
+        self.guitar_stem_path = None
+        self.auditioning_guitar = False
         self.rescan()
 
     def request_close_song(self):
@@ -860,14 +922,17 @@ class GuitarChartEditor:
 
             guitar_stem = ensure_guitar_stem(
                 self.document.audio_path, progress_hook=show_stem_progress)
+            self.guitar_stem_path = guitar_stem
             samples = decode_audio_mono_pcm(guitar_stem)
             duration_ms = len(samples) * 1000.0 / AUTO_SAMPLE_RATE
             min_gap = int(clamp(self.document.grid_step_ms * 0.70, 80, 240))
             heatmap = build_guitar_heatmap(guitar_stem, duration_ms)
+            activity = build_activity_envelope(samples, len(heatmap))
             candidates = candidates_from_guitar_heatmap(
-                heatmap, duration_ms, min_gap_ms=min_gap)
+                heatmap, duration_ms, min_gap_ms=min_gap, activity=activity)
             self.guitar_heatmap = heatmap
             self.guitar_heatmap_duration_ms = duration_ms
+            self.guitar_activity = activity
             method = "AI guitar stem"
         except (OSError, RuntimeError) as exc:
             self.set_status(f"Auto chart hiba: {exc}", 6.0)
@@ -877,6 +942,30 @@ class GuitarChartEditor:
         self.set_status(
             f"Auto chart {action}: {added} note, {method} (Ctrl+Z visszavonja)",
             5.0,
+        )
+
+    def toggle_guitar_audition(self):
+        """Switch playback between the master and cached guitar stem."""
+        if self.guitar_stem_path is None or not self.guitar_stem_path.is_file():
+            self.set_status("Meg nincs guitar stem; elobb nyomj F-et", 4.0)
+            return
+        position = self.cursor_ms()
+        was_playing = self.transport.playing
+        target = (self.document.audio_path if self.auditioning_guitar
+                  else self.guitar_stem_path)
+        try:
+            self.transport.load(target)
+            self.transport.seek(position)
+            if was_playing:
+                self.transport.play()
+        except pygame.error as exc:
+            self.set_status(f"Stem lejatszasi hiba: {exc}", 5.0)
+            return
+        self.auditioning_guitar = not self.auditioning_guitar
+        self.set_status(
+            "Lejatszas: CSAK GUITAR STEM" if self.auditioning_guitar
+            else "Lejatszas: EREDETI MASTER",
+            4.0,
         )
 
     def handle_browser_key(self, event):
@@ -958,6 +1047,8 @@ class GuitarChartEditor:
             self.set_status(f"{len(document.notes)} note ujrakvantalva")
         elif event.key == pygame.K_f:
             self.auto_generate_chart(replace=shift)
+        elif event.key == pygame.K_h:
+            self.toggle_guitar_audition()
         elif event.key in (pygame.K_COMMA, pygame.K_LESS):
             document.bpm = clamp(document.bpm - (0.1 if shift else 0.5),
                                  20.0, 400.0)
@@ -1130,6 +1221,8 @@ class GuitarChartEditor:
                     0, heat_count - 1,
                 ))
                 for lane, strength in enumerate(self.guitar_heatmap[heat_index]):
+                    if self.guitar_activity:
+                        strength *= self.guitar_activity[heat_index]
                     if strength < 0.04:
                         continue
                     base = (26 + lane * 3, 25 + lane * 3, 43 + lane * 3)
@@ -1192,7 +1285,7 @@ class GuitarChartEditor:
             "A/S/D: note (tartva = sustain)   SPACE: play/pause",
             "Bal/Jobb: 100ms   eger: mozgat; ket feher szel: hossz",
             "T: tap tempo   B: beat start   G: racs   ,/.: BPM",
-            "F: auto chart   Shift+F: csere   Q/R: kvantalas   [/]: zoom",
+            "F: auto chart   Shift+F: csere   H: master/gitar   [/]: zoom",
             "Ctrl+S: ment  Ctrl+Z/Y: undo/redo  Del: torol  Esc: lista",
         )
         for index, line in enumerate(help_lines):

@@ -346,6 +346,7 @@ Másold a szerkesztendő `.ogg`, `.mp3`, `.wav` vagy `.flac` fájlt a
 | `Q` | Automatikus kvantálás be/ki |
 | `R` | Minden note újrakvantálása az eltárolt nyers időpontból |
 | `F` | Automatikus chart a gitárfrekvenciák hőtérképéből; `Shift+F` lecseréli a meglévő note-okat |
+| `H` | Lejátszás váltása az eredeti master és az AI által leválasztott guitar stem között |
 | `,` / `.` | BPM csökkentése / növelése |
 | `-` / `+` | Billentyűzet/audio input-késleltetés ±5 ms |
 | `Ctrl+S` | Chart mentése |

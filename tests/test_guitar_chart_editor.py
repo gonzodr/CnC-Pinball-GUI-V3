@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from guitar_chart_editor import (
     ChartDocument,
     GuitarChartEditor,
+    build_activity_envelope,
     candidates_from_guitar_heatmap,
     detect_note_candidates,
     ensure_guitar_stem,
@@ -117,6 +118,23 @@ class GuitarChartEditorTests(unittest.TestCase):
             audio.touch()
             companion.touch()
             self.assertEqual(ensure_guitar_stem(audio), companion)
+
+    def test_quiet_stem_leakage_cannot_create_notes(self):
+        heatmap = [(0.05, 0.05, 0.05) for _index in range(101)]
+        heatmap[20] = (0.95, 0.08, 0.06)  # loud guitar attack
+        heatmap[50] = (0.08, 0.95, 0.06)  # spectral leak in a guitar gap
+        activity = [0.0] * 101
+        activity[19:22] = (0.3, 0.9, 0.5)
+        activity[49:52] = (0.01, 0.03, 0.01)
+        candidates = candidates_from_guitar_heatmap(
+            heatmap, 1000, min_gap_ms=80, activity=activity)
+        self.assertEqual(candidates, [(200, 0)])
+
+    def test_activity_envelope_preserves_loud_and_quiet_regions(self):
+        samples = [0] * 100 + [10_000] * 100
+        activity = build_activity_envelope(samples, 10)
+        self.assertLess(max(activity[:3]), 0.05)
+        self.assertGreater(min(activity[-3:]), 0.9)
 
     def test_ctrl_s_is_save_not_middle_lane_note(self):
         editor = object.__new__(GuitarChartEditor)
