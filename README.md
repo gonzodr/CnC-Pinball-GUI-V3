@@ -323,6 +323,45 @@ gépelni (pl. nevet beírni) ütközés nélkül.
   `VERY HARD`. `←`/`→` állítja, `R` visszaállítja Normalra; a választás
   újraindítás után is megmarad
 - **Verzió info** — Python/pygame verzió + git commit hash
+- **Guitar chart editor (F10)** — önálló, háromsávos chart-szerkesztő.
+  A `src/assets/GuitarHero/Songs` könyvtárból választ zenét, a feljátszott
+  note-okat automatikusan a beállított BPM-rácsra kvantálja, és a zene mellé
+  `.chart.json` fájlt ment. A szerkesztő futása alatt a fő GUI átadja neki a
+  kijelzőt és a hangkimenetet; kilépés után automatikusan visszatér a
+  szervizmenübe.
+
+### Guitar chart editor használata
+
+Másold a szerkesztendő `.ogg`, `.mp3`, `.wav` vagy `.flac` fájlt a
+`src/assets/GuitarHero/Songs` mappába, majd nyisd meg az F10-es menüpontból.
+
+| Gomb | Funkció |
+|---|---|
+| `A` / `S` / `D` | Bal / Shoot / jobb note feljátszása; nyomva tartva sustain |
+| `Space` | Lejátszás / szünet |
+| `←` / `→` | Pozíció ±100 ms; Shifttel ±1 másodperc |
+| `T` | Tap tempo; ütemenként lenyomva BPM-et mér |
+| `B` | Az aktuális pozíció legyen a kvantálási rács kezdete |
+| `G` | Rács váltása: negyed, nyolcad, triola, tizenhatod stb. |
+| `Q` | Automatikus kvantálás be/ki |
+| `R` | Minden note újrakvantálása az eltárolt nyers időpontból |
+| `F` | Automatikus chart készítése a zene attackjaiból; `Shift+F` lecseréli a meglévő note-okat |
+| `,` / `.` | BPM csökkentése / növelése |
+| `-` / `+` | Billentyűzet/audio input-késleltetés ±5 ms |
+| `Ctrl+S` | Chart mentése |
+| `Ctrl+Z` / `Ctrl+Y` | Visszavonás / újra |
+
+Egérrel a note közepe húzva áthelyezhető. A kijelölt note két fehér
+szélfogantyúját húzva a kezdete és a vége külön állítható, így a sustain
+hossza közvetlenül a timeline-on szerkeszthető. Az automatikus chart-készítő
+az `ffmpeg` dekóderrel keresi meg a zene tranzienseit, majd a jelenlegi
+BPM-rácsra kvantálja őket; kiindulási chartnak készült, amit érdemes kézzel
+finomítani.
+
+A kvantálás mindig megőrzi a kézzel feljátszott `raw_time_ms` és
+`raw_duration_ms` értékeket. Emiatt a BPM, az ütemkezdet, a rácsfelosztás vagy
+az input-késleltetés később módosítható, majd az `R` gombbal veszteség nélkül
+újraszámolható az egész chart.
 
 Navigáció: `↑`/`↓` mozgás, `Enter` kiválaszt, `Esc` vissza/kilépés (a
 főmenüből kilépve, vagy a Hiscore szerkesztésből közvetlenül is, a program

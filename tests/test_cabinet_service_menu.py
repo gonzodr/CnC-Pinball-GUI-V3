@@ -56,6 +56,19 @@ class CabinetServiceMenuTests(unittest.TestCase):
         )
         self.assertTrue(all(getattr(event, "cabinet", False) for event in captured))
 
+    def test_guitar_chart_editor_sets_external_launch_flag(self):
+        menu = object.__new__(ServiceMenuController)
+        menu.cursor = next(
+            index for index, (target, _label) in enumerate(menu.MAIN_ITEMS)
+            if target == "guitar_chart_editor"
+        )
+        menu.should_launch_guitar_chart_editor = False
+        menu.should_launch_firmware_update = False
+        menu.should_launch_light_editor = False
+        menu.should_exit = False
+        menu._activate_main_item()
+        self.assertTrue(menu.should_launch_guitar_chart_editor)
+
 
 if __name__ == "__main__":
     unittest.main()

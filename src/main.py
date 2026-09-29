@@ -43,6 +43,9 @@ FIRMWARE_UPDATE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__))
 # igy nem kell kulon telepiteni. A ~ a szolgaltatas HOME-jara oldodik fel.
 LIGHT_EDITOR_DIR = os.path.expanduser("~/CnC-Light-Editor")
 LIGHT_EDITOR_SCRIPT = os.path.join(LIGHT_EDITOR_DIR, "main.py")
+GUITAR_CHART_EDITOR_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "guitar_chart_editor.py"
+)
 
 
 def run_firmware_update(gui, serial_reader):
@@ -93,6 +96,28 @@ def run_light_editor(gui, serial_reader):
         serial_reader.start()
         gui.acquire_display()
     print("[main] light editor vege, GUI folytatva.")
+
+
+def run_guitar_chart_editor(gui, serial_reader):
+    """Kulon folyamatban futtatja a gitar-chart szerkesztot."""
+    if not os.path.isfile(GUITAR_CHART_EDITOR_SCRIPT):
+        print(f"[main] Guitar chart editor nem talalhato: {GUITAR_CHART_EDITOR_SCRIPT}")
+        return
+    print("[main] guitar chart editor inditasa...")
+    command = [sys.executable, GUITAR_CHART_EDITOR_SCRIPT]
+    if getattr(gui, "_video_driver", "") == "kmsdrm":
+        command.append("--fullscreen")
+    gui.release_display()
+    serial_reader.stop()
+    try:
+        subprocess.run(
+            command,
+            cwd=os.path.dirname(os.path.dirname(GUITAR_CHART_EDITOR_SCRIPT)),
+        )
+    finally:
+        serial_reader.start()
+        gui.acquire_display()
+    print("[main] guitar chart editor vege, GUI folytatva.")
 
 
 def main():
@@ -176,7 +201,7 @@ def main():
             else:
                 if gui.has_quit_key_event(pygame_events):
                     running = False
-                # Globalis F-gombok (F1..F10): VAK hasznalatra - barmely
+                # Globalis F-gombok (F1..F12): VAK hasznalatra - barmely
                 # nyugalmi allapotbol egyetlen gombnyomassal megnyitjak a
                 # szerviz menut ES vegrehajtjak a menupontot (pl. F7 =
                 # firmware update, monitor nelkul, powerbankrol a pinceben).
@@ -205,6 +230,12 @@ def main():
                 state.service_menu.should_launch_light_editor = False
                 run_light_editor(gui, serial_reader)
                 continue  # ez a korulfordulas mar ne probaljon SERVICE_MENU-t rajzolni
+
+            if (state.state == AppState.SERVICE_MENU
+                    and state.service_menu.should_launch_guitar_chart_editor):
+                state.service_menu.should_launch_guitar_chart_editor = False
+                run_guitar_chart_editor(gui, serial_reader)
+                continue
 
             # 4. Allapotvaltas kezelese
             transition = state.consume_transition()

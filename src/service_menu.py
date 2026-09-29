@@ -43,7 +43,8 @@ class ServiceMenuController:
         ("minigame_difficulty", "F7 - Minigame difficulty"),
         ("version_info", "F8 - Verzio info"),
         ("light_editor", "F9 - Light editor (fenyeffekt szerkeszto)"),
-        ("exit", "F10 - Kilepes"),
+        ("guitar_chart_editor", "F10 - Guitar chart editor"),
+        ("exit", "F11 - Kilepes"),
     ]
 
     # A negy teszt-kepernyo egy helyen. Mindegyik "nezd meg, mit csinal a
@@ -85,6 +86,8 @@ class ServiceMenuController:
         # ha True, elengedi a kijelzot/soros portot, elinditja a kulon
         # CnC Light Editor pygame-appot, majd visszaveszi oket.
         self.should_launch_light_editor = False
+        # A repoban elo Guitar chart editor is kulon pygame-appkent fut.
+        self.should_launch_guitar_chart_editor = False
         self.screen = "main"
         self.cursor = 0
         self.status_message = ""
@@ -115,6 +118,9 @@ class ServiceMenuController:
         """Minden belepeskor (Ctrl+M) a fomenurol indulunk ujra."""
         self._leave_analog_test_if_needed()
         self.should_exit = False
+        self.should_launch_firmware_update = False
+        self.should_launch_light_editor = False
+        self.should_launch_guitar_chart_editor = False
         self.screen = "main"
         self.cursor = 0
         self.status_message = ""
@@ -129,7 +135,7 @@ class ServiceMenuController:
 
     @classmethod
     def fkey_in_events(cls, pygame_events):
-        """Az elso F1..F10 KEYDOWN a listaban, vagy None (main.py hasznalja
+        """Az elso F1..F12 KEYDOWN a listaban, vagy None (main.py hasznalja
         a menun KIVULI, globalis F-gomb figyeleshez)."""
         for event in pygame_events:
             if event.type == pygame.KEYDOWN and event.key in cls.FKEYS:
@@ -163,6 +169,8 @@ class ServiceMenuController:
             # Ugyanaz a mechanizmus, mint a firmware update-nel: main.py
             # inditja el a kulon szerkeszto-appot es adja vissza a kijelzot.
             self.should_launch_light_editor = True
+        elif target == "guitar_chart_editor":
+            self.should_launch_guitar_chart_editor = True
         elif target == "find_arduino":
             self._handle_find_arduino()
         else:
