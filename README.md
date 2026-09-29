@@ -355,10 +355,14 @@ Egérrel a note közepe húzva áthelyezhető. A kijelölt note két fehér
 szélfogantyúját húzva a kezdete és a vége külön állítható, így a sustain
 hossza közvetlenül a timeline-on szerkeszthető. Az automatikus chart-készítő
 az `ffmpeg` idő–frekvencia hőtérképén külön figyeli a gitár mély, test és
-pengetési tartományait, ezek ritmikus spektrumváltozásaiból rakja le a három
-lane sequence-ét, majd a jelenlegi BPM-rácsra kvantálja. A hőtérkép halványan
-a timeline mögött is látható. Ez kiindulási chartnak készült, amit érdemes
-kézzel finomítani.
+pengetési tartományait. Előtte a HTDemucs 6-source modell valódi `guitar`
+stemet választ le a masterből, így a dob és az ének nem ad hamis note-okat.
+Az első generálás egy kb. háromperces zenén CPU-val nagyjából egy perc; az
+eredmény a nem verziókezelt `.stem_cache` mappába kerül, ezért ugyanaz a dal
+később azonnal indul. PC-s telepítés: `python -m pip install demucs soundfile`.
+A stem ritmikus spektrumváltozásaiból készül a három lane sequence, majd a
+jelenlegi BPM-rácsra kvantálódik. A hőtérkép halványan a timeline mögött is
+látható. Ez kiindulási chartnak készült, amit érdemes kézzel finomítani.
 
 A kvantálás mindig megőrzi a kézzel feljátszott `raw_time_ms` és
 `raw_duration_ms` értékeket. Emiatt a BPM, az ütemkezdet, a rácsfelosztás vagy

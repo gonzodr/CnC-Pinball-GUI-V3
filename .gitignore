@@ -22,6 +22,7 @@ src/serial_port.json
 # manifest es telepito marad. A helyi legacy mappa is legyen biztonsagosan
 # figyelmen kivul hagyva, amig az exportok atkerulnek a kulso assettarba.
 src/assets/Videos/
+src/assets/GuitarHero/.stem_cache/
 video_assets/
 video_assets_downloads/
 

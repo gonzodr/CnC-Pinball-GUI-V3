@@ -25,6 +25,8 @@ import pygame
 
 WIDTH, HEIGHT, FPS = 640, 480, 60
 SONGS_DIR = Path(__file__).resolve().parent / "assets" / "GuitarHero" / "Songs"
+STEM_CACHE_DIR = SONGS_DIR.parent / ".stem_cache"
+DEMUCS_MODEL = "htdemucs_6s"
 AUDIO_EXTENSIONS = {".ogg", ".mp3", ".wav", ".flac"}
 GRID_OPTIONS = ((1, "1/4"), (2, "1/8"), (3, "1/8T"),
                 (4, "1/16"), (6, "1/16T"), (8, "1/32"))
@@ -152,6 +154,48 @@ def decode_audio_mono_pcm(audio_path, sample_rate=AUTO_SAMPLE_RATE):
     if sys.byteorder != "little":
         samples.byteswap()
     return samples
+
+
+def cached_guitar_stem_path(audio_path):
+    return (STEM_CACHE_DIR / DEMUCS_MODEL / Path(audio_path).stem
+            / "guitar.wav")
+
+
+def ensure_guitar_stem(audio_path, progress_hook=None):
+    """Return a real guitar stem, creating and caching it with HTDemucs."""
+    audio_path = Path(audio_path).resolve()
+    companion = audio_path.with_name(f"{audio_path.stem}.guitar.wav")
+    if companion.is_file():
+        return companion
+    cached = cached_guitar_stem_path(audio_path)
+    if cached.is_file() and cached.stat().st_mtime >= audio_path.stat().st_mtime:
+        return cached
+
+    demucs = shutil.which("demucs")
+    if demucs is None:
+        raise RuntimeError(
+            "Nincs Demucs. PC-n: python -m pip install demucs soundfile")
+    STEM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    command = [
+        demucs, "-n", DEMUCS_MODEL, "--two-stems", "guitar",
+        "--out", str(STEM_CACHE_DIR), str(audio_path),
+    ]
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    process = subprocess.Popen(
+        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        **kwargs)
+    started_at = time.monotonic()
+    while process.poll() is None:
+        if progress_hook is not None:
+            progress_hook(time.monotonic() - started_at)
+        time.sleep(0.05)
+    if process.returncode != 0 or not cached.is_file():
+        raise RuntimeError(
+            "A guitar stem leválasztása sikertelen; futtasd terminálból a "
+            "demucs -n htdemucs_6s parancsot a részletekért")
+    return cached
 
 
 def _parse_ppm_rgb(payload):
@@ -799,21 +843,32 @@ class GuitarChartEditor:
         """Create a guitar-focused first-pass chart from a spectral heatmap."""
         self.transport.pause()
         try:
-            samples = decode_audio_mono_pcm(self.document.audio_path)
+            self.set_status(
+                "AI guitar stem keszitese (elso alkalommal kb. 1 perc)...",
+                3600.0,
+            )
+            self.draw()
+
+            def show_stem_progress(elapsed):
+                pygame.event.pump()
+                self.set_status(
+                    f"AI guitar stem: {elapsed:.0f} mp (kesobb cache-bol indul)",
+                    2.0,
+                )
+                self.draw()
+                self.clock.tick(15)
+
+            guitar_stem = ensure_guitar_stem(
+                self.document.audio_path, progress_hook=show_stem_progress)
+            samples = decode_audio_mono_pcm(guitar_stem)
             duration_ms = len(samples) * 1000.0 / AUTO_SAMPLE_RATE
             min_gap = int(clamp(self.document.grid_step_ms * 0.70, 80, 240))
-            try:
-                heatmap = build_guitar_heatmap(
-                    self.document.audio_path, duration_ms)
-                candidates = candidates_from_guitar_heatmap(
-                    heatmap, duration_ms, min_gap_ms=min_gap)
-                self.guitar_heatmap = heatmap
-                self.guitar_heatmap_duration_ms = duration_ms
-                method = "gitar-hoterkep"
-            except RuntimeError:
-                candidates = detect_note_candidates(
-                    samples, AUTO_SAMPLE_RATE, min_gap_ms=min_gap)
-                method = "attack tartalekmod"
+            heatmap = build_guitar_heatmap(guitar_stem, duration_ms)
+            candidates = candidates_from_guitar_heatmap(
+                heatmap, duration_ms, min_gap_ms=min_gap)
+            self.guitar_heatmap = heatmap
+            self.guitar_heatmap_duration_ms = duration_ms
+            method = "AI guitar stem"
         except (OSError, RuntimeError) as exc:
             self.set_status(f"Auto chart hiba: {exc}", 6.0)
             return

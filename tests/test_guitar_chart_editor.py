@@ -16,6 +16,7 @@ from guitar_chart_editor import (
     GuitarChartEditor,
     candidates_from_guitar_heatmap,
     detect_note_candidates,
+    ensure_guitar_stem,
     quantize_time_ms,
 )
 
@@ -108,6 +109,14 @@ class GuitarChartEditorTests(unittest.TestCase):
             [time_ms for time_ms, _lane in candidates],
             [200, 500, 800],
         )
+
+    def test_companion_guitar_stem_is_preferred_without_running_ai(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "song.wav"
+            companion = Path(directory) / "song.guitar.wav"
+            audio.touch()
+            companion.touch()
+            self.assertEqual(ensure_guitar_stem(audio), companion)
 
     def test_ctrl_s_is_save_not_middle_lane_note(self):
         editor = object.__new__(GuitarChartEditor)
