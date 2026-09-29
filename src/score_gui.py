@@ -258,18 +258,34 @@ class ScoreGUI:
     # kepernyo pszichedelikus hattere mar bizonyitottan hasznal ARM-on.
     FADE_DURATION_SEC = 0.25
     MODE_BACKGROUND_FADE_SEC = 1.2
-    MODE_ART_SCALE = 0.85
     MODE_ART_SLIDE_SEC = 0.6
-    MODE_CONFIRM_DURATION_SEC = 1.3
-    MODE_CONFIRM_FADE_START_SEC = 0.28
+    # Kivalasztas utan a kep eloszor megmozdul, majd teljes fenyeron pihen;
+    # csak ezutan indul a kifakulas. A state machine es a firmware teljes
+    # kesleltetese ennek a ket szakasznak az osszege.
+    MODE_CONFIRM_HOLD_SEC = 1.60
+    MODE_CONFIRM_FADE_SEC = 0.65
+    MODE_CONFIRM_DURATION_SEC = MODE_CONFIRM_HOLD_SEC + MODE_CONFIRM_FADE_SEC
     MODE_CONFIRM_WIGGLE_SEC = 0.30
     MODE_CONFIRM_WIGGLE_PX = 5
+    # Modonkenti kezi meret-finomhangolas. 1.0 = eredeti 640x480-as meret.
+    MODE_ART_SCALE_STANDARD = 0.85
+    MODE_ART_SCALE_COOP = 0.84
+    MODE_ART_SCALE_QUICK = 0.87
+    MODE_ART_SCALE_MUNCHIES = 0.9
+    MODE_ART_SCALE_MAYHEM = 0.85
+    MODE_ART_SCALES = {
+        GAME_STANDARD: MODE_ART_SCALE_STANDARD,
+        GAME_COOP: MODE_ART_SCALE_COOP,
+        GAME_QUICK: MODE_ART_SCALE_QUICK,
+        GAME_MUNCHIES: MODE_ART_SCALE_MUNCHIES,
+        GAME_MULTIBALL_MAYHEM: MODE_ART_SCALE_MAYHEM,
+    }
     # Modonkenti kezi Y-finomhangolas (640x480-as kompoziciohoz).
     # Pozitiv ertek lejjebb, negativ ertek feljebb tolja az adott kepet.
     MODE_ART_Y_STANDARD = 0
-    MODE_ART_Y_COOP = 0
+    MODE_ART_Y_COOP = -10
     MODE_ART_Y_QUICK = 0
-    MODE_ART_Y_MUNCHIES = -15
+    MODE_ART_Y_MUNCHIES = -25
     MODE_ART_Y_MAYHEM = -20
     MODE_ART_Y_OFFSETS = {
         GAME_STANDARD: MODE_ART_Y_STANDARD,
@@ -827,7 +843,6 @@ class ScoreGUI:
             return None
 
         if confirmation_elapsed is not None:
-            duration = self.MODE_CONFIRM_DURATION_SEC
             elapsed = max(0.0, confirmation_elapsed)
             wiggle_progress = min(1.0, elapsed / self.MODE_CONFIRM_WIGGLE_SEC)
             wiggle_x = round(
@@ -839,8 +854,8 @@ class ScoreGUI:
                 0.0,
                 min(
                     1.0,
-                    (elapsed - self.MODE_CONFIRM_FADE_START_SEC)
-                    / (duration - self.MODE_CONFIRM_FADE_START_SEC),
+                    (elapsed - self.MODE_CONFIRM_HOLD_SEC)
+                    / self.MODE_CONFIRM_FADE_SEC,
                 ),
             )
             alpha = round(255 * (1.0 - fade_progress ** 2))
@@ -909,8 +924,9 @@ class ScoreGUI:
             self.mode_backgrounds[mode_id] = mode_bg
 
         # Atlatszo, teljes kepernyos mode-art retegek. Betolteskor egyszer
-        # 85%-ra kicsinyitjuk es feljebb kompozitaljuk oket; futas kozben mar
-        # csak a kesz 640x480-as feluleteket kell oldalra blittelni.
+        # Modonkent allithato meretre kicsinyitjuk es feljebb kompozitaljuk
+        # oket; futas kozben mar csak a kesz 640x480-as feluleteket kell
+        # oldalra blittelni.
         mode_art_dir = os.path.join(score_dir, "MODE_ART")
         self.mode_art = {}
         for mode_id, filename in (
@@ -921,9 +937,10 @@ class ScoreGUI:
             (GAME_MULTIBALL_MAYHEM, "MODE_ART_MAYHEM.png"),
         ):
             art = pygame.image.load(os.path.join(mode_art_dir, filename)).convert_alpha()
+            scale = self.MODE_ART_SCALES.get(mode_id, 0.85)
             target_size = (
-                round(self.SCREEN_W * self.MODE_ART_SCALE),
-                round(self.SCREEN_H * self.MODE_ART_SCALE),
+                round(self.SCREEN_W * scale),
+                round(self.SCREEN_H * scale),
             )
             scale_fn = (
                 pygame.transform.smoothscale

@@ -131,8 +131,27 @@ class GameModeStateTests(unittest.TestCase):
             gui._draw_mode_art(1)
         self.assertEqual(gui.screen.get_at((0, 0))[:3], (0, 0, 255))
 
-    def test_mode_art_is_scaled_down_fifteen_percent(self):
-        self.assertEqual(ScoreGUI.MODE_ART_SCALE, 0.85)
+    def test_mode_art_has_independent_manual_scale_and_y_values(self):
+        self.assertEqual(
+            set(ScoreGUI.MODE_ART_SCALES),
+            {0, 1, 2, 3, 4},
+        )
+        self.assertEqual(
+            tuple(ScoreGUI.MODE_ART_SCALES.values()),
+            (
+                ScoreGUI.MODE_ART_SCALE_STANDARD,
+                ScoreGUI.MODE_ART_SCALE_COOP,
+                ScoreGUI.MODE_ART_SCALE_QUICK,
+                ScoreGUI.MODE_ART_SCALE_MUNCHIES,
+                ScoreGUI.MODE_ART_SCALE_MAYHEM,
+            ),
+        )
+        self.assertTrue(
+            all(
+                isinstance(scale, (int, float)) and scale > 0
+                for scale in ScoreGUI.MODE_ART_SCALES.values()
+            )
+        )
         self.assertEqual(
             set(ScoreGUI.MODE_ART_Y_OFFSETS),
             {0, 1, 2, 3, 4},
@@ -156,6 +175,13 @@ class GameModeStateTests(unittest.TestCase):
             ScoreGUI.MODE_CONFIRM_DURATION_SEC,
             StateMachine.MODE_CONFIRM_DURATION_SEC,
         )
+        self.assertGreaterEqual(ScoreGUI.MODE_CONFIRM_HOLD_SEC, 1.0)
+        self.assertLessEqual(ScoreGUI.MODE_CONFIRM_HOLD_SEC, 2.0)
+        self.assertEqual(ScoreGUI.MODE_CONFIRM_FADE_SEC, 0.65)
+        self.assertEqual(
+            ScoreGUI.MODE_CONFIRM_DURATION_SEC,
+            ScoreGUI.MODE_CONFIRM_HOLD_SEC + ScoreGUI.MODE_CONFIRM_FADE_SEC,
+        )
         gui = ScoreGUI.__new__(ScoreGUI)
         gui.SCREEN_W = 20
         gui.SCREEN_H = 20
@@ -174,7 +200,20 @@ class GameModeStateTests(unittest.TestCase):
         self.assertEqual(gui.screen.get_at((10, 10)).a, 255)
 
         gui.screen.fill((0, 0, 0, 0))
-        gui._draw_mode_art(0, 1.3)
+        gui._draw_mode_art(0, ScoreGUI.MODE_CONFIRM_HOLD_SEC - 0.01)
+        self.assertEqual(gui.screen.get_at((10, 10)).a, 255)
+
+        gui.screen.fill((0, 0, 0, 0))
+        gui._draw_mode_art(
+            0,
+            ScoreGUI.MODE_CONFIRM_HOLD_SEC
+            + ScoreGUI.MODE_CONFIRM_FADE_SEC / 2.0,
+        )
+        self.assertGreater(gui.screen.get_at((10, 10)).a, 0)
+        self.assertLess(gui.screen.get_at((10, 10)).a, 255)
+
+        gui.screen.fill((0, 0, 0, 0))
+        gui._draw_mode_art(0, ScoreGUI.MODE_CONFIRM_DURATION_SEC)
         self.assertEqual(gui.screen.get_at((10, 10)).a, 0)
 
         # Ujranyitaskor a PNG atlatszo resze tovabbra is atlatszo maradjon;
@@ -260,7 +299,11 @@ class GameModeStateTests(unittest.TestCase):
 
         with patch(
             "state_machine.time.monotonic",
-            return_value=state.mode_confirm_started_at + state.MODE_CONFIRM_DURATION_SEC,
+            return_value=(
+                state.mode_confirm_started_at
+                + state.MODE_CONFIRM_DURATION_SEC
+                + 0.001
+            ),
         ):
             state.tick()
         self.assertEqual(state.state, AppState.SCORE)

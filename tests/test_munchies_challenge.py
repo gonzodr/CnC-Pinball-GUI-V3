@@ -106,6 +106,7 @@ class MunchiesChallengeStateTests(unittest.TestCase):
             return_value=(
                 self.state.mode_confirm_started_at
                 + self.state.MODE_CONFIRM_DURATION_SEC
+                + 0.001
             ),
         ):
             self.state.tick()

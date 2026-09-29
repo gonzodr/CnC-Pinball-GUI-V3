@@ -74,7 +74,7 @@ class StateMachine:
     MINIGAME_HEARTBEAT_SEC = 0.50
     MINIGAME_DONE_RETRY_SEC = 0.25
     MINIGAME_DONE_RETRY_WINDOW_SEC = 3.0
-    MODE_CONFIRM_DURATION_SEC = 1.3
+    MODE_CONFIRM_DURATION_SEC = 2.25
 
     def __init__(
         self,
@@ -730,8 +730,8 @@ class StateMachine:
             if self.state == AppState.NAME_ENTRY:
                 self.name_entry.skip()
             elif self.state == AppState.PLAYER_SELECT:
-                # PC-s mockban az Arduino GAME_MODE_CONFIRM -> 1.3 s ->
-                # GAME_START sorrendjet helyben reprodukaljuk.
+                # PC-s mockban az Arduino GAME_MODE_CONFIRM -> 1.6 s nyugalmi
+                # helyzet + 0.65 s fade -> GAME_START sorrendjet reprodukaljuk.
                 if not self.mode_confirm_active:
                     self.selected_game_mode = normalize_game_mode(
                         self.selected_game_mode,
