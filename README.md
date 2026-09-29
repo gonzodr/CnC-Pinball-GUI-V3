@@ -345,7 +345,7 @@ Másold a szerkesztendő `.ogg`, `.mp3`, `.wav` vagy `.flac` fájlt a
 | `G` | Rács váltása: negyed, nyolcad, triola, tizenhatod stb. |
 | `Q` | Automatikus kvantálás be/ki |
 | `R` | Minden note újrakvantálása az eltárolt nyers időpontból |
-| `F` | Automatikus chart készítése a zene attackjaiból; `Shift+F` lecseréli a meglévő note-okat |
+| `F` | Automatikus chart a gitárfrekvenciák hőtérképéből; `Shift+F` lecseréli a meglévő note-okat |
 | `,` / `.` | BPM csökkentése / növelése |
 | `-` / `+` | Billentyűzet/audio input-késleltetés ±5 ms |
 | `Ctrl+S` | Chart mentése |
@@ -354,9 +354,11 @@ Másold a szerkesztendő `.ogg`, `.mp3`, `.wav` vagy `.flac` fájlt a
 Egérrel a note közepe húzva áthelyezhető. A kijelölt note két fehér
 szélfogantyúját húzva a kezdete és a vége külön állítható, így a sustain
 hossza közvetlenül a timeline-on szerkeszthető. Az automatikus chart-készítő
-az `ffmpeg` dekóderrel keresi meg a zene tranzienseit, majd a jelenlegi
-BPM-rácsra kvantálja őket; kiindulási chartnak készült, amit érdemes kézzel
-finomítani.
+az `ffmpeg` idő–frekvencia hőtérképén külön figyeli a gitár mély, test és
+pengetési tartományait, ezek ritmikus spektrumváltozásaiból rakja le a három
+lane sequence-ét, majd a jelenlegi BPM-rácsra kvantálja. A hőtérkép halványan
+a timeline mögött is látható. Ez kiindulási chartnak készült, amit érdemes
+kézzel finomítani.
 
 A kvantálás mindig megőrzi a kézzel feljátszott `raw_time_ms` és
 `raw_duration_ms` értékeket. Emiatt a BPM, az ütemkezdet, a rácsfelosztás vagy

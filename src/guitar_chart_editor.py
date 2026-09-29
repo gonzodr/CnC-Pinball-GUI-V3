@@ -33,6 +33,9 @@ LANE_KEYS = {pygame.K_a: 0, pygame.K_s: 1, pygame.K_d: 2,
 LANE_NAMES = ("BAL", "SHOOT", "JOBB")
 LANE_COLORS = ((255, 92, 92), (255, 220, 72), (84, 210, 255))
 AUTO_SAMPLE_RATE = 11_025
+GUITAR_SPECTRUM_START_HZ = 80
+GUITAR_SPECTRUM_STOP_HZ = 3200
+GUITAR_BANDS_HZ = ((80, 300), (300, 900), (900, 3200))
 
 
 def clamp(value, low, high):
@@ -149,6 +152,134 @@ def decode_audio_mono_pcm(audio_path, sample_rate=AUTO_SAMPLE_RATE):
     if sys.byteorder != "little":
         samples.byteswap()
     return samples
+
+
+def _parse_ppm_rgb(payload):
+    """Parse the fixed P6 stream emitted by ffmpeg's ppm encoder."""
+    first, second, third, pixels = payload.split(b"\n", 3)
+    if first != b"P6" or third.strip() != b"255":
+        raise RuntimeError("Ismeretlen spektrum-kep formatum")
+    width, height = (int(value) for value in second.split())
+    expected = width * height * 3
+    if len(pixels) < expected:
+        raise RuntimeError("Hianyos spektrum-kep")
+    return width, height, pixels[:expected]
+
+
+def build_guitar_heatmap(audio_path, duration_ms, width=None, height=192):
+    """Render and reduce an audio spectrogram to three guitar-band lanes."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("A gitar-hoterkephez ffmpeg szukseges")
+    if width is None:
+        width = int(clamp(round(duration_ms / 35.0), 1024, 8192))
+    spectrum_filter = (
+        f"showspectrumpic=s={width}x{height}:legend=0:color=intensity:"
+        f"scale=log:fscale=log:start={GUITAR_SPECTRUM_START_HZ}:"
+        f"stop={GUITAR_SPECTRUM_STOP_HZ}:win_func=hann"
+    )
+    command = [
+        ffmpeg, "-v", "error", "-i", str(audio_path), "-lavfi",
+        spectrum_filter, "-frames:v", "1", "-f", "image2pipe",
+        "-vcodec", "ppm", "pipe:1",
+    ]
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    completed = subprocess.run(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=False, **kwargs)
+    if completed.returncode != 0:
+        message = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(message or "A gitar-spektrum eloallitasa sikertelen")
+    width, height, pixels = _parse_ppm_rgb(completed.stdout)
+
+    log_range = math.log(
+        GUITAR_SPECTRUM_STOP_HZ / GUITAR_SPECTRUM_START_HZ)
+
+    def frequency_y(frequency):
+        ratio = math.log(frequency / GUITAR_SPECTRUM_START_HZ) / log_range
+        return int(clamp(round((1.0 - ratio) * (height - 1)), 0, height - 1))
+
+    band_rows = []
+    for low_hz, high_hz in GUITAR_BANDS_HZ:
+        top, bottom = frequency_y(high_hz), frequency_y(low_hz)
+        band_rows.append(range(min(top, bottom), max(top, bottom) + 1))
+
+    raw_columns = []
+    for x in range(width):
+        values = []
+        for rows in band_rows:
+            total = 0
+            for y in rows:
+                offset = (y * width + x) * 3
+                total += max(pixels[offset:offset + 3])
+            values.append(total / max(1, len(rows)))
+        raw_columns.append(tuple(values))
+
+    # Lane-enkenti robusztus normalizalas: a halkan kevert gitar is latszik,
+    # de egyetlen hangos dobutes nem egeti feherre az egesz timeline-t.
+    scales = []
+    for lane in range(3):
+        ordered = sorted(column[lane] for column in raw_columns)
+        percentile = ordered[min(len(ordered) - 1, round(len(ordered) * 0.95))]
+        scales.append(max(1.0, percentile))
+    return [tuple(clamp(column[lane] / scales[lane], 0.0, 1.0)
+                  for lane in range(3)) for column in raw_columns]
+
+
+def candidates_from_guitar_heatmap(heatmap, duration_ms, min_gap_ms=90):
+    """Find guitar-rhythm attacks from positive spectral flux."""
+    if len(heatmap) < 4 or duration_ms <= 0:
+        return []
+    flux = []
+    for index, column in enumerate(heatmap):
+        history = heatmap[max(0, index - 5):index]
+        baseline = (
+            tuple(statistics.median(row[lane] for row in history)
+                  for lane in range(3))
+            if history else column
+        )
+        flux.append(tuple(max(0.0, column[lane] - baseline[lane])
+                          for lane in range(3)))
+
+    lane_thresholds = []
+    for lane in range(3):
+        positive = [row[lane] for row in flux if row[lane] > 0]
+        if not positive:
+            lane_thresholds.append(1.0)
+            continue
+        median = statistics.median(positive)
+        deviation = statistics.median(abs(value - median) for value in positive)
+        lane_thresholds.append(max(0.035, median + 1.5 * deviation))
+
+    scores = [max(row[lane] / lane_thresholds[lane] for lane in range(3))
+              for row in flux]
+    gap_columns = max(1, round(min_gap_ms / duration_ms * len(heatmap)))
+    peaks = []
+    for index in range(1, len(scores) - 1):
+        if scores[index] < 1.0 or scores[index] < scores[index - 1] \
+                or scores[index] < scores[index + 1]:
+            continue
+        if peaks and index - peaks[-1] < gap_columns:
+            if scores[index] > scores[peaks[-1]]:
+                peaks[-1] = index
+            continue
+        peaks.append(index)
+
+    candidates = []
+    previous_lane = None
+    for index in peaks:
+        strengths = [flux[index][lane] / lane_thresholds[lane]
+                     for lane in range(3)]
+        lane = max(range(3), key=strengths.__getitem__)
+        # Az azonos savban egymas utan jovo attackoknal a masodik legerosebb
+        # savra valtunk, hogy a chart jatszhato ritmust adjon, ne egy oszlopot.
+        if lane == previous_lane:
+            lane = sorted(range(3), key=strengths.__getitem__, reverse=True)[1]
+        previous_lane = lane
+        candidates.append((round(index / (len(heatmap) - 1) * duration_ms), lane))
+    return candidates
 
 
 class ChartDocument:
@@ -523,6 +654,8 @@ class GuitarChartEditor:
         self.dragging_id = None
         self.dragging_edge = None
         self.drag_offset_ms = 0.0
+        self.guitar_heatmap = None
+        self.guitar_heatmap_duration_ms = 0.0
         self.view_span_ms = 6000.0
         self.status, self.status_until = "", 0.0
         self.leave_confirm_until = 0.0
@@ -552,6 +685,8 @@ class GuitarChartEditor:
             self.set_status(f"Nem toltheto be: {exc}", 5.0)
             return
         self.document, self.mode = document, "editor"
+        self.guitar_heatmap = None
+        self.guitar_heatmap_duration_ms = 0.0
         self.tap_times.clear()
         self.set_status("Chart betoltve" if document.chart_path.is_file()
                         else "Uj chart")
@@ -562,6 +697,8 @@ class GuitarChartEditor:
         self.held_notes.clear()
         self.dragging_id = None
         self.dragging_edge = None
+        self.guitar_heatmap = None
+        self.guitar_heatmap_duration_ms = 0.0
         self.rescan()
 
     def request_close_song(self):
@@ -659,20 +796,33 @@ class GuitarChartEditor:
             self.set_status(f"Tap tempo: {self.document.bpm:.1f} BPM")
 
     def auto_generate_chart(self, replace=False):
-        """Create a useful first-pass chart from attacks in the song."""
+        """Create a guitar-focused first-pass chart from a spectral heatmap."""
         self.transport.pause()
         try:
             samples = decode_audio_mono_pcm(self.document.audio_path)
+            duration_ms = len(samples) * 1000.0 / AUTO_SAMPLE_RATE
             min_gap = int(clamp(self.document.grid_step_ms * 0.70, 80, 240))
-            candidates = detect_note_candidates(
-                samples, AUTO_SAMPLE_RATE, min_gap_ms=min_gap)
+            try:
+                heatmap = build_guitar_heatmap(
+                    self.document.audio_path, duration_ms)
+                candidates = candidates_from_guitar_heatmap(
+                    heatmap, duration_ms, min_gap_ms=min_gap)
+                self.guitar_heatmap = heatmap
+                self.guitar_heatmap_duration_ms = duration_ms
+                method = "gitar-hoterkep"
+            except RuntimeError:
+                candidates = detect_note_candidates(
+                    samples, AUTO_SAMPLE_RATE, min_gap_ms=min_gap)
+                method = "attack tartalekmod"
         except (OSError, RuntimeError) as exc:
             self.set_status(f"Auto chart hiba: {exc}", 6.0)
             return
         added = self.document.add_generated_notes(candidates, replace=replace)
         action = "ujrageneralva" if replace else "kiegeszitve"
         self.set_status(
-            f"Auto chart {action}: {added} uj note (Ctrl+Z visszavonja)", 5.0)
+            f"Auto chart {action}: {added} note, {method} (Ctrl+Z visszavonja)",
+            5.0,
+        )
 
     def handle_browser_key(self, event):
         if event.key == pygame.K_ESCAPE:
@@ -909,6 +1059,34 @@ class GuitarChartEditor:
             self.screen.blit(self.tiny.render(
                 LANE_NAMES[lane], True, LANE_COLORS[lane]),
                 (timeline.x + 4, rect.y + 3))
+
+        # Az automata alapjaul szolgalo gitar-spektrum halvanyan ott marad a
+        # lane-ek mogott. Igy azonnal latszik, mely attackokra tett note-ot,
+        # es hol erdemes kezzel potolni vagy torolni.
+        if self.guitar_heatmap and self.guitar_heatmap_duration_ms > 0:
+            heat_count = len(self.guitar_heatmap)
+            for x in range(timeline.left, timeline.right + 1, 2):
+                sample_time = self.x_to_time(x)
+                if sample_time > self.guitar_heatmap_duration_ms:
+                    continue
+                heat_index = int(clamp(
+                    round(sample_time / self.guitar_heatmap_duration_ms
+                          * (heat_count - 1)),
+                    0, heat_count - 1,
+                ))
+                for lane, strength in enumerate(self.guitar_heatmap[heat_index]):
+                    if strength < 0.04:
+                        continue
+                    base = (26 + lane * 3, 25 + lane * 3, 43 + lane * 3)
+                    color = tuple(round(base[channel]
+                                        + (LANE_COLORS[lane][channel]
+                                           - base[channel])
+                                        * strength * 0.42)
+                                  for channel in range(3))
+                    pygame.draw.rect(
+                        self.screen, color,
+                        (x, timeline.y + lane * lane_h + 1, 2, lane_h - 2),
+                    )
 
         step = document.grid_step_ms
         half_view = self.view_span_ms / 2.0

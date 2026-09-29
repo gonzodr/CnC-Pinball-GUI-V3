@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from guitar_chart_editor import (
     ChartDocument,
     GuitarChartEditor,
+    candidates_from_guitar_heatmap,
     detect_note_candidates,
     quantize_time_ms,
 )
@@ -94,6 +95,19 @@ class GuitarChartEditorTests(unittest.TestCase):
             self.assertEqual(len(document.notes), 2)
             self.assertTrue(document.undo())
             self.assertEqual(document.notes, [])
+
+    def test_guitar_heatmap_generates_timed_multilane_sequence(self):
+        heatmap = [(0.05, 0.05, 0.05) for _index in range(101)]
+        heatmap[20] = (0.95, 0.08, 0.06)
+        heatmap[50] = (0.08, 0.95, 0.06)
+        heatmap[80] = (0.08, 0.06, 0.95)
+        candidates = candidates_from_guitar_heatmap(
+            heatmap, duration_ms=1000, min_gap_ms=80)
+        self.assertEqual([lane for _time, lane in candidates], [0, 1, 2])
+        self.assertEqual(
+            [time_ms for time_ms, _lane in candidates],
+            [200, 500, 800],
+        )
 
     def test_ctrl_s_is_save_not_middle_lane_note(self):
         editor = object.__new__(GuitarChartEditor)
