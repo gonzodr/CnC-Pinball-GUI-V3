@@ -1,0 +1,129 @@
+{
+  "source": "gitihiri.aep / GAME_SCENE",
+  "canvas": [640, 480],
+  "fallback_background": "Scene/BGR_00000.png",
+  "layer_order_bottom_to_top": [
+    "BGR_Upper",
+    "CHONGGITARREN",
+    "BGR_UNTER",
+    "Ricsaj",
+    "Amp",
+    "Crawl",
+    "Hang",
+    "NoteHighway"
+  ],
+  "layers": {
+    "BGR_Upper": {
+      "file": "Scene/BGR_Upper.png",
+      "anchor": [320.0, 111.0],
+      "position": [320.0, 118.0],
+      "scale": [100.0, 100.0]
+    },
+    "CHONGGITARREN": {
+      "anchor": [298.0, 317.272727272727],
+      "position": [295.0, 222.0],
+      "scale": [100.0, 88.0]
+    },
+    "BGR_UNTER": {
+      "file": "Scene/BGR_UNTER.png",
+      "anchor": [320.0, 127.0],
+      "position": [320.0, 350.0],
+      "scale": [100.0, 100.0]
+    },
+    "Ricsaj": {
+      "directory": "Scene/Ricsaj",
+      "fps": 30.0,
+      "loop": true,
+      "anchor": [165.0, 104.0],
+      "position": [475.0, 326.0],
+      "scale": [100.0, 100.0]
+    },
+    "Amp": {
+      "file": "Scene/Amp.png",
+      "anchor": [193.5, 240.0],
+      "position": [554.5, 381.0],
+      "scale": [44.2, 44.2]
+    },
+    "Crawl": {
+      "directory": "Cheech/Crawl",
+      "fps": 24.0,
+      "loop": false,
+      "anchor": [320.0, 98.0],
+      "start_position": [220.0, 413.0],
+      "end_position": [260.0, 413.0],
+      "scale": [100.0, 100.0]
+    },
+    "Hang": {
+      "directory": "Scene/Hang",
+      "fps": 30.0,
+      "loop": true,
+      "anchor": [320.0, 163.0],
+      "position": [320.0, 219.0],
+      "scale": [100.0, 100.0]
+    },
+    "NoteHighway": {
+      "file": "Scene/NoteHighway.png",
+      "anchor": [235.0, 117.5],
+      "position": [320.0, 267.0],
+      "scale": [100.0, 100.0]
+    }
+  },
+  "chong_comp": {
+    "body": {
+      "directory": "Chong/Body",
+      "fps": 30.0,
+      "loop": true,
+      "anchor": [251.0, 167.0],
+      "position": [324.5, 235.5],
+      "scale": [100.0, 100.0]
+    },
+    "left_hand": {
+      "file": "Chong/lefthand.png",
+      "anchor": [60.5078299776274, 419.489723951728],
+      "position": [407.25, 306.5],
+      "scale": [34.5745856353592, 33.4235727440147]
+    },
+    "active_head": "head4",
+    "heads": {
+      "head1": {
+        "file": "Chong/head1.png",
+        "anchor": [240.0, 240.0],
+        "position": [243.0, 118.5],
+        "scale": [46.0, 46.0]
+      },
+      "head2": {
+        "file": "Chong/head2.png",
+        "anchor": [240.0, 240.0],
+        "position": [247.5, 122.5],
+        "scale": [46.0, 46.0]
+      },
+      "head3": {
+        "file": "Chong/head3.png",
+        "anchor": [240.0, 240.0],
+        "position": [241.5, 119.0],
+        "scale": [50.0, 50.0]
+      },
+      "head4": {
+        "file": "Chong/head4.png",
+        "anchor": [240.0, 240.0],
+        "position": [261.0, 118.0],
+        "scale": [50.0, 50.0]
+      }
+    }
+  },
+  "note_highway": {
+    "spawn_y": 161.0,
+    "hit_y": 339.0,
+    "center_x": 320.0,
+    "spawn_spread": 12.0,
+    "hit_spread": 111.0
+  },
+  "hit_feedback": {
+    "fps": 30.0,
+    "directories": [
+      "Scene/Notes/NoteHighway/GreenHit_",
+      "Scene/Notes/NoteHighway/RedHit_",
+      "Scene/Notes/NoteHighway/PurpleHit_"
+    ]
+  }
+}

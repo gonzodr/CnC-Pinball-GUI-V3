@@ -260,6 +260,46 @@ cache-be helyezés előtt kénytelen összekomponálni a `Level_BG` képpel. Ez
 újra teljes képernyős munkát rakna a főszálra az előtöltés során, ezért új
 pályarendernél mindig ellenőrizni kell az RGB formátumot.
 
+## Harleycaster Solo minijáték
+
+A `SCORE` képernyőn az `U` billentyű indítja a háromsávos ritmusjátékot. Az
+UFO/Munchies minijáték PC-n továbbra is a mode screen `MUNCHIES CHALLENGE`
+módjából indul. A Harleycaster minden indításkor a
+`src/assets/GuitarHero/Songs` mappa legutóbb mentett, érvényes
+`.chart.json` fájlját tölti be, és a chart `audio` mezőjében megadott zenét
+játssza le.
+
+A mostani assetpár:
+
+- `0066_mus_Mode_select_groove.wav`
+- `0066_mus_Mode_select_groove.chart.json`
+
+A bal flipper, Shoot és jobb flipper rendre a 0/1/2 sávot üti. A játék
+1,8 másodperces előgurítással indul, ezért a 0 ms-os első note is látható és
+elkapható. A játék a nehézségi fokhoz tartozó minimális időközzel ritkítja az
+autochart túl közeli és ismétlődő hangjait; Normal fokozaton a jelenlegi 468
+note-ból 171 marad. A hosszú sustain note-ok a ritkításkor is megmaradnak, és a
+gombot a note végéig nyomva kell tartani; korai felengedés hibának számít. Az
+akkordok egyetlen gombra egyszerűsödnek. Normal nehézségen a találat 330 ms-mal
+korábban és 270 ms-mal később is elfogadható, a mellényomás pedig nem büntet. Ötven
+valóban elmulasztott note után Cheech eléri az erősítőt és kihúzza a kábelt.
+A szervizmenü Minigame difficulty oldalán a sűrűség, a találati ablak és a
+megengedett hibák száma együtt változik. A végén a megszerzett pont
+hozzáadódik az aktuális flipperjátékos pontjához. Sikeres leütéskor a három sáv
+saját, NoteHighway-ra illesztett rövid PNG-animációja fut le. A hosszú note-ok
+perspektivikus neon szalagként érkeznek; tartás közben a fejük a hitpointon
+marad, a testük pedig a hang végéig rövidül.
+
+A végleges jelenet az After Effects `gitihiri.aep / GAME_SCENE`
+kompozíciójából átvett layer-sorrendet, anchor pointokat, pozíciókat és
+scale-eket használja. A hordozható játékassetek a
+`src/assets/GuitarHero/GameScene` mappában vannak, az AE-ből kinyert elrendezés
+pedig a `scene_layout.json` fájlban marad szerkeszthető. A Chong-test, a
+hanghullám és a ricsaj PNG-szekvenciája loopol. A Cheech crawl szekvencia csak
+hibánál fut le egyszer, miközben a karakter egy kis lépéssel közelebb kerül az
+erősítőhöz. A külön bal kéz a saját könyök-anchorja körül forgatható, így a
+gitárnyaki kézmozgás később a chart hangjaihoz köthető.
+
 ## Vezérlés (billentyűzet — mock input, fejlesztői teszteléshez)
 
 A valódi gépen ezek fizikai gombok (piros Start, zöld Shoot/Player, két
@@ -276,7 +316,7 @@ sárga flipper); PC-n a billentyűzet szimulálja őket:
 | `I` | Elindítja a teljes attract-loopot (`ATTRACT` esemény) |
 | `T` | Véletlen PNG-sequence videó indítása; lejátszás közben újabb `T` azonnal másik véletlen klipre vált |
 | `Y` / `L` / `K` | Ideiglenes fejlesztői gombok: közvetlenül a Special Thanks / Logo / Beat This Score képernyőre ugrik (loopon kívül, gyors vizuális ellenőrzéshez) |
-| `U` | Munchies Abduction indítása a `SCORE` képernyőről |
+| `U` | Harleycaster Solo indítása a `SCORE` képernyőről |
 | `Esc` | Bárhonnan (amíg nem fut már az attract-loop) visszadob a loop elejére |
 | `Ctrl+M` | Titkos szerviz menü megnyitása (csak nyugalmi/attract állapotból) |
 | `Q` | Kilépés a programból a parancssorba (szerviz menün kívül) |
@@ -284,11 +324,11 @@ sárga flipper); PC-n a billentyűzet szimulálja őket:
 A minijáték alatt a nyers `KEYDOWN` és `KEYUP` események közvetlenül a
 minijátékhoz kerülnek, így a gombok nyomva tarthatók:
 
-| Minijáték-gomb | Funkció |
-|---|---|
-| `←` / `A` | UFO balra |
-| `→` / `D` | UFO jobbra |
-| `Space` / `P` | Vonósugár bekapcsolása |
+| Minijáték-gomb | Munchies | Harleycaster Solo |
+|---|---|---|
+| `←` / `A` | UFO balra | Bal sáv |
+| `→` / `D` | UFO jobbra | Jobb sáv |
+| `Space` / `P` | Vonósugár bekapcsolása | Középső/Shoot sáv |
 
 ## Titkos szerviz menü (`Ctrl+M`)
 

@@ -103,9 +103,10 @@ class MockInputController:
             elif key == pygame.K_k:
                 events.append(GameEvent("DEV_BEAT_SCORE", ()))
 
-            # Munchies Abduction fejlesztoi inditas (U = UFO/VUK).
+            # Harleycaster Solo fejlesztoi inditas. A Munchies/UFO jatek a
+            # mode screen MUNCHIES CHALLENGE agabol tovabbra is indithato.
             elif key == pygame.K_u:
-                events.append(GameEvent("MUNCHIES_START", ()))
+                events.append(GameEvent("GUITAR_SOLO_START", ()))
 
             # 2. Pontszerzés (W)
             elif key == pygame.K_w:

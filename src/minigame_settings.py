@@ -16,6 +16,7 @@ class MinigameSettingsManager:
 
     GAMES = (
         ("munchies_abduction", "MUNCHIES ABDUCTION"),
+        ("harleycaster_solo", "HARLEYCASTER SOLO"),
     )
 
     MIN_DIFFICULTY = -3

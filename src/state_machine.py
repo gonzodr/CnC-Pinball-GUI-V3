@@ -10,6 +10,7 @@ from thanks_names_manager import ThanksNamesManager
 from service_menu import ServiceMenuController
 from minigame_settings import MinigameSettingsManager
 from munchies_abduction import MunchiesAbductionGame
+from harleycaster_solo import HarleycasterAssetError, HarleycasterSoloGame
 from video_catalog import resolve_serial_video_name
 from mock_mode_audio import MockModeAudio
 from game_modes import (
@@ -184,6 +185,7 @@ class StateMachine:
             minigame_settings=self.minigame_settings,
         )
         self.minigame = None
+        self._active_minigame_kind = None
         self._preloaded_minigame = None
         self.last_minigame_result = None
         self._minigame_last_tick = 0.0
@@ -804,6 +806,32 @@ class StateMachine:
             if self.state == AppState.SCORE:
                 self.state = AppState.BEAT_SCORE
 
+        elif event.kind == "GUITAR_SOLO_START":
+            # Local/service prototype launch.  The VUK game remains available
+            # through the Munchies mode screen and firmware MG_START path.
+            if self.state != AppState.SCORE or self.minigame is not None:
+                return
+            try:
+                self.minigame = HarleycasterSoloGame(
+                    difficulty=self.minigame_settings.get_difficulty(
+                        "harleycaster_solo"
+                    )
+                )
+                self.minigame.activate()
+            except HarleycasterAssetError as exc:
+                print(f"[harleycaster] nem indithato: {exc}")
+                self.party_message = "HARLEYCASTER ASSET ERROR"
+                self.party_message_until = time.time() + 4.0
+                self.minigame = None
+                return
+            self._active_minigame_kind = "harleycaster_solo"
+            self._minigame_session = None
+            self._minigame_last_input_seq = None
+            self._minigame_pending_done = None
+            self._minigame_last_tick = time.monotonic()
+            self._in_attract_loop = False
+            self.state = AppState.MINIGAME
+
         elif event.kind == "MUNCHIES_START":
             session = event.args[0] if event.args else None
 
@@ -835,6 +863,7 @@ class StateMachine:
                         sound_hook=self._handle_minigame_sound,
                     )
                 self._minigame_session = session
+                self._active_minigame_kind = "munchies_abduction"
                 self._minigame_last_input_seq = None
                 self._minigame_pending_done = None
                 now = time.monotonic()
@@ -967,7 +996,9 @@ class StateMachine:
         aborted = self.minigame
         self.minigame = None
         aborted.prepare_for_replay()
-        self._preloaded_minigame = aborted
+        if self._active_minigame_kind == "munchies_abduction":
+            self._preloaded_minigame = aborted
+        self._active_minigame_kind = None
         self._minigame_session = None
         self._minigame_last_input_seq = None
         self.state = AppState.SCORE
@@ -1088,6 +1119,18 @@ class StateMachine:
             self.minigame.update(now - self._minigame_last_tick)
             self._minigame_last_tick = now
             if self.minigame.finished:
+                if self._active_minigame_kind == "harleycaster_solo":
+                    result = self.minigame.result_dict()
+                    self.last_minigame_result = result
+                    self.players[self.current_player] += result["total_bonus"]
+                    completed_game = self.minigame
+                    self.minigame = None
+                    completed_game.prepare_for_replay()
+                    self._active_minigame_kind = None
+                    self._minigame_session = None
+                    self._minigame_last_input_seq = None
+                    self.state = AppState.SCORE
+                    return
                 result = self.minigame.result_dict()
                 self.last_minigame_result = result
                 bonus = result["total_bonus"]
@@ -1111,6 +1154,7 @@ class StateMachine:
                 # streamer, so later VUK entries remain just as immediate.
                 completed_game.prepare_for_replay()
                 self._preloaded_minigame = completed_game
+                self._active_minigame_kind = None
                 self._minigame_session = None
                 self._minigame_last_input_seq = None
                 if self._mock_munchies_challenge:
