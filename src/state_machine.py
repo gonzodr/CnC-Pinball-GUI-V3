@@ -75,6 +75,8 @@ class StateMachine:
     MINIGAME_HEARTBEAT_SEC = 0.50
     MINIGAME_DONE_RETRY_SEC = 0.25
     MINIGAME_DONE_RETRY_WINDOW_SEC = 3.0
+    SUMMARY_DONE_RETRY_SEC = 0.25
+    SUMMARY_DONE_RETRY_WINDOW_SEC = 3.0
     MODE_CONFIRM_DURATION_SEC = 2.25
 
     def __init__(
@@ -143,6 +145,10 @@ class StateMachine:
             "bonus_points": 0
         }
         self._summary_end_time = 0.0
+        self._summary_done_pending = False
+        self._summary_done_retry_until = 0.0
+        self._summary_done_next_send = 0.0
+        self._summary_session = None
         self._highscore_end_time = 0.0
         self._pending_highscore_check = None  # Ebbe mentjük a végleges pontot
         self._pending_game_over = False  # True, ha ez a SUMMARY valodi GAMEOVER-bol jott (NEXT-nel False)
@@ -268,6 +274,19 @@ class StateMachine:
             self.service_menu.handle_analog_event(event)
             return
 
+        if event.kind == "SUMMARY_ACK":
+            ack_session = event.args[0] if event.args else None
+            if ack_session is None or ack_session == self._summary_session:
+                self._summary_done_pending = False
+            return
+
+        if event.kind == "SUMMARY_TIMEOUT":
+            # A firmware sajat 15 mp-es vedohaloja mar kiadta a golyot.
+            timeout_session = event.args[0] if event.args else None
+            if timeout_session is None or timeout_session == self._summary_session:
+                self._summary_done_pending = False
+            return
+
         if event.kind not in (
             "SCORE_UPDATE", "VIDEO", "VIDEO_STOP", "GAME_MODE_STATE"
         ):
@@ -315,6 +334,7 @@ class StateMachine:
             self.mode_confirm_active = False
             self._mock_mode_start_pending = False
             self._mock_munchies_challenge = False
+            self._summary_done_pending = False
             self._select_highscore_profile()
             self._in_attract_loop = False
             self.state = AppState.SCORE
@@ -630,6 +650,9 @@ class StateMachine:
             self._pending_steal_video_until = time.time() + 2.0
 
         elif event.kind == "NEXT" or event.kind == "GAMEOVER":
+            self._summary_session = (
+                event.args[0] if event.kind == "NEXT" and event.args else None
+            )
             # A Tilt sequence introja egyszer fut, majd a LOOP_INFO szerinti
             # resz addig ismetlodik, amig a firmware a drain utan NEXT/END-et
             # nem kuld. Ugyanez a biztos leallitas mas, drain kozben meg futo
@@ -1041,6 +1064,38 @@ class StateMachine:
         self._summary_end_time = time.time() + self.SUMMARY_DURATION_SEC
         self.state = AppState.SUMMARY
 
+    def _send_summary_done_to_firmware(self):
+        """Release the next physical ball only after SCORE is on screen."""
+        if self.serial_reader is None:
+            return False
+        command = (
+            f"SUMMARY_DONE,{self._summary_session}"
+            if self._summary_session is not None else "SUMMARY_DONE"
+        )
+        if hasattr(self.serial_reader, "send_line"):
+            return self.serial_reader.send_line(command)
+        if hasattr(self.serial_reader, "send_raw"):
+            return self.serial_reader.send_raw(command + "\n")
+        return False
+
+    def _arm_summary_done_retry(self):
+        now = time.monotonic()
+        self._summary_done_pending = True
+        self._summary_done_retry_until = now + self.SUMMARY_DONE_RETRY_WINDOW_SEC
+        self._summary_done_next_send = now
+        self._service_summary_protocol(now)
+
+    def _service_summary_protocol(self, now: float):
+        if not self._summary_done_pending:
+            return
+        if now >= self._summary_done_retry_until:
+            self._summary_done_pending = False
+            print("[summary] firmware ACK timeout; firmware fallback remains active")
+            return
+        if now >= self._summary_done_next_send:
+            self._send_summary_done_to_firmware()
+            self._summary_done_next_send = now + self.SUMMARY_DONE_RETRY_SEC
+
     def _resolve_after_summary(self):
         """A SUMMARY (es tobb-jatekos eseten a rautan kovetkezo
         FINAL_SCORES) vege utan donti el, hova lepjunk: CSAK AKKOR
@@ -1070,6 +1125,10 @@ class StateMachine:
             else:
                 # Ez csak egy NEXT (labdavaltas) volt, a jatek folytatodik
                 self.state = AppState.SCORE
+                # Elobb valtunk SCORE-ra, es csak utana oldjuk a firmware
+                # golyokiadasi kapujat. Igy a fizikai loket es a kepvaltas
+                # ugyanahhoz a GUI frame-hez kotodik, nem egy becsult delayhez.
+                self._arm_summary_done_retry()
 
     def _enter_attract_loop(self, start_index=0):
         self._mock_mode_audio.stop_selector()
@@ -1094,6 +1153,7 @@ class StateMachine:
         if self.state == AppState.SERVICE_MENU:
             self.service_menu.tick(protocol_now)
         self._service_minigame_protocol(protocol_now)
+        self._service_summary_protocol(protocol_now)
 
         if (
             self._mock_mode_start_pending

@@ -136,6 +136,11 @@ def parse_line(line: str) -> Optional[GameEvent]:
             return GameEvent("MUNCHIES_FINISH", (winner,))
 
         elif cmd == "NEXT":
+            if len(parts) == 2:
+                session = int(parts[1])
+                if not 1 <= session <= 0xFFFF:
+                    return None
+                return GameEvent("NEXT", (session,))
             return GameEvent("NEXT")
 
         elif cmd == "END":
@@ -244,6 +249,16 @@ def parse_line(line: str) -> Optional[GameEvent]:
 
         elif cmd == "AT_STOPPED":
             return GameEvent("ANALOG_STOPPED")
+
+        elif cmd in ("SUMMARY_ACK", "SUMMARY_TIMEOUT"):
+            # Firmware-statusz, nem video-trigger. Az ACK a kovetkezo golyo
+            # kiadasi kapujanak feloldasat, a TIMEOUT a tartalek utat jelzi.
+            if len(parts) == 2:
+                session = int(parts[1])
+                if not 1 <= session <= 0xFFFF:
+                    return None
+                return GameEvent(cmd, (session,))
+            return GameEvent(cmd)
 
         elif cmd in ["MULTIBALL_ON", "MULTIBALL_OFF", "ATTRACT", "PLAYERCOUNT_NEXT",
                      "START", "FLIPPER_LEFT", "FLIPPER_RIGHT", "PLAYER_PRESS", "PLUNGER",
