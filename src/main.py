@@ -56,7 +56,7 @@ def run_firmware_update(gui, serial_reader):
     abbahagyta."""
     print("[main] firmware update inditasa...")
     gui.release_display()
-    serial_reader.stop()
+    serial_reader.stop(preserve_sensor_log=True)
     try:
         subprocess.run([sys.executable, FIRMWARE_UPDATE_SCRIPT])
     finally:
@@ -80,7 +80,7 @@ def run_light_editor(gui, serial_reader):
         return
     print("[main] light editor inditasa...")
     gui.release_display()
-    serial_reader.stop()
+    serial_reader.stop(preserve_sensor_log=True)
     try:
         env = dict(os.environ)
         src_dir = os.path.join(LIGHT_EDITOR_DIR, "src")
@@ -108,7 +108,7 @@ def run_guitar_chart_editor(gui, serial_reader):
     if getattr(gui, "_video_driver", "") == "kmsdrm":
         command.append("--fullscreen")
     gui.release_display()
-    serial_reader.stop()
+    serial_reader.stop(preserve_sensor_log=True)
     try:
         subprocess.run(
             command,

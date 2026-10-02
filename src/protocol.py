@@ -250,6 +250,51 @@ def parse_line(line: str) -> Optional[GameEvent]:
         elif cmd == "AT_STOPPED":
             return GameEvent("ANALOG_STOPPED")
 
+        # --- Hatterben futo szenzor-diagnosztikai naplozas ---------------
+        # SENSOR_LOG,STARTED,ms,a0,...,a5,stableMask,trustedBIS,rawBIS,
+        #                    stateFlags,<dinamikus diagnosztikai mezok...>
+        # a firmware visszaigazolasa es a CSV mezok nevei. A meresi sor
+        # mindig hat nyers ADC-erteket tartalmaz:
+        # SENSOR_DATA,<millis>,<median1>...<median6>,<stableMask>,<trustedBIS>,
+        #             <rawBIS>,<stateFlags>,<dinamikus ertekek...>
+        # Ezek kulon esemenyek, nehogy az altalanos video-trigger agra
+        # essenek. A nagy frekvenciaju SENSOR_DATA sorokat a SerialReader
+        # sajat hatterszalan irja fajlba, a fo GUI-queue-ba nem teszi be.
+        elif cmd == "SENSOR_LOG" and len(parts) >= 2:
+            action = parts[1].upper()
+            if action == "STARTED":
+                # Minimum schema: ms + 6 ADC + stableMask + trusted/raw BIS
+                # + stateFlags. Az ezutan jovo mezoket a fejléc nevezi el,
+                # ezert kesobbi firmware-boviteshez nem kell uj parser.
+                if len(parts) < 13:
+                    return None
+                names = tuple(name.strip() for name in parts[2:] if name.strip())
+                return GameEvent("SENSOR_LOG_STARTED", (names,))
+            if action == "STOPPED":
+                return GameEvent("SENSOR_LOG_STOPPED")
+            if action == "ERROR":
+                reason = ",".join(parts[2:]).strip() or "?"
+                return GameEvent("SENSOR_LOG_ERROR", (reason,))
+            return None
+
+        elif cmd == "SENSOR_DATA" and len(parts) >= 12:
+            firmware_millis = int(parts[1], 0)
+            raw_values = tuple(int(value, 0) for value in parts[2:8])
+            stable_mask = int(parts[8], 0)
+            trusted_bis = int(parts[9], 0)
+            raw_bis = int(parts[10], 0)
+            state_flags = int(parts[11], 0)
+            trailing_values = tuple(int(value, 0) for value in parts[12:])
+            return GameEvent("SENSOR_DATA", (
+                firmware_millis,
+                raw_values,
+                stable_mask,
+                trusted_bis,
+                raw_bis,
+                state_flags,
+                trailing_values,
+            ))
+
         elif cmd in ("SUMMARY_ACK", "SUMMARY_TIMEOUT"):
             # Firmware-statusz, nem video-trigger. Az ACK a kovetkezo golyo
             # kiadasi kapujanak feloldasat, a TIMEOUT a tartalek utat jelzi.
@@ -275,7 +320,8 @@ def parse_line(line: str) -> Optional[GameEvent]:
             # KIVÉVE az ismert nem-videó üzeneteket (a "Zero" a játékindítás jelzése,
             # sosem volt hozzá videófájl).
             if (len(parts) == 1 and cmd not in ("ZERO",)
-                    and not cmd.startswith("MG_") and not cmd.startswith("AT_")):
+                    and not cmd.startswith("MG_") and not cmd.startswith("AT_")
+                    and not cmd.startswith("SENSOR_")):
                 return GameEvent("VIDEO", (parts[0],))
 
     except (ValueError, IndexError):

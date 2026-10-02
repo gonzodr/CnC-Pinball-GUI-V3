@@ -18,6 +18,9 @@ env/
 src/minigame_settings.json
 src/serial_port.json
 
+# Szervizmenuvel keszitett, gepenkenti szenzor-diagnosztikai naplok
+logs/diagnostics/*.csv
+
 # A PNG-sequence videok kulso Release assetek; normal Gitben csak a motor,
 # manifest es telepito marad. A helyi legacy mappa is legyen biztonsagosan
 # figyelmen kivul hagyva, amig az exportok atkerulnek a kulso assettarba.

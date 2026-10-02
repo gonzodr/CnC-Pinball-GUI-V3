@@ -239,6 +239,10 @@ class StateMachine:
         "ANALOG_INFO", "ANALOG_VALUES", "ANALOG_THRESHOLDS",
         "ANALOG_SAVED", "ANALOG_ERROR", "ANALOG_STOPPED",
     )
+    SENSOR_LOG_EVENTS = (
+        "SENSOR_LOG_STARTED", "SENSOR_LOG_STOPPED", "SENSOR_LOG_ERROR",
+        "SENSOR_DATA",
+    )
 
     def _is_coop_game(self):
         return getattr(self, "running_game_mode", GAME_STANDARD) == GAME_COOP
@@ -272,6 +276,14 @@ class StateMachine:
         # es nincs jatek-allapotra gyakorolt hatasuk sem.
         if event.kind in self.ANALOG_TEST_EVENTS:
             self.service_menu.handle_analog_event(event)
+            return
+
+        # A nyers meresi sorokat a SerialReader mar a hatterszalon CSV-be
+        # irja es normal esetben nem is teszi a GUI queue-ba. Ez az ag a
+        # START/STOP statuszt kezeli, valamint biztonsagosan elnyeli a direkt
+        # beadott/mocked SENSOR_DATA esemenyt is.
+        if event.kind in self.SENSOR_LOG_EVENTS:
+            self.service_menu.handle_sensor_log_event(event)
             return
 
         if event.kind == "SUMMARY_ACK":

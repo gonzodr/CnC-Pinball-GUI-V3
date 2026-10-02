@@ -47,12 +47,13 @@ class ServiceMenuController:
         ("exit", "F11 - Kilepes"),
     ]
 
-    # A negy teszt-kepernyo egy helyen. Mindegyik "nezd meg, mit csinal a
+    # A diagnosztikai eszkozok egy helyen. Mindegyik "nezd meg, mit csinal a
     # gep" jellegu, ezert kerultek ossze - a fomenu igy rovidebb, es marad
     # hely uj menupontoknak.
     DIAGNOSTIC_ITEMS = [
         ("input_test", "Input / gomb teszt (feldolgozott esemenyek)"),
         ("serial_monitor", "Serial Monitor (nyers sorok)"),
+        ("sensor_logging", "Szenzor naplozas: OFF"),
         ("light_test", "Light test (fenyeffektek)"),
         ("analog_test", "Analog bemenet-teszt (infra szenzorok)"),
     ]
@@ -226,7 +227,7 @@ class ServiceMenuController:
             self.should_exit = True
 
     def _handle_diagnostics(self, event):
-        count = len(self.DIAGNOSTIC_ITEMS)
+        count = len(self.get_diagnostic_items())
         if event.key == pygame.K_ESCAPE:
             self._go_main()
         elif event.key == pygame.K_UP:
@@ -237,11 +238,13 @@ class ServiceMenuController:
             self._activate_diagnostic_item()
 
     def _activate_diagnostic_item(self):
-        target, _ = self.DIAGNOSTIC_ITEMS[self.cursor]
+        target, _ = self.get_diagnostic_items()[self.cursor]
         if target == "light_test":
             self._enter_light_test()
         elif target == "analog_test":
             self._enter_analog_test()
+        elif target == "sensor_logging":
+            self._toggle_sensor_logging()
         else:
             self.screen = target
             self.cursor = 0
@@ -250,6 +253,73 @@ class ServiceMenuController:
         """Vissza az almenube (nem a fomenube) - a teszt-kepernyokrol ESC."""
         self.screen = "diagnostics"
         self.cursor = 0
+
+    # --- Hatterben futo szenzor-diagnosztikai naplozas -----------------
+
+    def get_diagnostic_items(self):
+        """Dinamikus lista, hogy az ON/OFF allapot mindig latszodjon."""
+        active = bool(
+            self.serial_reader is not None
+            and getattr(self.serial_reader, "sensor_logging_active", False)
+        )
+        result = []
+        for target, label in self.DIAGNOSTIC_ITEMS:
+            if target == "sensor_logging":
+                label = f"Szenzor naplozas: {'ON' if active else 'OFF'}"
+            result.append((target, label))
+        return result
+
+    @staticmethod
+    def _display_sensor_log_path(path):
+        if not path:
+            return "?"
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            return os.path.relpath(path, project_root)
+        except (OSError, ValueError):
+            return path
+
+    def _toggle_sensor_logging(self):
+        reader = self.serial_reader
+        if reader is None or not hasattr(reader, "start_sensor_logging"):
+            self.status_message = "A szenzor naplozas nem elerheto"
+            return
+
+        if getattr(reader, "sensor_logging_active", False):
+            path = reader.stop_sensor_logging()
+            shown = self._display_sensor_log_path(path)
+            error = getattr(reader, "sensor_log_last_error", "")
+            self.status_message = (
+                f"Mentve: {shown}" if not error
+                else f"Mentve: {shown} (figyelem: {error})"
+            )
+            return
+
+        path = reader.start_sensor_logging()
+        if path:
+            shown = self._display_sensor_log_path(path)
+            waiting = getattr(reader, "sensor_log_last_error", "")
+            self.status_message = (
+                f"Naplozas ON: {shown}" if not waiting
+                else f"Naplozas ON, kapcsolodasra var: {shown}"
+            )
+        else:
+            reason = getattr(reader, "sensor_log_last_error", "ismeretlen hiba")
+            self.status_message = f"Nem indult el: {reason}"
+
+    def handle_sensor_log_event(self, event):
+        """A firmware START/STOP nyugtazasainak menu-statusza."""
+        if event.kind == "SENSOR_LOG_STARTED":
+            if getattr(self.serial_reader, "sensor_logging_active", False):
+                self.status_message = "Szenzor naplozas aktiv - jatek kozben is fut"
+        elif event.kind == "SENSOR_LOG_STOPPED":
+            path = getattr(self.serial_reader, "last_sensor_log_path", None)
+            self.status_message = (
+                f"Mentve: {self._display_sensor_log_path(path)}"
+            )
+        elif event.kind == "SENSOR_LOG_ERROR":
+            reason = event.args[0] if event.args else "?"
+            self.status_message = f"Szenzor naplozasi hiba: {reason}"
 
     # --- Analog bemenet-teszt -------------------------------------------
     # A firmware csak attractban engedi (AT_ERR,BUSY kulonben), es magatol

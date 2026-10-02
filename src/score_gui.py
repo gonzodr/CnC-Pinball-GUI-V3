@@ -2722,9 +2722,9 @@ class ScoreGUI:
             hint = "Fel/Le: minigame   Bal/Jobb: difficulty   R: NORMAL   Esc: vissza"
 
         elif controller.screen == "diagnostics":
-            for i, (_, label) in enumerate(controller.DIAGNOSTIC_ITEMS):
+            for i, (_, label) in enumerate(controller.get_diagnostic_items()):
                 self._draw_service_line(label, y + i * line_h, i == controller.cursor)
-            hint = "Fel/Le + Enter: kivalaszt   Esc: vissza a fomenube"
+            hint = "Fel/Le + Enter: kivalaszt / naplozas ON-OFF   Esc: vissza"
 
         elif controller.screen == "analog_test":
             names = controller.analog_names
