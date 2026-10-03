@@ -361,6 +361,12 @@ class HarleycasterSoloTests(unittest.TestCase):
             self.assertEqual(state.state, AppState.PUFF_LOADING)
             self.assertIsNone(state.minigame)
 
+            # A Mega betoltes alatt is kuld score snapshotot. Ez frissitse
+            # a pontot, de ne szakitsa meg a tortenetkep/lazy load allapotat.
+            state.handle_event(GameEvent("SCORE_UPDATE", (1200, 2, 2, 1, 0, 0)))
+            self.assertEqual(state.state, AppState.PUFF_LOADING)
+            self.assertEqual(state.players[2], 1200)
+
             # A display-flip elotti tick meg nem kezdhet blokkoló betoltesbe.
             state.tick()
             self.assertEqual(state.state, AppState.PUFF_LOADING)

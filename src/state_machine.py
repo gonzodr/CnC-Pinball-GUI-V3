@@ -616,6 +616,7 @@ class StateMachine:
                 AppState.SUMMARY, AppState.HIGHSCORE, AppState.NAME_ENTRY,
                 AppState.PRESS_START, AppState.SPECIAL_THANKS, AppState.LOGO,
                 AppState.BEAT_SCORE, AppState.SERVICE_MENU,
+                AppState.PUFF_LOADING,
                 AppState.MINIGAME,
                 AppState.PNG_VIDEO,
                 AppState.PLAYER_SELECT,
