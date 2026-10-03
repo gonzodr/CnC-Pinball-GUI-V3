@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import json
 import math
 import platform
+import random
 from pathlib import Path
 import time
 import wave
@@ -28,6 +29,18 @@ WIDTH, HEIGHT = 640, 480
 SPAWN_Y, HIT_Y = 161, 339
 TRAVEL_TIME = 1.8
 RESULT_SECONDS = 2.8
+COUNTDOWN_SECONDS = 3.0
+COUNTDOWN_SLOT_SECONDS = COUNTDOWN_SECONDS / 3.0
+COUNTDOWN_PLAYER_Y = 117
+COUNTDOWN_PLAYER_Y_OFFSET = -15
+MISS_NOTE_FADE_SECONDS = .35
+MISS_NOTE_FALL_PROGRESS_PER_SEC = .55
+MUSIC_VOLUME = .90
+GUITAR_STEM_VOLUME = .90
+GUITAR_MISS_VOLUME = .14
+GUITAR_MISS_HOLD_SECONDS = 2.0
+GUITAR_DUCK_ATTACK_SECONDS = .06
+GUITAR_RECOVER_SECONDS = .12
 UPPER_CAMERA_COMBO_CAP = 32.0
 LANE_COLORS = ((82, 224, 76), (255, 86, 69), (189, 86, 250))
 
@@ -66,6 +79,8 @@ class RhythmNote:
     judged: bool = False
     holding: bool = False
     hit_offset: float = 0.0
+    missed_visual_at: float | None = None
+    missed_progress: float = 0.0
 
 
 def _wav_duration(path: Path) -> float:
@@ -121,6 +136,29 @@ def load_chart(chart_path: Path):
     return data, notes, audio_path.resolve(), duration
 
 
+def resolve_playback_stems(audio_path: Path):
+    """Return (backing, guitar), falling back to the unsplit master."""
+    audio_path = Path(audio_path).resolve()
+    companion_pair = (
+        audio_path.with_name(f"{audio_path.stem}.no_guitar.wav"),
+        audio_path.with_name(f"{audio_path.stem}.guitar.wav"),
+    )
+    cache_dir = (
+        audio_path.parent.parent / ".stem_cache" / "htdemucs_6s"
+        / audio_path.stem
+    )
+    cached_pair = (cache_dir / "no_guitar.wav", cache_dir / "guitar.wav")
+    for backing_path, guitar_path in (companion_pair, cached_pair):
+        if not backing_path.is_file() or not guitar_path.is_file():
+            continue
+        backing_duration = _wav_duration(backing_path)
+        guitar_duration = _wav_duration(guitar_path)
+        if (backing_duration > 0.0 and guitar_duration > 0.0
+                and abs(backing_duration - guitar_duration) <= .10):
+            return backing_path.resolve(), guitar_path.resolve()
+    return audio_path, None
+
+
 def discover_chart(songs_dir: Path = SONGS_DIR) -> Path:
     candidates = sorted(songs_dir.glob("*.chart.json"),
                         key=lambda path: path.stat().st_mtime, reverse=True)
@@ -143,9 +181,15 @@ class HarleycasterSoloGame:
         self.chart_path = Path(chart_path) if chart_path else discover_chart()
         self.chart, self._source_notes, self.audio_path, self.duration = load_chart(
             self.chart_path)
+        self.backing_audio_path, self.guitar_audio_path = (
+            resolve_playback_stems(self.audio_path)
+        )
         self.title = str(self.chart.get("title") or self.audio_path.stem)
         self.set_difficulty(difficulty)
         self._load_art()
+        self._load_countdown_assets()
+        self._load_miss_sounds()
+        self._load_guitar_stem()
         self._hardware_mask = 0
         self._held_lanes = [False, False, False]
         self._audio_started = False
@@ -288,8 +332,21 @@ class HarleycasterSoloGame:
 
     def reset(self):
         self._stop_music()
+        if getattr(self, "_countdown_sound_channel", None) is not None:
+            self._countdown_sound_channel.stop()
+            self._countdown_sound_channel = None
+        for channel in getattr(self, "_miss_sound_channels", ()):
+            channel.stop()
+        self._miss_sound_channels = []
+        self._last_miss_sound = None
+        self._guitar_gain = GUITAR_STEM_VOLUME
+        self._guitar_duck_hold_remaining = 0.0
         for note in self.notes:
             note.judged = False
+            note.holding = False
+            note.hit_offset = 0.0
+            note.missed_visual_at = None
+            note.missed_progress = 0.0
         self.score = 0
         self.combo = 0
         self._camera_combo_visual = 0.0
@@ -305,6 +362,9 @@ class HarleycasterSoloGame:
         self.hit_flash_until = 0.0
         self._hit_animation_elapsed = [-1.0, -1.0, -1.0]
         self.song_time = -TRAVEL_TIME
+        self.phase = "playing"
+        self.countdown_elapsed = COUNTDOWN_SECONDS
+        self._countdown_sound_number = None
         self.visual_time = 0.0
         self._crawl_active = False
         self._crawl_elapsed = 0.0
@@ -325,9 +385,218 @@ class HarleycasterSoloGame:
         self._held_lanes = [False, False, False]
 
     def activate(self):
-        # The pre-roll lets the time-zero note travel down the highway before
-        # audio starts.  This also makes editor charts with a note at 0 fair.
         self.reset()
+        self.phase = "countdown"
+        self.countdown_elapsed = 0.0
+        self._play_countdown_sound(3)
+
+    @staticmethod
+    def _outlined_text(font, value, color, outline=(28, 5, 52), width=3):
+        core = font.render(str(value), True, color)
+        edge = font.render(str(value), True, outline)
+        surface = pygame.Surface(
+            (core.get_width() + width * 2, core.get_height() + width * 2),
+            pygame.SRCALPHA,
+        ).convert_alpha()
+        for offset_x in range(-width, width + 1):
+            for offset_y in range(-width, width + 1):
+                if offset_x * offset_x + offset_y * offset_y <= width * width:
+                    surface.blit(edge, (width + offset_x, width + offset_y))
+        surface.blit(core, (width, width))
+        return surface
+
+    def _load_countdown_assets(self):
+        self.countdown_label_font = self._font(30)
+        ui_dir = ROOT / "assets" / "GuitarHero" / "UI"
+        self._countdown_frame = self._load_image(
+            ui_dir / "PUFF_COUNTDOWN_FRAME.png"
+        )
+        self.countdown_numbers = {
+            number: self._load_image(
+                ui_dir / f"PUFF_COUNTDOWN_{number}.png"
+            )
+            for number in (3, 2, 1)
+        }
+        self._countdown_shade = pygame.Surface(
+            (WIDTH, HEIGHT), pygame.SRCALPHA
+        ).convert_alpha()
+        self._countdown_shade.fill((16, 7, 2, 104))
+        self.challenge_player = None
+        self._countdown_player_label = None
+        self._countdown_sounds = {}
+        self._countdown_sound_channel = None
+        self._countdown_sound_number = None
+        self._load_countdown_sounds()
+
+    def _load_countdown_sounds(self):
+        fx_dir = ROOT / "assets" / "Minigame" / "Sound" / "FX"
+        path = fx_dir / "countdown.wav"
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(
+                    frequency=44100, size=-16, channels=2, buffer=1024
+                )
+            if path.is_file():
+                self._countdown_sounds["normal"] = pygame.mixer.Sound(
+                    str(path)
+                )
+            else:
+                print(
+                    "[harleycaster] countdown sound missing: "
+                    "Sound/FX/countdown.wav"
+                )
+        except pygame.error as exc:
+            self._countdown_sounds.clear()
+            print(f"[harleycaster] countdown sound unavailable: {exc}")
+
+    def _play_countdown_sound(self, number):
+        if number == self._countdown_sound_number:
+            return
+        self._countdown_sound_number = number
+        if self._countdown_sound_channel is not None:
+            self._countdown_sound_channel.stop()
+        # A rovid Munchies countdown-kattanast hasznaljuk mindharom szamnal.
+        # A countdown2.wav hosszu UFO/start stingeret szandekosan nem jatszuk.
+        sound = self._countdown_sounds.get("normal")
+        self._countdown_sound_channel = (
+            sound.play() if sound is not None else None
+        )
+
+    def _load_miss_sounds(self):
+        fx_dir = ROOT / "assets" / "GuitarHero" / "FX"
+        self._miss_sounds = []
+        self._miss_sound_channels = []
+        self._last_miss_sound = None
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(
+                    frequency=48000, size=-16, channels=2, buffer=1024
+                )
+            for number in range(1, 7):
+                path = fx_dir / f"miss{number}.wav"
+                if not path.is_file():
+                    print(f"[harleycaster] miss sound missing: {path.name}")
+                    continue
+                sound = pygame.mixer.Sound(str(path))
+                sound.set_volume(.88)
+                self._miss_sounds.append(sound)
+        except (pygame.error, OSError) as exc:
+            self._miss_sounds.clear()
+            print(f"[harleycaster] miss sounds unavailable: {exc}")
+
+    def _load_guitar_stem(self):
+        self._guitar_stem_sound = None
+        self._guitar_stem_channel = None
+        self._guitar_gain = GUITAR_STEM_VOLUME
+        self._guitar_duck_hold_remaining = 0.0
+        if self.guitar_audio_path is None:
+            print("[harleycaster] stem pair unavailable; using master mix")
+            return
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(
+                    frequency=48000, size=-16, channels=2, buffer=1024
+                )
+            if pygame.mixer.get_num_channels() < 16:
+                pygame.mixer.set_num_channels(16)
+            self._guitar_stem_sound = pygame.mixer.Sound(
+                str(self.guitar_audio_path)
+            )
+            # A magas dedikalt csatorna nem vagja el a Puff loading elejen
+            # meg futo START.wav-ot, amelyet Sound.play() jellemzoen a 0-s
+            # automatikus csatornara tesz.
+            self._guitar_stem_channel = pygame.mixer.Channel(15)
+        except (pygame.error, OSError) as exc:
+            self._guitar_stem_sound = None
+            self._guitar_stem_channel = None
+            self.guitar_audio_path = None
+            self.backing_audio_path = self.audio_path
+            print(f"[harleycaster] guitar stem unavailable: {exc}")
+
+    def _play_miss_sound(self):
+        if not self._miss_sounds:
+            return
+        choices = [
+            sound for sound in self._miss_sounds
+            if sound is not self._last_miss_sound
+        ] or self._miss_sounds
+        sound = random.choice(choices)
+        self._last_miss_sound = sound
+        channel = sound.play()
+        if channel is not None:
+            self._miss_sound_channels = [
+                active for active in self._miss_sound_channels
+                if active.get_busy()
+            ]
+            self._miss_sound_channels.append(channel)
+
+    def _set_guitar_gain(self, volume):
+        self._guitar_gain = max(
+            GUITAR_MISS_VOLUME, min(GUITAR_STEM_VOLUME, float(volume))
+        )
+        if self._guitar_stem_channel is None:
+            return
+        try:
+            self._guitar_stem_channel.set_volume(self._guitar_gain)
+        except pygame.error:
+            pass
+
+    def _duck_guitar_for_miss(self):
+        if self._guitar_stem_channel is None:
+            return
+        self._guitar_duck_hold_remaining = GUITAR_MISS_HOLD_SECONDS
+
+    def _restore_guitar_after_hit(self):
+        self._guitar_duck_hold_remaining = 0.0
+
+    def _update_guitar_duck(self, dt):
+        if self._guitar_stem_channel is None:
+            return
+        self._guitar_duck_hold_remaining = max(
+            0.0, self._guitar_duck_hold_remaining - dt
+        )
+        target = (
+            GUITAR_MISS_VOLUME
+            if self._guitar_duck_hold_remaining > 0.0
+            else GUITAR_STEM_VOLUME
+        )
+        duration = (
+            GUITAR_DUCK_ATTACK_SECONDS
+            if target < self._guitar_gain else GUITAR_RECOVER_SECONDS
+        )
+        step = (
+            (GUITAR_STEM_VOLUME - GUITAR_MISS_VOLUME)
+            * dt / max(.001, duration)
+        )
+        if target < self._guitar_gain:
+            self._set_guitar_gain(max(target, self._guitar_gain - step))
+        elif target > self._guitar_gain:
+            self._set_guitar_gain(min(target, self._guitar_gain + step))
+
+    def set_challenge_player(self, player_num):
+        """Show PLAYER X only when the surrounding game is multiplayer."""
+        try:
+            player_num = int(player_num)
+        except (TypeError, ValueError):
+            player_num = 0
+        self.challenge_player = player_num if 1 <= player_num <= 4 else None
+        self._countdown_player_label = (
+            self._outlined_text(
+                self.countdown_label_font,
+                f"PLAYER {self.challenge_player}",
+                (255, 226, 151),
+                outline=(20, 8, 3),
+                width=4,
+            )
+            if self.challenge_player is not None
+            else None
+        )
+
+    def countdown_number(self):
+        slot = min(2, int(
+            (self.countdown_elapsed + 1e-9) / COUNTDOWN_SLOT_SECONDS
+        ))
+        return 3 - slot
 
     def _start_music(self):
         if self._audio_started:
@@ -337,11 +606,24 @@ class HarleycasterSoloGame:
         try:
             if pygame.mixer.get_init() is None:
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
-            pygame.mixer.music.load(str(self.audio_path))
-            pygame.mixer.music.set_volume(.90)
+            pygame.mixer.music.load(str(self.backing_audio_path))
+            pygame.mixer.music.set_volume(MUSIC_VOLUME)
             pygame.mixer.music.play(loops=0)
+            if (self._guitar_stem_sound is not None
+                    and self._guitar_stem_channel is not None):
+                self._guitar_stem_channel.stop()
+                self._guitar_stem_channel.play(self._guitar_stem_sound)
+                self._set_guitar_gain(GUITAR_STEM_VOLUME)
             self._music_active = True
-            print(f"[harleycaster] playing {self.audio_path.name} / {self.chart_path.name}")
+            self._guitar_duck_hold_remaining = 0.0
+            if self.guitar_audio_path is None:
+                mix_name = self.audio_path.name
+            else:
+                mix_name = (
+                    f"{self.backing_audio_path.name} + "
+                    f"{self.guitar_audio_path.name}"
+                )
+            print(f"[harleycaster] playing {mix_name} / {self.chart_path.name}")
         except pygame.error as exc:
             # Keep the visual/chart clock alive for diagnostics, but make the
             # missing device visible in the log instead of crashing the GUI.
@@ -349,12 +631,24 @@ class HarleycasterSoloGame:
             print(f"[harleycaster] audio unavailable: {exc}")
 
     def _stop_music(self):
+        guitar_channel = getattr(self, "_guitar_stem_channel", None)
+        if guitar_channel is not None:
+            try:
+                guitar_channel.stop()
+            except pygame.error:
+                pass
         if getattr(self, "_music_active", False):
             try:
                 pygame.mixer.music.stop()
             except pygame.error:
                 pass
+        try:
+            pygame.mixer.music.unload()
+        except pygame.error:
+            pass
         self._music_active = False
+        self._guitar_duck_hold_remaining = 0.0
+        self._guitar_gain = GUITAR_STEM_VOLUME
 
     def _playback_time(self):
         if self._audio_clock_start is None:
@@ -445,6 +739,8 @@ class HarleycasterSoloGame:
     def _miss(self, lane=None):
         self.combo = 0
         self.misses += 1
+        self._play_miss_sound()
+        self._duck_guitar_for_miss()
         self.cheech = min(
             1.0, self.cheech + 1.0 / float(self.rules["misses"])
         )
@@ -452,6 +748,27 @@ class HarleycasterSoloGame:
         self._feedback("MISS!", color=(255, 86, 69))
         if self.misses >= self.rules["misses"]:
             self._finish("UNPLUGGED")
+
+    def _mark_note_missed(self, note):
+        note.judged = True
+        note.holding = False
+        note.missed_visual_at = self.visual_time
+        note.missed_progress = max(
+            1.0,
+            1.0 - (note.at - self.song_time) / TRAVEL_TIME,
+        )
+
+    def _miss_note_visual(self, note):
+        if note.missed_visual_at is None:
+            return None
+        age = max(0.0, self.visual_time - note.missed_visual_at)
+        if age >= MISS_NOTE_FADE_SECONDS:
+            return None
+        progress = (
+            note.missed_progress + age * MISS_NOTE_FALL_PROGRESS_PER_SEC
+        )
+        alpha = round(255 * (1.0 - age / MISS_NOTE_FADE_SECONDS) ** 2)
+        return progress, alpha
 
     def _complete_note(self, note):
         """Resolve a tap or fully-held note and award its score/combo."""
@@ -461,6 +778,7 @@ class HarleycasterSoloGame:
         self.combo += 1
         self.best_combo = max(self.best_combo, self.combo)
         self.hits += 1
+        self._restore_guitar_after_hit()
         self._set_fret_hand_lane(note.lane)
         multiplier = min(5, 1 + self.combo // 10)
         self.score += (1000 if perfect else 500) * multiplier
@@ -504,6 +822,19 @@ class HarleycasterSoloGame:
         dt = max(0.0, min(float(dt), .1))
         if self.finished:
             return
+        if self.phase == "countdown":
+            self.countdown_elapsed = min(
+                COUNTDOWN_SECONDS, self.countdown_elapsed + dt
+            )
+            # A teljes ritmusjatek fagyasztva marad: nincs chart-idovonal,
+            # note-beuszas, zene, miss vagy hatteranimacio a 3-2-1 alatt.
+            self.song_time = -TRAVEL_TIME
+            if self.countdown_elapsed >= COUNTDOWN_SECONDS - 1e-9:
+                self.phase = "playing"
+            else:
+                self._play_countdown_sound(self.countdown_number())
+            return
+        self._update_guitar_duck(dt)
         self._update_scene_animation(dt)
         if self.outcome is not None:
             self.result_elapsed += dt
@@ -519,8 +850,7 @@ class HarleycasterSoloGame:
         for note in self.notes:
             if note.holding:
                 if not self._held_lanes[note.lane]:
-                    note.holding = False
-                    note.judged = True
+                    self._mark_note_missed(note)
                     self._miss(note.lane)
                     if self.outcome is not None:
                         return
@@ -529,7 +859,7 @@ class HarleycasterSoloGame:
                 continue
             if (not note.judged
                     and self.song_time > note.at + self.rules["late"]):
-                note.judged = True
+                self._mark_note_missed(note)
                 self._miss()
                 if self.outcome is not None:
                     return
@@ -537,6 +867,8 @@ class HarleycasterSoloGame:
             self._finish("SOLO COMPLETE")
 
     def handle_event(self, event):
+        if self.phase == "countdown":
+            return
         if hasattr(event, "kind"):
             kind = event.kind
             if kind.endswith("_UP"):
@@ -594,6 +926,8 @@ class HarleycasterSoloGame:
             bool(mask & 0x04),
             bool(mask & 0x02),
         ]
+        if self.phase == "countdown":
+            return
         if rising & 0x01:
             self.press(0)
         if rising & 0x04:
@@ -617,9 +951,46 @@ class HarleycasterSoloGame:
         self._stop_music()
         self.reset()
 
+    def _draw_countdown(self, screen):
+        screen.blit(self._countdown_shade, (0, 0))
+        screen.blit(self._countdown_frame, (0, 0))
+        centre = (WIDTH // 2, 220)
+        slot_progress = (
+            self.countdown_elapsed % COUNTDOWN_SLOT_SECONDS
+        ) / COUNTDOWN_SLOT_SECONDS
+        pulse = math.sin(slot_progress * math.pi) ** 2
+        base_number = self.countdown_numbers[self.countdown_number()]
+        scale = .92 + pulse * .08
+        target_size = (
+            max(1, round(base_number.get_width() * scale)),
+            max(1, round(base_number.get_height() * scale)),
+        )
+        number = (
+            base_number
+            if target_size == base_number.get_size()
+            else self._scale(base_number, target_size)
+        )
+        screen.blit(number, number.get_rect(center=centre))
+        if self._countdown_player_label is not None:
+            label_rect = self._countdown_player_label.get_rect(
+                center=(
+                    WIDTH // 2,
+                    COUNTDOWN_PLAYER_Y + COUNTDOWN_PLAYER_Y_OFFSET,
+                )
+            )
+            plate = label_rect.inflate(34, 14)
+            pygame.draw.rect(screen, (37, 19, 10), plate, border_radius=9)
+            pygame.draw.rect(screen, (187, 52, 28), plate, 3, border_radius=9)
+            screen.blit(
+                self._countdown_player_label,
+                label_rect,
+            )
+
     @staticmethod
     def _x_for_lane(lane, y):
-        progress = max(0.0, min(1.0, (y - SPAWN_Y) / (HIT_Y - SPAWN_Y)))
+        # A hit line utan is folytatjuk ugyanazt a perspektivikus ivet.
+        # Korabban a max(1.0) clamp befagyasztotta a missed note X-et.
+        progress = max(0.0, (y - SPAWN_Y) / (HIT_Y - SPAWN_Y))
         spread = 12 + progress * 99
         return 320 + (lane - 1) * spread
 
@@ -924,22 +1295,27 @@ class HarleycasterSoloGame:
         self._draw_scene(screen)
 
         for note in self.notes:
-            if note.judged:
+            missed_visual = self._miss_note_visual(note) if note.judged else None
+            if note.judged and missed_visual is None:
                 continue
-            progress = 1 - (note.at - now) / TRAVEL_TIME
-            if (progress < 0
-                    or (note.duration <= 0.0 and progress > 1.08)
-                    or (note.duration > 0.0
-                        and now > note.at + note.duration)):
+            if missed_visual is not None:
+                progress, note_alpha = missed_visual
+            else:
+                progress = 1 - (note.at - now) / TRAVEL_TIME
+                note_alpha = 255
+            if progress < 0:
                 continue
             visual_progress = max(0.0, min(1.0, progress))
             raw_y = SPAWN_Y + progress * (HIT_Y - SPAWN_Y)
-            y = (min(raw_y, HIT_Y)
-                 if note.duration > 0.0 else raw_y)
+            y = (
+                min(raw_y, HIT_Y)
+                if note.duration > 0.0 and missed_visual is None
+                else raw_y
+            )
             x = int(self._x_for_lane(note.lane, y))
             half_width = int(8 + 10 * visual_progress)
             half_height = int(4 + 5 * visual_progress)
-            if note.duration > 0:
+            if note.duration > 0 and missed_visual is None:
                 tail_start = max(
                     SPAWN_Y,
                     min(HIT_Y, raw_y - note.duration / TRAVEL_TIME
@@ -950,6 +1326,28 @@ class HarleycasterSoloGame:
                     screen, note.lane,
                     (x, int(y)), (tail_x, int(tail_start)), half_width,
                 )
+            if note_alpha < 255:
+                sprite = pygame.Surface(
+                    ((half_width + 4) * 2, (half_height + 4) * 2),
+                    pygame.SRCALPHA,
+                )
+                shadow = pygame.Rect(
+                    1, 5, (half_width + 3) * 2, (half_height + 3) * 2
+                )
+                note_rect = pygame.Rect(
+                    4, 4, half_width * 2, half_height * 2
+                )
+                pygame.draw.ellipse(
+                    sprite, (13, 10, 20, note_alpha), shadow
+                )
+                pygame.draw.ellipse(
+                    sprite, (*LANE_COLORS[note.lane], note_alpha), note_rect
+                )
+                pygame.draw.ellipse(
+                    sprite, (255, 249, 209, note_alpha), note_rect, 2
+                )
+                screen.blit(sprite, sprite.get_rect(center=(x, round(y))))
+                continue
             shadow = pygame.Rect(
                 x - half_width - 3,
                 int(y) - half_height + 1,
@@ -985,10 +1383,8 @@ class HarleycasterSoloGame:
             self._draw_text(screen, self.font_judgement,
                             self.last_judgement, (320, 310),
                             color=self.judgement_color, center=True)
-        if now < 0 and self.outcome is None:
-            count = max(1, int(math.ceil(-now)))
-            self._draw_text(screen, self.font_judgement,
-                            str(count), (320, 111), center=True)
+        if self.phase == "countdown":
+            self._draw_countdown(screen)
         if self.outcome:
             screen.blit(self.result_overlay, (0, 0))
             self._draw_text(screen, self.font_result,

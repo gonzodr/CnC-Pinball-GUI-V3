@@ -269,6 +269,18 @@ módjából indul. A Harleycaster minden indításkor a
 `.chart.json` fájlját tölti be, és a chart `audio` mezőjében megadott zenét
 játssza le.
 
+A módválasztóban a korábbi külön Munchies helyett **Arcade** szerepel.
+Start/piros belép az Arcade almenübe, a flippergombok választanak a
+**Munchies Challenge** és a **Puff 'n' Riff** között; Start/piros indít,
+Shoot/zöld visszalép a fő módválasztóba. A fizikai vezérléshez az Arcade
+protokollt küldő firmware is szükséges (F6 → Arduino frissítés).
+
+A Puff 'n' Riff történetképpel és 3–2–1 visszaszámlálással indul.
+A külön `.guitar.wav` és `.no_guitar.wav` sávok a Git repó részei:
+hibánál csak a gitár halkul el, a kíséret folytatódik. A loading stinger,
+MISS-hangok, countdown-képek és Arcade módgrafikák szintén verziózottak.
+A Windowsos mock módhangok a Pi-n automatikusan ki vannak kapcsolva.
+
 A mostani assetpár:
 
 - `0066_mus_Mode_select_groove.wav`

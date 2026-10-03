@@ -3,20 +3,44 @@
 GAME_STANDARD = 0
 GAME_COOP = 1
 GAME_QUICK = 2
-GAME_MUNCHIES = 3
+GAME_ARCADE = 3
+# Protocol compatibility: mode id 3 used to launch Munchies directly.  It is
+# now the Arcade container, while the selected Arcade game decides what runs.
+GAME_MUNCHIES = GAME_ARCADE
 GAME_MULTIBALL_MAYHEM = 4
 
 GAME_MODE_NAMES = (
     "STANDARD GAME",
     "CO-OP GAME",
     "QUICK GAME",
-    "MUNCHIES CHALLENGE",
+    "ARCADE",
     "MULTIBALL MAYHEM",
 )
 
 GAME_MODE_COUNT = len(GAME_MODE_NAMES)
 GAME_MODE_MASK_ALL = (1 << GAME_MODE_COUNT) - 1
 GAME_MODE_MASK_ONE_PLAYER = GAME_MODE_MASK_ALL & ~(1 << GAME_COOP)
+
+ARCADE_MUNCHIES = 0
+ARCADE_PUFF_N_RIFF = 1
+ARCADE_GAME_NAMES = (
+    "MUNCHIES CHALLENGE",
+    "PUFF 'N' RIFF",
+)
+ARCADE_GAME_COUNT = len(ARCADE_GAME_NAMES)
+
+
+def normalize_arcade_game(game_id: int) -> int:
+    try:
+        game_id = int(game_id)
+    except (TypeError, ValueError):
+        return ARCADE_MUNCHIES
+    return game_id if 0 <= game_id < ARCADE_GAME_COUNT else ARCADE_MUNCHIES
+
+
+def step_arcade_game(game_id: int, direction: int) -> int:
+    step = -1 if int(direction) < 0 else 1
+    return (normalize_arcade_game(game_id) + step) % ARCADE_GAME_COUNT
 
 
 def availability_mask_for_players(player_count: int) -> int:

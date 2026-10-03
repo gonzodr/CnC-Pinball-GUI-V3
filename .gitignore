@@ -17,6 +17,9 @@ env/
 # Gepenkenti, a szerviz menubol mentett runtime beallitasok
 src/minigame_settings.json
 src/serial_port.json
+src/munchies_hiscores.json
+src/team_hiscores.json
+src/particle_settings.json
 
 # Szervizmenuvel keszitett, gepenkenti szenzor-diagnosztikai naplok
 logs/diagnostics/*.csv

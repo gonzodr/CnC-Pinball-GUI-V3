@@ -99,8 +99,12 @@ class MunchiesChallengeStateTests(unittest.TestCase):
         self.state.active_player_count = 2
         self.state.selected_game_mode = GAME_MUNCHIES
         self.state._preloaded_minigame = game
+        # Mode id 3 is now the Arcade container.  The first Start enters its
+        # submenu (default tile: Munchies); the second confirms the game.
         self.state.handle_event(GameEvent("START"))
         self.assertEqual(self.state.state, AppState.PLAYER_SELECT)
+        self.assertTrue(self.state.arcade_menu_active)
+        self.state.handle_event(GameEvent("START"))
         with patch(
             "state_machine.time.monotonic",
             return_value=(

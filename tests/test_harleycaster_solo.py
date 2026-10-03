@@ -3,10 +3,12 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import wave
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -15,8 +17,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pygame
 
-from harleycaster_solo import HarleycasterSoloGame, load_chart
+from harleycaster_solo import (
+    COUNTDOWN_PLAYER_Y_OFFSET,
+    GUITAR_DUCK_ATTACK_SECONDS,
+    GUITAR_MISS_HOLD_SECONDS,
+    GUITAR_MISS_VOLUME,
+    GUITAR_RECOVER_SECONDS,
+    GUITAR_STEM_VOLUME,
+    HIT_Y,
+    MISS_NOTE_FADE_SECONDS,
+    HarleycasterSoloGame,
+    TRAVEL_TIME,
+    load_chart,
+    resolve_playback_stems,
+)
 from mock_input import MockInputController
+from protocol import GameEvent
 from state_machine import AppState, StateMachine
 
 
@@ -233,6 +249,14 @@ class HarleycasterSoloTests(unittest.TestCase):
         self.assertEqual(HarleycasterSoloGame._x_for_lane(2, 161), 332)
         self.assertEqual(HarleycasterSoloGame._x_for_lane(0, 339), 209)
         self.assertEqual(HarleycasterSoloGame._x_for_lane(2, 339), 431)
+        self.assertLess(
+            HarleycasterSoloGame._x_for_lane(0, HIT_Y + 70),
+            HarleycasterSoloGame._x_for_lane(0, HIT_Y),
+        )
+        self.assertGreater(
+            HarleycasterSoloGame._x_for_lane(2, HIT_Y + 70),
+            HarleycasterSoloGame._x_for_lane(2, HIT_Y),
+        )
         with tempfile.TemporaryDirectory() as directory:
             chart = make_song(directory, [{"time_ms": 1000, "lane": 0}])
             game = HarleycasterSoloGame(chart, difficulty=0)
@@ -308,6 +332,201 @@ class HarleycasterSoloTests(unittest.TestCase):
         kinds = [item.kind for item in controller.poll_events([event])]
         self.assertIn("GUITAR_SOLO_START", kinds)
         self.assertNotIn("MUNCHIES_START", kinds)
+
+    def test_solo_story_screen_is_renderable_before_lazy_game_load(self):
+        class StubSolo:
+            finished = False
+
+            def set_difficulty(self, value):
+                self.difficulty = value
+
+            def activate(self):
+                self.activated = True
+
+            def update(self, _dt):
+                pass
+
+            def set_challenge_player(self, player_num):
+                self.challenge_player = player_num
+
+        solo = StubSolo()
+        with patch(
+            "state_machine.HarleycasterSoloGame", return_value=solo
+        ) as loader:
+            state = StateMachine()
+            state.state = AppState.SCORE
+            state.active_player_count = 2
+            state.current_player = 2
+            state.handle_event(GameEvent("GUITAR_SOLO_START"))
+            self.assertEqual(state.state, AppState.PUFF_LOADING)
+            self.assertIsNone(state.minigame)
+
+            # A display-flip elotti tick meg nem kezdhet blokkoló betoltesbe.
+            state.tick()
+            self.assertEqual(state.state, AppState.PUFF_LOADING)
+            self.assertFalse(loader.called)
+            self.assertIsNone(state._preloaded_harleycaster)
+
+            # A main.py a tortenetkep tenyleges flipje utan elesiti a lazy
+            # loadot. Ettol kezdve a fizikai kijelzon ez a kep marad kint.
+            state.mark_puff_loading_presented()
+            state.tick()
+            self.assertFalse(loader.called)
+
+            state._puff_loading_started_at -= state.PUFF_LOADING_ARM_SEC
+            state.tick()
+            self.assertEqual(state.state, AppState.MINIGAME)
+            self.assertIs(state.minigame, solo)
+            self.assertTrue(solo.activated)
+            self.assertEqual(solo.challenge_player, 2)
+
+    def test_activated_solo_uses_munchies_style_three_second_countdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chart = make_song(directory, [{"time_ms": 1000, "lane": 0}])
+            game = HarleycasterSoloGame(chart, difficulty=0)
+            game.set_challenge_player(2)
+            game.activate()
+
+            self.assertEqual(game.phase, "countdown")
+            self.assertEqual(game.countdown_number(), 3)
+            self.assertIsNotNone(game._countdown_player_label)
+            self.assertEqual(COUNTDOWN_PLAYER_Y_OFFSET, -15)
+            self.assertIn("normal", game._countdown_sounds)
+            self.assertNotIn("final", game._countdown_sounds)
+            self.assertEqual(game._countdown_sound_number, 3)
+
+            game.countdown_elapsed = 1.0
+            game._play_countdown_sound(game.countdown_number())
+            self.assertEqual(game.countdown_number(), 2)
+            self.assertEqual(game._countdown_sound_number, 2)
+            game.countdown_elapsed = 2.0
+            game._play_countdown_sound(game.countdown_number())
+            self.assertEqual(game.countdown_number(), 1)
+            self.assertEqual(game._countdown_sound_number, 1)
+
+            game.countdown_elapsed = 2.9
+            initial_visual_time = game.visual_time
+            game.update(.1)
+            self.assertEqual(game.phase, "playing")
+            self.assertFalse(game._audio_started)
+            self.assertEqual(game.song_time, -TRAVEL_TIME)
+            self.assertEqual(game.misses, 0)
+            self.assertEqual(game.visual_time, initial_visual_time)
+
+            # A rendes note-beuszas csak a countdown utan indul; a zene a
+            # korabbi, fairnesshez szukseges TRAVEL_TIME pre-roll vegen startol.
+            for _ in range(round(TRAVEL_TIME / .1)):
+                game.update(.1)
+            self.assertTrue(game._audio_started)
+
+            game.set_challenge_player(None)
+            self.assertIsNone(game._countdown_player_label)
+            game.prepare_for_replay()
+
+    def test_missed_note_continues_lane_curve_and_fades_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chart = make_song(directory, [{"time_ms": 1000, "lane": 0}])
+            game = HarleycasterSoloGame(chart, difficulty=0)
+            note = game.notes[0]
+            game.song_time = note.at + game.rules["late"]
+            game.visual_time = 2.0
+            game._mark_note_missed(note)
+
+            start_progress, start_alpha = game._miss_note_visual(note)
+            start_y = 161 + start_progress * (HIT_Y - 161)
+            start_x = game._x_for_lane(note.lane, start_y)
+
+            game.visual_time += MISS_NOTE_FADE_SECONDS / 2
+            later_progress, later_alpha = game._miss_note_visual(note)
+            later_y = 161 + later_progress * (HIT_Y - 161)
+            later_x = game._x_for_lane(note.lane, later_y)
+            self.assertGreater(later_y, start_y)
+            self.assertLess(later_x, start_x)
+            self.assertLess(later_alpha, start_alpha)
+
+            game.visual_time += MISS_NOTE_FADE_SECONDS
+            self.assertIsNone(game._miss_note_visual(note))
+
+    def test_companion_stems_are_selected_for_playback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chart = make_song(directory, [{"time_ms": 1000, "lane": 0}])
+            master = Path(directory) / "song.wav"
+            guitar = Path(directory) / "song.guitar.wav"
+            backing = Path(directory) / "song.no_guitar.wav"
+            shutil.copy2(master, guitar)
+            shutil.copy2(master, backing)
+
+            resolved_backing, resolved_guitar = resolve_playback_stems(master)
+            self.assertEqual(resolved_backing, backing.resolve())
+            self.assertEqual(resolved_guitar, guitar.resolve())
+
+            game = HarleycasterSoloGame(chart, difficulty=0)
+            self.assertEqual(game.backing_audio_path, backing.resolve())
+            self.assertEqual(game.guitar_audio_path, guitar.resolve())
+
+    def test_miss_plays_random_fx_and_only_ducks_guitar_stem(self):
+        class FakeChannel:
+            def __init__(self):
+                self.volumes = []
+
+            def get_busy(self):
+                return True
+
+            def stop(self):
+                pass
+
+            def set_volume(self, volume):
+                self.volumes.append(volume)
+
+        class FakeSound:
+            def __init__(self, name):
+                self.name = name
+                self.play_count = 0
+
+            def play(self):
+                self.play_count += 1
+                return FakeChannel()
+
+        with tempfile.TemporaryDirectory() as directory:
+            chart = make_song(directory, [{"time_ms": 1000, "lane": 0}])
+            game = HarleycasterSoloGame(chart, difficulty=0)
+            sounds = [FakeSound(str(index)) for index in range(6)]
+            game._miss_sounds = sounds
+            game._music_active = True
+            guitar_channel = FakeChannel()
+            game._guitar_stem_channel = guitar_channel
+            game._guitar_gain = GUITAR_STEM_VOLUME
+
+            with (
+                patch("harleycaster_solo.random.choice", side_effect=lambda items: items[0]),
+                patch("harleycaster_solo.pygame.mixer.music.set_volume") as volume,
+            ):
+                game._miss()
+                first = game._last_miss_sound
+                game._miss()
+                second = game._last_miss_sound
+                self.assertIsNot(first, second)
+                self.assertEqual(sum(sound.play_count for sound in sounds), 2)
+                volume.assert_not_called()
+
+                game._update_guitar_duck(GUITAR_DUCK_ATTACK_SECONDS)
+                self.assertAlmostEqual(game._guitar_gain, GUITAR_MISS_VOLUME)
+                self.assertGreater(game._guitar_duck_hold_remaining, 0.0)
+
+                # A jo talalat nem varja meg az automatikus hold veget.
+                game._restore_guitar_after_hit()
+                game._update_guitar_duck(GUITAR_RECOVER_SECONDS)
+                self.assertAlmostEqual(game._guitar_gain, GUITAR_STEM_VOLUME)
+                self.assertAlmostEqual(
+                    guitar_channel.volumes[-1], GUITAR_STEM_VOLUME
+                )
+
+                # Talalat nelkul a gitarsav a hold utan szinten visszater.
+                game._duck_guitar_for_miss()
+                game._update_guitar_duck(GUITAR_DUCK_ATTACK_SECONDS)
+                game._update_guitar_duck(GUITAR_MISS_HOLD_SECONDS)
+                game._update_guitar_duck(GUITAR_RECOVER_SECONDS)
+                self.assertAlmostEqual(game._guitar_gain, GUITAR_STEM_VOLUME)
 
     def test_state_machine_returns_solo_bonus_to_score(self):
         state = StateMachine()

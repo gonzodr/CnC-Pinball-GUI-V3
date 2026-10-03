@@ -25,12 +25,16 @@ import sys
 
 from particle_settings import ParticleSettingsManager
 from game_modes import (
+    ARCADE_MUNCHIES,
+    ARCADE_PUFF_N_RIFF,
     GAME_STANDARD,
     GAME_COOP,
     GAME_QUICK,
+    GAME_ARCADE,
     GAME_MUNCHIES,
     GAME_MULTIBALL_MAYHEM,
     GAME_MODE_NAMES,
+    normalize_arcade_game,
     normalize_game_mode,
 )
 
@@ -267,32 +271,49 @@ class ScoreGUI:
     MODE_CONFIRM_DURATION_SEC = MODE_CONFIRM_HOLD_SEC + MODE_CONFIRM_FADE_SEC
     MODE_CONFIRM_WIGGLE_SEC = 0.30
     MODE_CONFIRM_WIGGLE_PX = 5
+    ARCADE_TRANSITION_SEC = 0.55
+    ARCADE_ENTRY_START_SCALE = 0.08
+    ARCADE_PASS_THROUGH_SCALE = 1.65
     # Modonkenti kezi meret-finomhangolas. 1.0 = eredeti 640x480-as meret.
     MODE_ART_SCALE_STANDARD = 0.85
     MODE_ART_SCALE_COOP = 0.84
     MODE_ART_SCALE_QUICK = 0.87
-    MODE_ART_SCALE_MUNCHIES = 0.9
+    MODE_ART_SCALE_ARCADE = 0.65
+    MODE_ART_SCALE_MUNCHIES = 0.90
+    MODE_ART_SCALE_PUFF_N_RIFF = 0.65
     MODE_ART_SCALE_MAYHEM = 0.85
     MODE_ART_SCALES = {
         GAME_STANDARD: MODE_ART_SCALE_STANDARD,
         GAME_COOP: MODE_ART_SCALE_COOP,
         GAME_QUICK: MODE_ART_SCALE_QUICK,
-        GAME_MUNCHIES: MODE_ART_SCALE_MUNCHIES,
+        GAME_ARCADE: MODE_ART_SCALE_ARCADE,
         GAME_MULTIBALL_MAYHEM: MODE_ART_SCALE_MAYHEM,
     }
     # Modonkenti kezi Y-finomhangolas (640x480-as kompoziciohoz).
     # Pozitiv ertek lejjebb, negativ ertek feljebb tolja az adott kepet.
     MODE_ART_Y_STANDARD = 0
-    MODE_ART_Y_COOP = -10
+    MODE_ART_Y_COOP = -7
     MODE_ART_Y_QUICK = 0
+    MODE_ART_Y_ARCADE = 45
     MODE_ART_Y_MUNCHIES = -25
+    MODE_ART_Y_PUFF_N_RIFF = 60
     MODE_ART_Y_MAYHEM = -20
     MODE_ART_Y_OFFSETS = {
         GAME_STANDARD: MODE_ART_Y_STANDARD,
         GAME_COOP: MODE_ART_Y_COOP,
         GAME_QUICK: MODE_ART_Y_QUICK,
-        GAME_MUNCHIES: MODE_ART_Y_MUNCHIES,
+        GAME_ARCADE: MODE_ART_Y_ARCADE,
         GAME_MULTIBALL_MAYHEM: MODE_ART_Y_MAYHEM,
+    }
+    # Az Arcade-almenu ugyanennek a fenti, kozos kezi hangoloblokknak a
+    # Munchies/Puff ertekeit hasznalja.
+    ARCADE_ART_SCALES = {
+        ARCADE_MUNCHIES: MODE_ART_SCALE_MUNCHIES,
+        ARCADE_PUFF_N_RIFF: MODE_ART_SCALE_PUFF_N_RIFF,
+    }
+    ARCADE_ART_Y_OFFSETS = {
+        ARCADE_MUNCHIES: MODE_ART_Y_MUNCHIES,
+        ARCADE_PUFF_N_RIFF: MODE_ART_Y_PUFF_N_RIFF,
     }
 
     # 640x480-ra átszámolt fix pozíciók (eredeti * 0.8)
@@ -613,10 +634,20 @@ class ScoreGUI:
         self.background = None
         self.mode_backgrounds = {}
         self.mode_art = {}
+        self.arcade_art = {}
+        self.puff_loading_background = None
+        self.puff_loading_title = None
+        self.puff_loading_title_rect = None
+        self._puff_loading_title_sound = None
+        self._puff_loading_title_channel = None
         self._mode_background_current_id = GAME_STANDARD
         self._mode_background_previous_id = None
         self._mode_background_fade_start = 0.0
         self._mode_art_slide_direction = 1
+        self._arcade_art_current_id = ARCADE_MUNCHIES
+        self._arcade_art_previous_id = None
+        self._arcade_art_slide_start = 0.0
+        self._arcade_art_slide_direction = 1
         self._player_select_mode_id = None
         self.summary_anim_start = None
 
@@ -894,6 +925,111 @@ class ScoreGUI:
         self.screen.blit(previous, (previous_x, 0))
         return current
 
+    def _blit_transition_surface(self, surface, scale, alpha, offset_x=0):
+        """Center-scale a transparent full-screen art layer with global alpha."""
+        scale = max(0.01, float(scale))
+        width = max(1, round(self.SCREEN_W * scale))
+        height = max(1, round(self.SCREEN_H * scale))
+        scale_fn = (
+            pygame.transform.smoothscale
+            if _smoothscale_supported() else pygame.transform.scale
+        )
+        scaled = scale_fn(surface, (width, height))
+        original_alpha = scaled.get_alpha()
+        scaled.set_alpha(max(0, min(255, round(alpha))))
+        self.screen.blit(
+            scaled,
+            scaled.get_rect(center=(self.SCREEN_W // 2 + offset_x, self.SCREEN_H // 2)),
+        )
+        scaled.set_alpha(original_alpha)
+
+    def _draw_arcade_art(self, state, confirmation_elapsed=None):
+        """Arcade portal transition plus the submenu's normal side-scroller."""
+        game_id = normalize_arcade_game(state.selected_arcade_game)
+        current = self.arcade_art.get(game_id)
+        arcade_tile = self.mode_art.get(GAME_ARCADE)
+        if current is None or arcade_tile is None:
+            return None
+
+        transition = getattr(state, "arcade_transition_kind", None)
+        transition_elapsed = time.monotonic() - getattr(
+            state, "arcade_transition_started_at", 0.0
+        )
+        if transition in ("enter", "exit") and transition_elapsed < self.ARCADE_TRANSITION_SEC:
+            progress = max(0.0, transition_elapsed / self.ARCADE_TRANSITION_SEC)
+            eased = 1.0 - (1.0 - progress) ** 3
+            if transition == "enter":
+                self._blit_transition_surface(
+                    arcade_tile,
+                    1.0 + (self.ARCADE_PASS_THROUGH_SCALE - 1.0) * eased,
+                    255 * (1.0 - eased),
+                )
+                self._blit_transition_surface(
+                    current,
+                    self.ARCADE_ENTRY_START_SCALE
+                    + (1.0 - self.ARCADE_ENTRY_START_SCALE) * eased,
+                    255 * eased,
+                )
+            else:
+                self._blit_transition_surface(
+                    current,
+                    1.0 - (1.0 - self.ARCADE_ENTRY_START_SCALE) * eased,
+                    255 * (1.0 - eased),
+                )
+                self._blit_transition_surface(
+                    arcade_tile,
+                    self.ARCADE_PASS_THROUGH_SCALE
+                    - (self.ARCADE_PASS_THROUGH_SCALE - 1.0) * eased,
+                    255 * eased,
+                )
+            self._arcade_art_current_id = game_id
+            self._arcade_art_previous_id = None
+            return current if transition == "enter" else arcade_tile
+
+        if not getattr(state, "arcade_menu_active", False):
+            self.screen.blit(arcade_tile, (0, 0))
+            return arcade_tile
+
+        if game_id != self._arcade_art_current_id:
+            previous = self._arcade_art_current_id
+            self._arcade_art_previous_id = previous
+            self._arcade_art_current_id = game_id
+            self._arcade_art_slide_direction = 1 if game_id > previous else -1
+            self._arcade_art_slide_start = time.time()
+
+        if confirmation_elapsed is not None:
+            elapsed = max(0.0, confirmation_elapsed)
+            wiggle_progress = min(1.0, elapsed / self.MODE_CONFIRM_WIGGLE_SEC)
+            wiggle_x = round(
+                math.sin(wiggle_progress * math.pi * 4.0)
+                * self.MODE_CONFIRM_WIGGLE_PX * (1.0 - wiggle_progress)
+            )
+            fade_progress = max(0.0, min(
+                1.0,
+                (elapsed - self.MODE_CONFIRM_HOLD_SEC) / self.MODE_CONFIRM_FADE_SEC,
+            ))
+            original_alpha = current.get_alpha()
+            current.set_alpha(round(255 * (1.0 - fade_progress ** 2)))
+            self.screen.blit(current, (wiggle_x, 0))
+            current.set_alpha(original_alpha)
+            return current
+
+        previous_id = self._arcade_art_previous_id
+        if previous_id is None:
+            self.screen.blit(current, (0, 0))
+            return current
+        previous = self.arcade_art.get(previous_id)
+        progress = (time.time() - self._arcade_art_slide_start) / self.MODE_ART_SLIDE_SEC
+        if previous is None or progress >= 1.0:
+            self._arcade_art_previous_id = None
+            self.screen.blit(current, (0, 0))
+            return current
+        eased = 1.0 - (1.0 - max(0.0, progress)) ** 3
+        direction = self._arcade_art_slide_direction
+        self.screen.blit(current, (round(direction * self.SCREEN_W * (1.0 - eased)), 0))
+        self.screen.blit(previous, (round(-direction * self.SCREEN_W * eased), 0))
+        return current
+
     def _load_assets(self):
         # A SCORE kepernyo uj hattere (a regi BGR1_Gamemode.png helyett).
         score_dir = os.path.join(ASSETS_DIR, "SCORE")
@@ -933,7 +1069,7 @@ class ScoreGUI:
             (GAME_STANDARD, "MODE_ART_STANDARD.png"),
             (GAME_COOP, "MODE_ART_COOP.png"),
             (GAME_QUICK, "MODE_ART_QUICK.png"),
-            (GAME_MUNCHIES, "MODE_ART_MUNCHIES.png"),
+            (GAME_ARCADE, "MODE_ART_ARCADE.png"),
             (GAME_MULTIBALL_MAYHEM, "MODE_ART_MAYHEM.png"),
         ):
             art = pygame.image.load(os.path.join(mode_art_dir, filename)).convert_alpha()
@@ -954,6 +1090,77 @@ class ScoreGUI:
             art_y = self.MODE_ART_Y_OFFSETS.get(mode_id, -25)
             composed.blit(art, (art_x, art_y))
             self.mode_art[mode_id] = composed
+
+        # Az Arcade almenuben ugyanaz a 640x480-as, atlatszo art-formatum es
+        # ugyanaz az oldalra ease-out lapozas fut, mint a fo modvalasztoban.
+        for game_id, filename in (
+            (ARCADE_MUNCHIES, "MODE_ART_MUNCHIES.png"),
+            (ARCADE_PUFF_N_RIFF, "MODE_ART_PUFF_N_RIFF.png"),
+        ):
+            art = pygame.image.load(os.path.join(mode_art_dir, filename)).convert_alpha()
+            scale = self.ARCADE_ART_SCALES[game_id]
+            art_y = self.ARCADE_ART_Y_OFFSETS[game_id]
+            target_size = (round(self.SCREEN_W * scale), round(self.SCREEN_H * scale))
+            scale_fn = (
+                pygame.transform.smoothscale
+                if _smoothscale_supported() else pygame.transform.scale
+            )
+            art = scale_fn(art, target_size)
+            composed = pygame.Surface((self.SCREEN_W, self.SCREEN_H), pygame.SRCALPHA)
+            composed.blit(art, ((self.SCREEN_W - target_size[0]) // 2, art_y))
+            self.arcade_art[game_id] = composed
+
+        puff_intro_dir = os.path.join(ASSETS_DIR, "Minigame", "Intro")
+        puff_background = pygame.image.load(os.path.join(
+            puff_intro_dir, "PUFF_N_RIFF_BGR.png"
+        )).convert()
+        puff_title_full = pygame.image.load(os.path.join(
+            puff_intro_dir, "PUFF_N_RIFF_TITLE.png"
+        )).convert_alpha()
+        scale_fn = (
+            pygame.transform.smoothscale
+            if _smoothscale_supported() else pygame.transform.scale
+        )
+        if puff_background.get_size() != (self.SCREEN_W, self.SCREEN_H):
+            puff_background = scale_fn(
+                puff_background, (self.SCREEN_W, self.SCREEN_H)
+            ).convert()
+        if puff_title_full.get_size() != (self.SCREEN_W, self.SCREEN_H):
+            puff_title_full = scale_fn(
+                puff_title_full, (self.SCREEN_W, self.SCREEN_H)
+            ).convert_alpha()
+        puff_title_rect = puff_title_full.get_bounding_rect(min_alpha=1)
+        if puff_title_rect.width and puff_title_rect.height:
+            self.puff_loading_title = puff_title_full.subsurface(
+                puff_title_rect
+            ).copy().convert_alpha()
+            self.puff_loading_title_rect = puff_title_rect
+        else:
+            self.puff_loading_title = pygame.Surface(
+                (1, 1), pygame.SRCALPHA
+            ).convert_alpha()
+            self.puff_loading_title_rect = pygame.Rect(
+                self.SCREEN_W // 2, self.SCREEN_H // 2, 1, 1
+            )
+        self.puff_loading_background = puff_background
+
+        puff_start_path = os.path.join(
+            ASSETS_DIR, "GuitarHero", "FX", "START.wav"
+        )
+        self._puff_loading_title_sound = None
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(
+                    frequency=48000, size=-16, channels=2, buffer=1024
+                )
+            if os.path.isfile(puff_start_path):
+                self._puff_loading_title_sound = pygame.mixer.Sound(
+                    puff_start_path
+                )
+            else:
+                print("[gui] Puff title sound missing: GuitarHero/FX/START.wav")
+        except (pygame.error, OSError) as exc:
+            print(f"[gui] Puff title sound unavailable: {exc}")
         
         # SUMMARY hatter (auto-belso naplementes kep) - NEM ugyanaz, mint a
         # name entry BGR2-je (az a zold-leveles), konnyu osszekeverni!
@@ -1657,10 +1864,21 @@ class ScoreGUI:
             confirmation_elapsed = (
                 time.monotonic() - state.mode_confirm_started_at
             )
-        selected_mode_art = (
-            self._draw_mode_art(player_select_mode, confirmation_elapsed)
-            if is_player_select else None
+        arcade_visual_active = (
+            is_player_select
+            and player_select_mode == GAME_ARCADE
+            and (
+                getattr(state, "arcade_menu_active", False)
+                or getattr(state, "arcade_transition_kind", None) in ("enter", "exit")
+            )
         )
+        selected_mode_art = None
+        if is_player_select:
+            selected_mode_art = (
+                self._draw_arcade_art(state, confirmation_elapsed)
+                if arcade_visual_active
+                else self._draw_mode_art(player_select_mode, confirmation_elapsed)
+            )
 
         # 2. MIDDLE_FRAME (leveles keret a papirok mogott)
         self.screen.blit(self.score_middle_frame, (0, 0))
@@ -1962,6 +2180,45 @@ class ScoreGUI:
         self.screen.blit(
             status_surface,
             status_surface.get_rect(center=(self.SCREEN_W // 2, 326)),
+        )
+
+    def render_puff_loading(self, state):
+        """Munchies-style title scale-in while Puff assets are prepared."""
+        if not self.active or self.screen is None:
+            return
+        self.screen.blit(self.puff_loading_background, (0, 0))
+        elapsed = state.puff_loading_elapsed()
+        progress = max(0.0, min(
+            1.0, elapsed / state.PUFF_LOADING_TITLE_SEC
+        ))
+        progress = progress * progress * (3.0 - 2.0 * progress)
+        if progress <= 0.0:
+            return
+        target_size = (
+            max(1, round(self.puff_loading_title.get_width() * progress)),
+            max(1, round(self.puff_loading_title.get_height() * progress)),
+        )
+        if target_size == self.puff_loading_title.get_size():
+            title = self.puff_loading_title
+        else:
+            scale_fn = (
+                pygame.transform.smoothscale
+                if _smoothscale_supported() else pygame.transform.scale
+            )
+            title = scale_fn(self.puff_loading_title, target_size)
+        self.screen.blit(
+            title,
+            title.get_rect(center=self.puff_loading_title_rect.center),
+        )
+
+    def play_puff_loading_title_sound(self):
+        """Play START.wav once when the Puff title begins its scale-in."""
+        if self._puff_loading_title_channel is not None:
+            self._puff_loading_title_channel.stop()
+        self._puff_loading_title_channel = (
+            self._puff_loading_title_sound.play()
+            if self._puff_loading_title_sound is not None
+            else None
         )
 
     # SUMMARY SCREEN RENDERING

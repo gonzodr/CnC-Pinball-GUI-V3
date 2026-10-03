@@ -161,16 +161,20 @@ def cached_guitar_stem_path(audio_path):
             / "guitar.wav")
 
 
-def ensure_guitar_stem(audio_path, progress_hook=None):
-    """Return a real guitar stem, creating and caching it with HTDemucs."""
-    audio_path = Path(audio_path).resolve()
-    companion = audio_path.with_name(f"{audio_path.stem}.guitar.wav")
-    if companion.is_file():
-        return companion
-    cached = cached_guitar_stem_path(audio_path)
-    if cached.is_file() and cached.stat().st_mtime >= audio_path.stat().st_mtime:
-        return cached
+def cached_no_guitar_stem_path(audio_path):
+    return (STEM_CACHE_DIR / DEMUCS_MODEL / Path(audio_path).stem
+            / "no_guitar.wav")
 
+
+def companion_stem_paths(audio_path):
+    audio_path = Path(audio_path).resolve()
+    return (
+        audio_path.with_name(f"{audio_path.stem}.guitar.wav"),
+        audio_path.with_name(f"{audio_path.stem}.no_guitar.wav"),
+    )
+
+
+def _run_guitar_separation(audio_path, progress_hook=None):
     demucs = shutil.which("demucs")
     if demucs is None:
         raise RuntimeError(
@@ -191,11 +195,52 @@ def ensure_guitar_stem(audio_path, progress_hook=None):
         if progress_hook is not None:
             progress_hook(time.monotonic() - started_at)
         time.sleep(0.05)
-    if process.returncode != 0 or not cached.is_file():
+    if process.returncode != 0:
+        raise RuntimeError(
+            "A guitar stem leválasztása sikertelen; futtasd terminálból a "
+            "demucs -n htdemucs_6s parancsot a részletekért")
+
+
+def ensure_guitar_stem(audio_path, progress_hook=None):
+    """Return a real guitar stem, creating and caching it with HTDemucs."""
+    audio_path = Path(audio_path).resolve()
+    companion, _backing = companion_stem_paths(audio_path)
+    if companion.is_file():
+        return companion
+    cached = cached_guitar_stem_path(audio_path)
+    if cached.is_file() and cached.stat().st_mtime >= audio_path.stat().st_mtime:
+        return cached
+
+    _run_guitar_separation(audio_path, progress_hook)
+    if not cached.is_file():
         raise RuntimeError(
             "A guitar stem leválasztása sikertelen; futtasd terminálból a "
             "demucs -n htdemucs_6s parancsot a részletekért")
     return cached
+
+
+def ensure_playback_stems(audio_path, progress_hook=None):
+    """Create portable guitar/no-guitar companions beside the source song."""
+    audio_path = Path(audio_path).resolve()
+    guitar_companion, backing_companion = companion_stem_paths(audio_path)
+    if guitar_companion.is_file() and backing_companion.is_file():
+        return guitar_companion, backing_companion
+
+    cached_guitar = cached_guitar_stem_path(audio_path)
+    cached_backing = cached_no_guitar_stem_path(audio_path)
+    cache_is_current = all(
+        path.is_file() and path.stat().st_mtime >= audio_path.stat().st_mtime
+        for path in (cached_guitar, cached_backing)
+    )
+    if not cache_is_current:
+        _run_guitar_separation(audio_path, progress_hook)
+    if not cached_guitar.is_file() or not cached_backing.is_file():
+        raise RuntimeError(
+            "A Demucs nem készítette el a guitar/no_guitar stem-párt")
+
+    shutil.copy2(cached_guitar, guitar_companion)
+    shutil.copy2(cached_backing, backing_companion)
+    return guitar_companion, backing_companion
 
 
 def _parse_ppm_rgb(payload):
@@ -920,7 +965,7 @@ class GuitarChartEditor:
                 self.draw()
                 self.clock.tick(15)
 
-            guitar_stem = ensure_guitar_stem(
+            guitar_stem, _backing_stem = ensure_playback_stems(
                 self.document.audio_path, progress_hook=show_stem_progress)
             self.guitar_stem_path = guitar_stem
             samples = decode_audio_mono_pcm(guitar_stem)

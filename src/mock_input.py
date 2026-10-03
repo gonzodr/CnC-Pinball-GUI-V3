@@ -13,6 +13,7 @@ class MockInputController:
         self._ball = 1
         self._scores = {1: 0, 2: 0, 3: 0, 4: 0}
         self._game_mode = GAME_STANDARD
+        self._arcade_menu_active = False
         self._bonus = 0
         self._bonusx = 0  # 0..4 (x1, x2, x4, x6, x8)
         # Party-szamlalok a Joint/Beer allapotdeszkak teszteleséhez.
@@ -24,6 +25,10 @@ class MockInputController:
     def set_game_mode(self, mode_id):
         """A PC-s szimulator ugyanazt a ponttulajdonost hasznalja, mint a firmware."""
         self._game_mode = int(mode_id)
+
+    def set_arcade_menu_active(self, active):
+        """Keep the PC Shoot button aligned with the cabinet submenu."""
+        self._arcade_menu_active = bool(active)
 
     def _score_owner(self):
         return 1 if self._game_mode == GAME_COOP else self._player
@@ -58,10 +63,11 @@ class MockInputController:
             # gombja is. A state_machine dönti el az aktuális állapot
             # alapján, hogy melyik viselkedés érvényes.
             if key == pygame.K_p:
-                self._num_players = (self._num_players % 4) + 1
-                # Ezt az eseményt küldjük, hogy a StateMachine tudja: váltani kell
-                events.append(GameEvent("PLAYERCOUNT_NEXT", ()))
-                events.append(self._generate_score_event())
+                if not self._arcade_menu_active:
+                    self._num_players = (self._num_players % 4) + 1
+                    # Ezt az eseményt küldjük, hogy a StateMachine tudja: váltani kell
+                    events.append(GameEvent("PLAYERCOUNT_NEXT", ()))
+                    events.append(self._generate_score_event())
                 events.append(GameEvent("PLAYER_PRESS", ()))
 
             # 1b. NAME_ENTRY betűváltás (bal/jobb nyíl - a valódi flipper

@@ -36,7 +36,7 @@ TARGET_FPS = 30                # 30 FPS bovven eleg egy pontszam-GUI-hoz
 
 # PC-s mock hangelozetes. A Raspberry Pi-n/eles gepen maradjon False, mert
 # ott ugyanezeket a hangokat az Arduino WAV Trigger jatsza le.
-ENABLE_MOCK_MODE_AUDIO = False
+ENABLE_MOCK_MODE_AUDIO = sys.platform == "win32"
 MOCK_MODE_AUDIO_DIR = r"F:\Projects\cheech and chong\sound\OrigySD 2026"
 
 FIRMWARE_UPDATE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware_update.py")
@@ -205,6 +205,11 @@ def main():
                 # (neveket beirni, stb.) anelkul, hogy a W/R/B/P/stb.
                 # tesztgombok veletlenul jatek-akciokat valtananak ki.
                 state.service_menu.handle_pygame_events(pygame_events)
+            elif state.state == AppState.PUFF_LOADING:
+                # A tortenetkep alatt mar ne lehessen ujabb jatek-/menu-
+                # esemenyt beadni; az Alt+Q kilepes viszont megmarad.
+                if gui.has_quit_key_event(pygame_events):
+                    running = False
             elif state.state == AppState.MINIGAME:
                 # A minijatek nyomva-tartott iranyitast hasznal, ezert a
                 # KEYDOWN es KEYUP esemenyeket is nyersen kapja meg.
@@ -229,6 +234,10 @@ def main():
                         state.selected_game_mode
                         if state.state == AppState.PLAYER_SELECT
                         else state.running_game_mode
+                    )
+                    mock_input.set_arcade_menu_active(
+                        state.state == AppState.PLAYER_SELECT
+                        and state.arcade_menu_active
                     )
                     for mock_event in mock_input.poll_events(pygame_events):
                         state.handle_event(mock_event)
@@ -276,7 +285,13 @@ def main():
                 print(f"[main] allapotvaltas: {old_state.name} -> {new_state.name}")
 
                 video_states = (AppState.PNG_VIDEO,)
-                if old_state not in video_states and new_state not in video_states:
+                if new_state == AppState.PUFF_LOADING:
+                    # A loading kep elso frame-jet nem takarhatja el a regi
+                    # player-select snapshot. Kulonben a szinkron assetload
+                    # alatt fizikailag meg a regi kep marad a kijelzon.
+                    gui.cancel_fade_transition()
+                    gui.play_puff_loading_title_sound()
+                elif old_state not in video_states and new_state not in video_states:
                     # Pillanatkepet keszitunk az elozo allapot utolso
                     # kirajzolt kepebol, hogy a kovetkezo par frame-ben
                     # elhalvanyodjon az uj allapot tartalma fole (lasd
@@ -343,6 +358,8 @@ def main():
                 gui.render_special_thanks(state.thanks_manager.names)
             elif state.state == AppState.SERVICE_MENU:
                 gui.render_service_menu(state.service_menu)
+            elif state.state == AppState.PUFF_LOADING:
+                gui.render_puff_loading(state)
             elif state.state == AppState.MINIGAME and state.minigame is not None:
                 state.minigame.draw(gui.screen)
             elif state.state == AppState.PNG_VIDEO:
@@ -353,6 +370,11 @@ def main():
 
             # 5c. Kozponti, EGYETLEN flip/frame (a render_* fuggvenyek mar nem flip-elnek)
             gui.flip_display()
+            if state.state == AppState.PUFF_LOADING:
+                # Csak a tenyleges display-flip utan engedjuk elindulni a
+                # szinkron Harleycaster assetbetoltest. Igy a fizikai kijelzon
+                # mar a tortenetkep marad kint a teljes varakozas alatt.
+                state.mark_puff_loading_presented()
 
             # 6. Frame-utemezes tartasa (ne porgessuk feleslegesen a CPU-t)
             elapsed = time.time() - loop_start

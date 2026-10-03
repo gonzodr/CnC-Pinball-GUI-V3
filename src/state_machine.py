@@ -14,15 +14,20 @@ from harleycaster_solo import HarleycasterAssetError, HarleycasterSoloGame
 from video_catalog import resolve_serial_video_name
 from mock_mode_audio import MockModeAudio
 from game_modes import (
+    ARCADE_MUNCHIES,
+    ARCADE_PUFF_N_RIFF,
     GAME_COOP,
     GAME_QUICK,
     GAME_STANDARD,
+    GAME_ARCADE,
     GAME_MUNCHIES,
     GAME_MULTIBALL_MAYHEM,
     GAME_MODE_MASK_ONE_PLAYER,
     availability_mask_for_players,
     normalize_game_mode,
     sanitize_availability_mask,
+    normalize_arcade_game,
+    step_arcade_game,
     step_game_mode,
 )
 
@@ -38,6 +43,7 @@ class AppState(Enum):
     LOGO = auto()
     BEAT_SCORE = auto()
     SERVICE_MENU = auto()
+    PUFF_LOADING = auto()
     MINIGAME = auto()
     PNG_VIDEO = auto()
 
@@ -78,6 +84,11 @@ class StateMachine:
     SUMMARY_DONE_RETRY_SEC = 0.25
     SUMMARY_DONE_RETRY_WINDOW_SEC = 3.0
     MODE_CONFIRM_DURATION_SEC = 2.25
+    # Pontosan a Munchies intro cim-animaciojanak hossza. A nehez, szinkron
+    # assetload csak a smoothstep scale-in befejezese utan indul el.
+    PUFF_LOADING_TITLE_SEC = 1.0
+    PUFF_LOADING_MIN_SEC = PUFF_LOADING_TITLE_SEC
+    PUFF_LOADING_ARM_SEC = PUFF_LOADING_TITLE_SEC
 
     def __init__(
         self,
@@ -117,6 +128,11 @@ class StateMachine:
         self.mode_confirm_mode = GAME_STANDARD
         self.mode_confirm_started_at = 0.0
         self._mock_mode_start_pending = False
+        self.arcade_menu_active = False
+        self.selected_arcade_game = ARCADE_MUNCHIES
+        self.running_arcade_game = ARCADE_MUNCHIES
+        self.arcade_transition_kind = None
+        self.arcade_transition_started_at = 0.0
         
         self.current_bonus = 0
         self.current_bonusx = 0
@@ -193,6 +209,10 @@ class StateMachine:
         self.minigame = None
         self._active_minigame_kind = None
         self._preloaded_minigame = None
+        self._preloaded_harleycaster = None
+        self._puff_loading_started_at = 0.0
+        self._puff_loading_presented = False
+        self._puff_loading_attempted = False
         self.last_minigame_result = None
         self._minigame_last_tick = 0.0
         self._minigame_session = None
@@ -261,7 +281,9 @@ class StateMachine:
             self.highscore_manager = getattr(self, "mayhem_score_manager", None)
             self.highscore_title = "MULTIBALL MAYHEM HIGH SCORES"
             self.name_entry_title = None
-        elif getattr(self, "running_game_mode", GAME_STANDARD) == GAME_MUNCHIES:
+        elif (getattr(self, "running_game_mode", GAME_STANDARD) == GAME_ARCADE
+              and getattr(self, "running_arcade_game", ARCADE_MUNCHIES)
+                  == ARCADE_MUNCHIES):
             self.highscore_manager = getattr(self, "munchies_score_manager", None)
             self.highscore_title = "MUNCHIES HIGH SCORES"
             self.name_entry_title = None
@@ -318,6 +340,37 @@ class StateMachine:
             self.state = AppState.PLAYER_SELECT
             return
 
+        if event.kind in ("ARCADE_ENTER", "ARCADE_STATE"):
+            self.selected_arcade_game = normalize_arcade_game(event.args[0])
+            if event.kind == "ARCADE_ENTER":
+                self.arcade_menu_active = True
+                self.arcade_transition_kind = "enter"
+                self.arcade_transition_started_at = time.monotonic()
+            self.mode_confirm_active = False
+            self._in_attract_loop = False
+            self.state = AppState.PLAYER_SELECT
+            return
+
+        if event.kind == "ARCADE_EXIT":
+            self.arcade_menu_active = False
+            self.arcade_transition_kind = "exit"
+            self.arcade_transition_started_at = time.monotonic()
+            self.mode_confirm_active = False
+            self._in_attract_loop = False
+            self.state = AppState.PLAYER_SELECT
+            return
+
+        if event.kind == "ARCADE_CONFIRM":
+            self.selected_arcade_game = normalize_arcade_game(event.args[0])
+            self.mode_confirm_mode = GAME_ARCADE
+            self.mode_confirm_started_at = time.monotonic()
+            self.mode_confirm_active = True
+            self._mock_mode_start_pending = False
+            self.arcade_menu_active = True
+            self._in_attract_loop = False
+            self.state = AppState.PLAYER_SELECT
+            return
+
         if event.kind == "GAME_MODE_CONFIRM":
             mode_id = normalize_game_mode(
                 event.args[0],
@@ -343,6 +396,10 @@ class StateMachine:
                 mode_id, self.game_mode_availability_mask, player_count=player_count
             )
             self.running_game_mode = self.selected_game_mode
+            if self.running_game_mode == GAME_ARCADE:
+                self.running_arcade_game = self.selected_arcade_game
+            self.arcade_menu_active = False
+            self.arcade_transition_kind = None
             self.mode_confirm_active = False
             self._mock_mode_start_pending = False
             self._mock_munchies_challenge = False
@@ -353,7 +410,10 @@ class StateMachine:
             self.mayhem_active = self.running_game_mode == GAME_MULTIBALL_MAYHEM
             if self.mayhem_active:
                 self.mayhem_phase = "WAITING FOR BALLS"
-            self.munchies_challenge_active = self.running_game_mode == GAME_MUNCHIES
+            self.munchies_challenge_active = (
+                self.running_game_mode == GAME_ARCADE
+                and self.running_arcade_game == ARCADE_MUNCHIES
+            )
             if self.munchies_challenge_active:
                 self.munchies_challenge_phase = "READY"
             return
@@ -739,28 +799,45 @@ class StateMachine:
 
         elif event.kind == "FLIPPER_LEFT":
             if self.state == AppState.PLAYER_SELECT and not self.mode_confirm_active:
-                self.selected_game_mode = step_game_mode(
-                    self.selected_game_mode,
-                    self.game_mode_availability_mask,
-                    -1,
-                )
+                if self.arcade_menu_active:
+                    self.selected_arcade_game = step_arcade_game(
+                        self.selected_arcade_game, -1
+                    )
+                else:
+                    self.selected_game_mode = step_game_mode(
+                        self.selected_game_mode,
+                        self.game_mode_availability_mask,
+                        -1,
+                    )
                 self._mock_mode_audio.navigate(-1)
             elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.prev_char()
 
         elif event.kind == "FLIPPER_RIGHT":
             if self.state == AppState.PLAYER_SELECT and not self.mode_confirm_active:
-                self.selected_game_mode = step_game_mode(
-                    self.selected_game_mode,
-                    self.game_mode_availability_mask,
-                    1,
-                )
+                if self.arcade_menu_active:
+                    self.selected_arcade_game = step_arcade_game(
+                        self.selected_arcade_game, 1
+                    )
+                else:
+                    self.selected_game_mode = step_game_mode(
+                        self.selected_game_mode,
+                        self.game_mode_availability_mask,
+                        1,
+                    )
                 self._mock_mode_audio.navigate(1)
             elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.next_char()
 
         elif event.kind == "PLAYER_PRESS":
-            if self.state == AppState.NAME_ENTRY:
+            if (self.state == AppState.PLAYER_SELECT
+                    and self.arcade_menu_active
+                    and not self.mode_confirm_active):
+                self.arcade_menu_active = False
+                self.arcade_transition_kind = "exit"
+                self.arcade_transition_started_at = time.monotonic()
+                getattr(self._mock_mode_audio, "exit_arcade", lambda: None)()
+            elif self.state == AppState.NAME_ENTRY:
                 self.name_entry.confirm()
 
         elif event.kind == "START":
@@ -770,6 +847,16 @@ class StateMachine:
                 # PC-s mockban az Arduino GAME_MODE_CONFIRM -> 1.6 s nyugalmi
                 # helyzet + 0.65 s fade -> GAME_START sorrendjet reprodukaljuk.
                 if not self.mode_confirm_active:
+                    if (not self.arcade_menu_active
+                            and self.selected_game_mode == GAME_ARCADE):
+                        self.arcade_menu_active = True
+                        self.selected_arcade_game = ARCADE_MUNCHIES
+                        self.arcade_transition_kind = "enter"
+                        self.arcade_transition_started_at = time.monotonic()
+                        getattr(
+                            self._mock_mode_audio, "enter_arcade", lambda: None
+                        )()
+                        return
                     self.selected_game_mode = normalize_game_mode(
                         self.selected_game_mode,
                         self.game_mode_availability_mask,
@@ -842,30 +929,16 @@ class StateMachine:
                 self.state = AppState.BEAT_SCORE
 
         elif event.kind == "GUITAR_SOLO_START":
-            # Local/service prototype launch.  The VUK game remains available
-            # through the Munchies mode screen and firmware MG_START path.
+            # Eloszor a tortenetkep jelenik meg. A Harleycaster csak a
+            # kovetkezo main-loop frame-ben kezd betoltodni, igy a lassabb
+            # Raspberry Pi-n sem fekete/fagyott kep fogadja a jatekost.
             if self.state != AppState.SCORE or self.minigame is not None:
                 return
-            try:
-                self.minigame = HarleycasterSoloGame(
-                    difficulty=self.minigame_settings.get_difficulty(
-                        "harleycaster_solo"
-                    )
-                )
-                self.minigame.activate()
-            except HarleycasterAssetError as exc:
-                print(f"[harleycaster] nem indithato: {exc}")
-                self.party_message = "HARLEYCASTER ASSET ERROR"
-                self.party_message_until = time.time() + 4.0
-                self.minigame = None
-                return
-            self._active_minigame_kind = "harleycaster_solo"
-            self._minigame_session = None
-            self._minigame_last_input_seq = None
-            self._minigame_pending_done = None
-            self._minigame_last_tick = time.monotonic()
+            self._puff_loading_started_at = 0.0
+            self._puff_loading_presented = False
+            self._puff_loading_attempted = False
             self._in_attract_loop = False
-            self.state = AppState.MINIGAME
+            self.state = AppState.PUFF_LOADING
 
         elif event.kind == "MUNCHIES_START":
             session = event.args[0] if event.args else None
@@ -909,7 +982,9 @@ class StateMachine:
                 self._minigame_next_heartbeat = now
                 self._minigame_last_tick = now
                 self._in_attract_loop = False
-                if getattr(self, "running_game_mode", GAME_STANDARD) == GAME_MUNCHIES:
+                if (getattr(self, "running_game_mode", GAME_STANDARD) == GAME_ARCADE
+                        and getattr(self, "running_arcade_game", ARCADE_MUNCHIES)
+                            == ARCADE_MUNCHIES):
                     self.munchies_challenge_active = True
                     self.munchies_challenge_phase = "RUNNING"
                     if hasattr(self.minigame, "set_challenge_player"):
@@ -1176,7 +1251,7 @@ class StateMachine:
             mode_id = self.mode_confirm_mode
             player_count = self.active_player_count
             self.handle_event(GameEvent("GAME_START", (mode_id, player_count)))
-            if mode_id == GAME_MUNCHIES:
+            if mode_id == GAME_ARCADE and self.running_arcade_game == ARCADE_MUNCHIES:
                 # PC-s mockban nincs firmware, amely MG_START-ot kuldene,
                 # ezert ugyanazt a challenge lifecycle-t helyben inditjuk.
                 self.players = {1: 0, 2: 0, 3: 0, 4: 0}
@@ -1185,6 +1260,56 @@ class StateMachine:
                 self.munchies_challenge_phase = "RUNNING"
                 self._mock_munchies_challenge = True
                 self.handle_event(GameEvent("MUNCHIES_START"))
+            elif mode_id == GAME_ARCADE and self.running_arcade_game == ARCADE_PUFF_N_RIFF:
+                self.handle_event(GameEvent("GUITAR_SOLO_START"))
+
+        if self.state == AppState.PUFF_LOADING and self._puff_loading_presented:
+            loading_elapsed = time.monotonic() - self._puff_loading_started_at
+            if (
+                not self._puff_loading_attempted
+                and loading_elapsed >= self.PUFF_LOADING_ARM_SEC
+            ):
+                self._puff_loading_attempted = True
+                try:
+                    if self._preloaded_harleycaster is None:
+                        self._preloaded_harleycaster = HarleycasterSoloGame(
+                            difficulty=self.minigame_settings.get_difficulty(
+                                "harleycaster_solo"
+                            )
+                        )
+                    else:
+                        self._preloaded_harleycaster.set_difficulty(
+                            self.minigame_settings.get_difficulty(
+                                "harleycaster_solo"
+                            )
+                        )
+                except HarleycasterAssetError as exc:
+                    print(f"[harleycaster] nem indithato: {exc}")
+                    self.party_message = "HARLEYCASTER ASSET ERROR"
+                    self.party_message_until = time.time() + 4.0
+                    self._preloaded_harleycaster = None
+                    self.state = AppState.SCORE
+                    return
+
+            if (
+                self._preloaded_harleycaster is not None
+                and time.monotonic() - self._puff_loading_started_at
+                    >= self.PUFF_LOADING_MIN_SEC
+            ):
+                self.minigame = self._preloaded_harleycaster
+                self._preloaded_harleycaster = None
+                if hasattr(self.minigame, "set_challenge_player"):
+                    self.minigame.set_challenge_player(
+                        self.current_player
+                        if self.active_player_count > 1 else None
+                    )
+                self.minigame.activate()
+                self._active_minigame_kind = "harleycaster_solo"
+                self._minigame_session = None
+                self._minigame_last_input_seq = None
+                self._minigame_pending_done = None
+                self._minigame_last_tick = time.monotonic()
+                self.state = AppState.MINIGAME
 
         if self.state == AppState.MINIGAME and self.minigame is not None:
             now = protocol_now
@@ -1198,6 +1323,7 @@ class StateMachine:
                     completed_game = self.minigame
                     self.minigame = None
                     completed_game.prepare_for_replay()
+                    self._preloaded_harleycaster = completed_game
                     self._active_minigame_kind = None
                     self._minigame_session = None
                     self._minigame_last_input_seq = None
@@ -1342,3 +1468,15 @@ class StateMachine:
             self._previous_state = self.state
             return transition
         return None
+
+    def mark_puff_loading_presented(self):
+        """Arm lazy loading only after the story image reached the display."""
+        if self.state != AppState.PUFF_LOADING or self._puff_loading_presented:
+            return
+        self._puff_loading_presented = True
+        self._puff_loading_started_at = time.monotonic()
+
+    def puff_loading_elapsed(self):
+        if not self._puff_loading_presented:
+            return 0.0
+        return max(0.0, time.monotonic() - self._puff_loading_started_at)

@@ -11,6 +11,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from game_modes import (
+    ARCADE_MUNCHIES,
+    ARCADE_PUFF_N_RIFF,
+    GAME_ARCADE,
     GAME_COOP,
     GAME_QUICK,
     GAME_MODE_MASK_ONE_PLAYER,
@@ -58,6 +61,22 @@ class GameModeProtocolTests(unittest.TestCase):
             GameEvent("GAME_MODE_CONFIRM", (2,)),
         )
         self.assertIsNone(parse_line("GAME_MODE_CONFIRM,5"))
+
+    def test_arcade_submenu_protocol(self):
+        self.assertEqual(
+            parse_line("ARCADE_ENTER,0"), GameEvent("ARCADE_ENTER", (0,))
+        )
+        self.assertEqual(
+            parse_line("ARCADE_STATE,1"), GameEvent("ARCADE_STATE", (1,))
+        )
+        self.assertEqual(
+            parse_line("ARCADE_CONFIRM,1"), GameEvent("ARCADE_CONFIRM", (1,))
+        )
+        self.assertEqual(parse_line("ARCADE_EXIT"), GameEvent("ARCADE_EXIT"))
+        self.assertIsNone(parse_line("ARCADE_STATE,2"))
+        self.assertEqual(
+            parse_line("GUITAR_SOLO_START"), GameEvent("GUITAR_SOLO_START")
+        )
 
     def test_score_snapshot_accepts_latched_running_mode(self):
         self.assertEqual(
@@ -142,7 +161,7 @@ class GameModeStateTests(unittest.TestCase):
                 ScoreGUI.MODE_ART_SCALE_STANDARD,
                 ScoreGUI.MODE_ART_SCALE_COOP,
                 ScoreGUI.MODE_ART_SCALE_QUICK,
-                ScoreGUI.MODE_ART_SCALE_MUNCHIES,
+                ScoreGUI.MODE_ART_SCALE_ARCADE,
                 ScoreGUI.MODE_ART_SCALE_MAYHEM,
             ),
         )
@@ -162,12 +181,26 @@ class GameModeStateTests(unittest.TestCase):
                 ScoreGUI.MODE_ART_Y_STANDARD,
                 ScoreGUI.MODE_ART_Y_COOP,
                 ScoreGUI.MODE_ART_Y_QUICK,
-                ScoreGUI.MODE_ART_Y_MUNCHIES,
+                ScoreGUI.MODE_ART_Y_ARCADE,
                 ScoreGUI.MODE_ART_Y_MAYHEM,
             ),
         )
         self.assertTrue(
             all(isinstance(y, int) for y in ScoreGUI.MODE_ART_Y_OFFSETS.values())
+        )
+        self.assertEqual(
+            tuple(ScoreGUI.ARCADE_ART_SCALES.values()),
+            (
+                ScoreGUI.MODE_ART_SCALE_MUNCHIES,
+                ScoreGUI.MODE_ART_SCALE_PUFF_N_RIFF,
+            ),
+        )
+        self.assertEqual(
+            tuple(ScoreGUI.ARCADE_ART_Y_OFFSETS.values()),
+            (
+                ScoreGUI.MODE_ART_Y_MUNCHIES,
+                ScoreGUI.MODE_ART_Y_PUFF_N_RIFF,
+            ),
         )
 
     def test_confirmed_mode_art_has_light_wiggle_and_fades_out(self):
@@ -254,12 +287,54 @@ class GameModeStateTests(unittest.TestCase):
             "MODE_ART_QUICK.png",
             "MODE_ART_MUNCHIES.png",
             "MODE_ART_MAYHEM.png",
+            "MODE_ART_ARCADE.png",
+            "MODE_ART_PUFF_N_RIFF.png",
         ):
             with self.subTest(filename=filename):
                 art = pygame.image.load(mode_art_dir / filename)
                 self.assertEqual(art.get_size(), (640, 480))
                 self.assertTrue(art.get_flags() & pygame.SRCALPHA)
                 self.assertEqual(art.get_at((0, 0)).a, 0)
+
+    def test_pc_mock_enters_navigates_and_exits_arcade_submenu(self):
+        class FakeModeAudio:
+            def __init__(self):
+                self.events = []
+            def start_selector(self): pass
+            def stop_selector(self): pass
+            def navigate(self, direction): self.events.append(("navigate", direction))
+            def play(self, mode_id): self.events.append(("play", mode_id))
+            def enter_arcade(self): self.events.append(("enter",))
+            def exit_arcade(self): self.events.append(("exit",))
+
+        state = StateMachine()
+        state._mock_mode_audio = FakeModeAudio()
+        state.state = AppState.PLAYER_SELECT
+        state.selected_game_mode = GAME_ARCADE
+
+        state.handle_event(GameEvent("START"))
+        self.assertTrue(state.arcade_menu_active)
+        self.assertEqual(state.selected_arcade_game, ARCADE_MUNCHIES)
+        self.assertEqual(state.arcade_transition_kind, "enter")
+
+        state.handle_event(GameEvent("FLIPPER_RIGHT"))
+        self.assertEqual(state.selected_arcade_game, ARCADE_PUFF_N_RIFF)
+        state.handle_event(GameEvent("FLIPPER_LEFT"))
+        self.assertEqual(state.selected_arcade_game, ARCADE_MUNCHIES)
+
+        state.handle_event(GameEvent("PLAYER_PRESS"))
+        self.assertFalse(state.arcade_menu_active)
+        self.assertEqual(state.arcade_transition_kind, "exit")
+        self.assertIn(("enter",), state._mock_mode_audio.events)
+        self.assertIn(("exit",), state._mock_mode_audio.events)
+
+    def test_pc_mock_shoot_exits_arcade_without_changing_player_count(self):
+        mock = MockInputController()
+        mock._num_players = 3
+        mock.set_arcade_menu_active(True)
+        events = mock.poll_events([self._keydown(pygame.K_p)])
+        self.assertEqual(mock._num_players, 3)
+        self.assertEqual([event.kind for event in events], ["PLAYER_PRESS"])
 
     def test_pc_mock_can_select_players_modes_and_start(self):
         class FakeModeAudio:

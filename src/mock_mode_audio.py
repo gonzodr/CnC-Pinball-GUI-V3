@@ -16,6 +16,11 @@ from game_modes import (
 
 SELECTOR_GROOVE = "0066_mus_Mode_select_groove.wav"
 NAV_WHOOSH = "0067_fx_woosh.wav"
+ARCADE_ENTER_LAYERS = (
+    NAV_WHOOSH,
+    "0020_fx_punch.wav",
+    "0028_fx_kvakk.wav",
+)
 SELECT_EFFECT = "0068_fx_select_mode.wav"
 NAV_KEYS = {
     -1: "0105_fx_keyleft.wav",
@@ -66,7 +71,10 @@ class MockModeAudio:
             if pygame.mixer.get_init() is None:
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=1024)
             pygame.mixer.set_num_channels(max(8, pygame.mixer.get_num_channels()))
-            filenames = {SELECT_EFFECT, NAV_WHOOSH, *NAV_KEYS.values()}
+            filenames = {
+                SELECT_EFFECT, NAV_WHOOSH, *NAV_KEYS.values(),
+                *ARCADE_ENTER_LAYERS,
+            }
             for voices in MODE_VOICES.values():
                 filenames.update(voices)
             for filename in filenames:
@@ -110,6 +118,17 @@ class MockModeAudio:
         if key_sound is None:
             return
         self._sounds[key_sound].play()
+        self._sounds[NAV_WHOOSH].play()
+
+    def enter_arcade(self):
+        if not self._ensure_loaded():
+            return
+        for filename in ARCADE_ENTER_LAYERS:
+            self._sounds[filename].play()
+
+    def exit_arcade(self):
+        if not self._ensure_loaded():
+            return
         self._sounds[NAV_WHOOSH].play()
 
     def play(self, mode_id):

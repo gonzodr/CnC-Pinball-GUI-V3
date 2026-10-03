@@ -18,6 +18,7 @@ from guitar_chart_editor import (
     candidates_from_guitar_heatmap,
     detect_note_candidates,
     ensure_guitar_stem,
+    ensure_playback_stems,
     quantize_time_ms,
 )
 
@@ -118,6 +119,18 @@ class GuitarChartEditorTests(unittest.TestCase):
             audio.touch()
             companion.touch()
             self.assertEqual(ensure_guitar_stem(audio), companion)
+
+    def test_portable_playback_stem_pair_is_preferred_without_running_ai(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "song.wav"
+            guitar = Path(directory) / "song.guitar.wav"
+            backing = Path(directory) / "song.no_guitar.wav"
+            for path in (audio, guitar, backing):
+                path.touch()
+            self.assertEqual(
+                ensure_playback_stems(audio),
+                (guitar.resolve(), backing.resolve()),
+            )
 
     def test_quiet_stem_leakage_cannot_create_notes(self):
         heatmap = [(0.05, 0.05, 0.05) for _index in range(101)]

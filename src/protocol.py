@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional
 from game_modes import (
+    ARCADE_GAME_COUNT,
     GAME_MODE_COUNT,
     GAME_MODE_MASK_ALL,
     normalize_game_mode,
@@ -56,6 +57,18 @@ def parse_line(line: str) -> Optional[GameEvent]:
             if not 0 <= mode_id < GAME_MODE_COUNT:
                 return None
             return GameEvent("GAME_MODE_CONFIRM", (mode_id,))
+
+        elif cmd in ("ARCADE_ENTER", "ARCADE_STATE", "ARCADE_CONFIRM") and len(parts) == 2:
+            game_id = int(parts[1])
+            if not 0 <= game_id < ARCADE_GAME_COUNT:
+                return None
+            return GameEvent(cmd, (game_id,))
+
+        elif cmd == "ARCADE_EXIT" and len(parts) == 1:
+            return GameEvent("ARCADE_EXIT")
+
+        elif cmd == "GUITAR_SOLO_START" and len(parts) == 1:
+            return GameEvent("GUITAR_SOLO_START")
 
         elif cmd == "GAME_START" and len(parts) == 3:
             mode_id, player_count = map(int, parts[1:3])
