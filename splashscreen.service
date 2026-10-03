@@ -4,6 +4,7 @@ DefaultDependencies=no
 After=local-fs.target
 
 [Service]
+ExecStartPre=/bin/sh -c 'TERM=linux setterm --cursor off > /dev/tty1 2>/dev/null || true; printf 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true'
 ExecStart=/usr/bin/fbi -d /dev/fb0 --noverbose -a /home/gonzodr/bootimage.png
 StandardInput=tty
 StandardOutput=tty

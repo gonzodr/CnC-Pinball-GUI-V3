@@ -23,9 +23,10 @@ import time
 import pygame
 
 import arduino_port
+from gui_update import GuiUpdateWorker
 
 # A firmware effekt-tablaja innen olvasva (id + nev) - a Pi-n itt van a
-# firmware repo, ebbol flashel az F7 is, tehat ez az igazsag forrasa.
+# firmware repo, ebbol flashel az F6 almenubeli updater is.
 LIGHT_EFFECTS_HEADER = os.path.expanduser("~/CnC_firmware4/effect_data.h")
 
 
@@ -38,13 +39,20 @@ class ServiceMenuController:
         ("thanks_edit", "F2 - Special Thanks nevek"),
         ("diagnostics", "F3 - Diagnosztika (teszt-kepernyok)"),
         ("particle_editor", "F4 - Particle szerkeszto"),
-        ("find_arduino", "F5 - Arduino keresese"),
-        ("firmware_update", "F6 - Firmware update"),
+        ("raspi_config", "F5 - Raspberry Pi konfiguracio"),
+        ("updates", "F6 - Firmware frissites"),
         ("minigame_difficulty", "F7 - Minigame difficulty"),
         ("version_info", "F8 - Verzio info"),
         ("light_editor", "F9 - Light editor (fenyeffekt szerkeszto)"),
         ("guitar_chart_editor", "F10 - Guitar chart editor"),
         ("exit", "F11 - Kilepes"),
+        ("shutdown_confirm", "F12 - Leallitas / Shut down"),
+    ]
+
+    UPDATE_ITEMS = [
+        ("gui_update", "GUI frissites"),
+        ("firmware_update", "Arduino frissites (letoltes + feltoltes)"),
+        ("find_arduino", "Arduino keresese"),
     ]
 
     # A diagnosztikai eszkozok egy helyen. Mindegyik "nezd meg, mit csinal a
@@ -89,7 +97,12 @@ class ServiceMenuController:
         self.should_launch_light_editor = False
         # A repoban elo Guitar chart editor is kulon pygame-appkent fut.
         self.should_launch_guitar_chart_editor = False
+        self.should_launch_raspi_config = False
         self.screen = "main"
+        self.should_shutdown = False
+        self.should_restart_gui = False
+        self.gui_update_worker = None
+        self.shutdown_cursor = 0  # Default: cancel.
         self.cursor = 0
         self.status_message = ""
 
@@ -122,7 +135,12 @@ class ServiceMenuController:
         self.should_launch_firmware_update = False
         self.should_launch_light_editor = False
         self.should_launch_guitar_chart_editor = False
+        self.should_launch_raspi_config = False
         self.screen = "main"
+        self.should_shutdown = False
+        self.should_restart_gui = False
+        self.gui_update_worker = None
+        self.shutdown_cursor = 0
         self.cursor = 0
         self.status_message = ""
         self._text_input_buffer = ""
@@ -172,15 +190,23 @@ class ServiceMenuController:
             self.should_launch_light_editor = True
         elif target == "guitar_chart_editor":
             self.should_launch_guitar_chart_editor = True
+        elif target == "raspi_config":
+            self.should_launch_raspi_config = True
         elif target == "find_arduino":
             self._handle_find_arduino()
         else:
             self.screen = target
             self.cursor = 0
+            if target == "shutdown_confirm":
+                self.shutdown_cursor = 0
 
     def handle_pygame_events(self, pygame_events):
         for event in pygame_events:
             if event.type != pygame.KEYDOWN:
+                continue
+            if (getattr(self, "gui_update_worker", None) is not None
+                    and not self.gui_update_worker.done):
+                # Ne induljon masik updater, amig a Git dolgozik.
                 continue
             self.status_message = ""
             # F-gombok a menu BARMELY kepernyojerol mukodnek
@@ -236,6 +262,45 @@ class ServiceMenuController:
             self.cursor = (self.cursor + 1) % count
         elif event.key == pygame.K_RETURN:
             self._activate_diagnostic_item()
+
+    def _handle_updates(self, event):
+        if event.key == pygame.K_ESCAPE:
+            self._go_main()
+        elif event.key == pygame.K_UP:
+            self.cursor = (self.cursor - 1) % len(self.UPDATE_ITEMS)
+        elif event.key == pygame.K_DOWN:
+            self.cursor = (self.cursor + 1) % len(self.UPDATE_ITEMS)
+        elif event.key == pygame.K_RETURN:
+            target, _ = self.UPDATE_ITEMS[self.cursor]
+            if target == "firmware_update":
+                self.should_launch_firmware_update = True
+            elif target == "find_arduino":
+                self._handle_find_arduino()
+            else:
+                self.gui_update_worker = None
+                self.screen = "gui_update"
+
+    def _handle_gui_update(self, event):
+        if event.key == pygame.K_ESCAPE:
+            self.screen = "updates"
+            self.cursor = 0
+        elif event.key == pygame.K_RETURN:
+            if self.gui_update_worker is None:
+                self.gui_update_worker = GuiUpdateWorker()
+                self.gui_update_worker.start()
+            elif self.gui_update_worker.done and self.gui_update_worker.success:
+                self.should_restart_gui = True
+
+    def _handle_shutdown_confirm(self, event):
+        if event.key == pygame.K_ESCAPE:
+            self._go_main()
+        elif event.key in (pygame.K_UP, pygame.K_DOWN):
+            self.shutdown_cursor = 1 - self.shutdown_cursor
+        elif event.key == pygame.K_RETURN:
+            if self.shutdown_cursor == 1:
+                self.should_shutdown = True
+            else:
+                self._go_main()
 
     def _activate_diagnostic_item(self):
         target, _ = self.get_diagnostic_items()[self.cursor]

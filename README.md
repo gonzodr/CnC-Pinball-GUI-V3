@@ -319,7 +319,7 @@ sárga flipper); PC-n a billentyűzet szimulálja őket:
 | `U` | Harleycaster Solo indítása a `SCORE` képernyőről |
 | `Esc` | Bárhonnan (amíg nem fut már az attract-loop) visszadob a loop elejére |
 | `Ctrl+M` | Titkos szerviz menü megnyitása (csak nyugalmi/attract állapotból) |
-| `Q` | Kilépés a programból a parancssorba (szerviz menün kívül) |
+| `Alt+Q` | Kilépés a programból a parancssorba (a szervizmenüben is) |
 
 A minijáték alatt a nyers `KEYDOWN` és `KEYUP` események közvetlenül a
 minijátékhoz kerülnek, így a gombok nyomva tarthatók:
@@ -350,15 +350,21 @@ gépelni (pl. nevet beírni) ütközés nélkül.
   effektekhez (darabszám, méret, sebesség, élettartam, gravitáció),
   a képernyő alján folyamatosan újrainduló élő előnézettel;
   `↑`/`↓` paraméter, `←`/`→` érték, `R` alapértelmezettre állít
-- **Arduino keresése** — lefuttatja az `arduino-cli`-s port-detektálást,
+- **Firmware frissítés (F6)** — közös almenü: **GUI frissítés**,
+  **Arduino frissítés**, **Arduino keresése**. Bal/jobb flipperrel választható,
+  zölddel belépés/indítás, pirossal vissza.
+  A GUI-frissítés `git pull --ff-only`-t futtat a háttérben, naplóval;
+  siker után zöld/Enter indítja újra a GUI-t. Nem stash-el, nem resetel,
+  helyi kód-/assetmódosítás esetén megáll. A rekordok/beállítások nem törlődnek.
+- **Arduino keresése (F6 almenü)** — lefuttatja az `arduino-cli`-s port-detektálást,
   elmenti a talált portot (`serial_port.json`), a GUI legközelebbi
   újracsatlakozáskor ezt próbálja először
-- **Firmware update** — átadja a kijelzőt/soros portot egy önálló
+- **Arduino frissítés (F6 almenü)** — átadja a kijelzőt/soros portot egy önálló
   programnak (`firmware_update.py`), ami port-detektálás után
   `git pull`-t, `arduino-cli compile`-t és `upload`-ot futtat a Mega
   firmware-jén, élő loggal; a végén automatikusan visszaadja a
   vezérlést a GUI-nak (lásd lent, "Firmware toolchain a Pi-n")
-- **Minigame difficulty (F8)** — minijátékonként hétfokozatú csúszka:
+- **Minigame difficulty (F7)** — minijátékonként hétfokozatú csúszka:
   `ALMOST ENDLESS` / `VERY EASY` / `EASY` / `NORMAL` / `HARD` / `HARDER` /
   `VERY HARD`. `←`/`→` állítja, `R` visszaállítja Normalra; a választás
   újraindítás után is megmarad
@@ -369,6 +375,18 @@ gépelni (pl. nevet beírni) ütközés nélkül.
   `.chart.json` fájlt ment. A szerkesztő futása alatt a fő GUI átadja neki a
   kijelzőt és a hangkimenetet; kilépés után automatikusan visszatér a
   szervizmenübe.
+
+A szervizmenü **Raspberry Pi konfiguráció (F5)** pontja külön szöveges
+konzolon indítja a `raspi-config` programot. Ehhez billentyűzet kell.
+A **Finish** után visszatér a szervizmenübe, az Arduino soros kapcsolatának
+megszakítása nélkül. Újraindítást igénylő módosításnál a Pi természetesen
+újraindulhat. Az indító telepítése a 2.8 pontban található.
+
+**Leállítás / Shut down (F12):** megerősítő képernyő, alapból **Mégse**.
+Bal/jobb flipperrel válaszd az **Igen, leállítás** sort, zölddel erősítsd meg.
+A Pi szabályosan leáll; a flipper tápját ezután kell fizikailag kikapcsolni.
+Piros/Esc megszakítja a megerősítést. F11 továbbra is visszatér az attractba,
+Alt+Q pedig kilép a konzolra: ezek nem kapcsolják ki a Pi-t.
 
 ### Guitar chart editor használata
 
@@ -571,6 +589,30 @@ fixen — ha más útvonalat használsz, azt is át kell írni benne.)
 
 ### 2.8 Automatikus indítás boot-kor (a fő GUI)
 
+A kurzor már a korai boot alatt is elrejthető: a
+`/boot/firmware/cmdline.txt` meglévő, egyetlen sorának végére kerüljön
+`vt.global_cursor_default=0`. A splash és a GUI indításkor szintén elrejti;
+a GUI szabályos kilépése visszakapcsolja.
+
+A service a 32 bites Raspberry Pi-n az SDL2 alpha blendinget használja
+(`PYGAME_BLEND_ALPHA_SDL2=1`), hogy az áttetsző képek betöltése ne okozzon
+Bus Error-t. A rendszer leállítási jelét a GUI közvetlenül kezeli,
+így a `systemctl stop` / Shut down nem vár az SDL QUIT eseményére.
+
+A raspi-config menüpont szűk jogosultságú indítójának telepítése:
+
+```bash
+sudo install -o root -g root -m 0755 ~/CnC-Pinball-GUI-V3/tools/cnc-raspi-config /usr/local/sbin/cnc-raspi-config
+sudo visudo -cf ~/CnC-Pinball-GUI-V3/tools/cnc-raspi-config.sudoers
+sudo install -o root -g root -m 0440 ~/CnC-Pinball-GUI-V3/tools/cnc-raspi-config.sudoers /etc/sudoers.d/cnc-pinball-raspi-config
+sudo install -o root -g root -m 0755 ~/CnC-Pinball-GUI-V3/tools/cnc-pinball-shutdown /usr/local/sbin/cnc-pinball-shutdown
+sudo visudo -cf ~/CnC-Pinball-GUI-V3/tools/cnc-pinball-shutdown.sudoers
+sudo install -o root -g root -m 0440 ~/CnC-Pinball-GUI-V3/tools/cnc-pinball-shutdown.sudoers /etc/sudoers.d/cnc-pinball-shutdown
+```
+
+Ez csak a rögzített, root tulajdonú indítók argumentum nélküli futtatását
+engedélyezi jelszó nélkül a `gonzodr` felhasználónak; nem általános sudo-jog.
+
 ```bash
 sudo cp ~/CnC-Pinball-GUI-V3/cnc-pinball.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -587,6 +629,18 @@ Leállítás/újraindítás teszteléshez:
 ```bash
 sudo systemctl stop cnc-pinball.service
 sudo systemctl restart cnc-pinball.service
+```
+
+Alt+Q-val a GUI szabályosan kilép, ezért nem indul automatikusan újra;
+csak hibás leálláskor érvényes a `Restart=on-failure`. Kilépés után a
+service visszakapcsolja a tty1 konzolt és a villogó szövegkurzort.
+Ha a prompt még nem látszik, nyomj Entert vagy Ctrl+L-t.
+
+A konzolon például Wi-Fi-t állíthatsz, majd újraindíthatod a GUI-t:
+
+```bash
+sudo raspi-config
+sudo systemctl start cnc-pinball.service
 ```
 
 ### 2.9 Firmware toolchain (arduino-cli + a Mega firmware)

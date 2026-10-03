@@ -11,17 +11,27 @@ Type=simple
 User=gonzodr
 Group=gonzodr
 
+# A 32 bites Pi-n a pygame sajat alpha blittere Bus Error-t okozott.
+# Az SDL2 alpha blendinggel az assetbetoltes stabil.
+Environment=PYGAME_BLEND_ALPHA_SDL2=1
+
 # A felhasznalo legyen tagja a 'video', 'render' es 'dialout' csoportoknak,
 # mert kell: DRM/KMS irasi jog (video, render) es soros port eleres (dialout).
 # Ellenorzes: groups gonzodr
 # Hozzaadas, ha hianyzik: sudo usermod -aG video,render,dialout gonzodr
 
 WorkingDirectory=/home/gonzodr/CnC-Pinball-GUI-V3/src
+ExecStartPre=+/bin/sh -c 'TERM=linux setterm --cursor off --blank 0 > /dev/tty1 2>/dev/null || true; printf 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true; printf 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null || true'
 ExecStart=/home/gonzodr/CnC-Pinball-GUI-V3/venv/bin/python3 /home/gonzodr/CnC-Pinball-GUI-V3/src/main.py
 
 # Ha a program elszall (pl. soros hiba, mpv crash), systemd inditsa ujra.
 Restart=on-failure
 RestartSec=3
+
+# Alt+Q-val kilepeskor es a service leallasakor visszaadjuk a tty1 konzolt.
+# A boot override a framebuffer-konzolt leválasztja a GUI inditasakor;
+# a visszakoteshez root kell, ezert a '+' prefix csak erre a hookra vonatkozik.
+ExecStopPost=+/bin/sh -c 'printf 1 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null || true; chvt 1 2>/dev/null || true; TERM=linux setterm --cursor on --blank 0 > /dev/tty1 2>/dev/null || true; printf 1 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true'
 
 # Naplozas a journal-ba, hogy `journalctl -u cnc-pinball -f`-fel kovetheto legyen
 StandardOutput=journal

@@ -1,0 +1,2 @@
+# Only the installed root-owned helper, with no arguments, is passwordless.
+gonzodr ALL=(root) NOPASSWD: /usr/local/sbin/cnc-raspi-config ""

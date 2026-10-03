@@ -1874,7 +1874,7 @@ class ScoreGUI:
         """pygame.QUIT esemeny - DE kmsdrm (Pi, eles gep) alatt IGNORALJUK:
         ott nincs bezarhato ablak, viszont az mpv<->pygame kijelzo-atadas
         versenyhelyzeteiben az SDL neha hamis QUIT-ot general, amitol a GUI
-        video utan kilepett ("kifagyas"). A kilepes utja a Pi-n: Q billentyu,
+        video utan kilepett ("kifagyas"). A kilepes utja a Pi-n: Alt+Q,
         Ctrl+C vagy systemd stop."""
         if not any(e.type == pygame.QUIT for e in pygame_events):
             return False
@@ -1884,10 +1884,12 @@ class ScoreGUI:
         return True
 
     def has_quit_key_event(self, pygame_events) -> bool:
-        """Q billentyu - kilepes a progibol a parancssorba. Csak akkor
-        ellenorizzuk, ha NEM vagyunk a szerviz menuben (lasd main.py),
-        hogy ne utkozzon egy oda begepelt "Q"-val."""
-        return any(e.type == pygame.KEYDOWN and e.key == pygame.K_q for e in pygame_events)
+        """Alt+Q: szandekos kilepes minden kepernyorol; a sima Q nem lep ki."""
+        return any(
+            e.type == pygame.KEYDOWN and e.key == pygame.K_q
+            and getattr(e, "mod", 0) & pygame.KMOD_ALT
+            for e in pygame_events
+        )
 
     def start_fade_transition(self):
         """Pillanatkepet keszit a JELENLEGI kepernyotartalomrol (az elozo
@@ -2546,6 +2548,9 @@ class ScoreGUI:
             "analog_test": "ANALOG BEMENET-TESZT",
             "reset_confirm": "OSSZES HISCORE TORLESE",
             "version_info": "VERZIO INFO",
+            "updates": "FIRMWARE FRISSITES",
+            "gui_update": "GUI FRISSITES",
+            "shutdown_confirm": "FLIPPER LEALLITASA",
         }
         title_surf = self.font_service_title.render(title_map.get(controller.screen, ""), True, (255, 255, 255))
         self.screen.blit(title_surf, (30, 24))
@@ -2558,7 +2563,36 @@ class ScoreGUI:
         if controller.screen == "main":
             for i, (_, label) in enumerate(controller.MAIN_ITEMS):
                 self._draw_service_line(label, y + i * line_h, i == controller.cursor)
-            hint = "Fel/Le + Enter vagy F1-F11: kivalaszt   Esc: kilepes"
+            hint = "Fel/Le + Enter vagy F1-F12: kivalaszt   Esc: kilepes"
+
+        elif controller.screen == "updates":
+            for i, (_, label) in enumerate(controller.UPDATE_ITEMS):
+                self._draw_service_line(label, y + i * line_h, i == controller.cursor)
+            hint = "Fel/Le: navigalas   Enter: inditas   Esc: vissza"
+
+        elif controller.screen == "gui_update":
+            worker = controller.gui_update_worker
+            if worker is None:
+                lines = ["GUI letoltes a Git repobol (csak fast-forward).",
+                         "A helyi kod/asset modositasokat nem irjuk felul.",
+                         "Enter / zold: frissites inditasa."]
+                hint = "Enter: frissites   Esc: vissza"
+            else:
+                lines = worker.get_lines()[-10:]
+                hint = ("Enter: GUI ujrainditas   Esc: vissza" if worker.success
+                        else "Esc: vissza" if worker.done else "Frissites folyamatban...")
+            for i, line in enumerate(lines):
+                self._draw_service_line(line[:70], y + i * line_h, False)
+
+        elif controller.screen == "shutdown_confirm":
+            self._draw_service_line("Biztosan leallitod a Raspberry Pi-t?", y, False)
+            self._draw_service_line("Megse / vissza", y + line_h * 2,
+                                    controller.shutdown_cursor == 0)
+            self._draw_service_line("Igen, leallitas", y + line_h * 3,
+                                    controller.shutdown_cursor == 1)
+            self._draw_service_line("A tapot csak a Pi leallasa utan kapcsold ki.",
+                                    y + line_h * 5, False)
+            hint = "Fel/Le: valasztas   Enter: megerosites   Esc: megse"
 
         elif controller.screen == "hiscore_edit":
             for i, entry in enumerate(controller.score_manager.scores):

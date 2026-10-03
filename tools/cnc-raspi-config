@@ -1,0 +1,20 @@
+#!/bin/sh
+# Fixed, root-owned entry point. No user-supplied command or arguments.
+set -eu
+[ "$(id -u)" -eq 0 ] && [ "$#" -eq 0 ] || exit 1
+
+restore_gui() {
+    TERM=linux setterm --cursor off --blank 0 > /dev/tty1 2>/dev/null || true
+    printf 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true
+    printf 0 > /sys/class/vtconsole/vtcon1/bind 2>/dev/null || true
+    chvt 1 2>/dev/null || true
+}
+trap restore_gui EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+printf 1 > /sys/class/vtconsole/vtcon1/bind
+printf 1 > /sys/class/graphics/fbcon/cursor_blink
+# Choose a free VT, wait for Finish, then return to the original VT.
+TERM=linux /usr/bin/openvt --switch --wait -- /bin/sh -c 'setterm --cursor on --blank 0; exec /usr/bin/raspi-config'

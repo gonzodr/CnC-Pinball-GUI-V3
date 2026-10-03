@@ -13,6 +13,7 @@ nelkul tovabb mukodik, a billentyuzet es a soros port egyszerre
 """
 
 import os
+import signal
 import subprocess
 import time
 import sys
@@ -24,6 +25,8 @@ from score_gui import ScoreGUI
 from mock_input import MockInputController
 from protocol import GameEvent
 from service_menu import ServiceMenuController
+from raspi_config import run_raspi_config
+from pi_shutdown import request_shutdown
 
 
 # --- Konfiguracio ---
@@ -167,6 +170,15 @@ def main():
     clock_interval = 1.0 / TARGET_FPS
     running = True
     exit_code = 0
+    restart_requested = False
+
+    def system_stop(_signum, _frame):
+        nonlocal running
+        # SDL kmsdrm SIGTERM-bol QUIT-ot csinalna, amit a videok miatt
+        # szandekosan ignoraltunk. systemd stop/poweroff viszont valodi stop.
+        running = False
+
+    signal.signal(signal.SIGTERM, system_stop)
 
     try:
         while running:
@@ -181,8 +193,10 @@ def main():
 
             # 3. Pygame esemenyek
             pygame_events = gui.poll_pygame_events()
-            if gui.has_quit_event(pygame_events):
+            if (gui.has_quit_event(pygame_events)
+                    or gui.has_quit_key_event(pygame_events)):
                 running = False
+                continue
 
             if state.state == AppState.SERVICE_MENU:
                 # Amig a titkos szerviz menu aktiv, a nyers billentyu-eventek
@@ -204,7 +218,7 @@ def main():
                 # Globalis F-gombok (F1..F12): VAK hasznalatra - barmely
                 # nyugalmi allapotbol egyetlen gombnyomassal megnyitjak a
                 # szerviz menut ES vegrehajtjak a menupontot (pl. F7 =
-                # firmware update, monitor nelkul, powerbankrol a pinceben).
+                # frissitesi almenu, monitor nelkul, powerbankrol a pinceben).
                 fkey = ServiceMenuController.fkey_in_events(pygame_events)
                 if fkey is not None:
                     state.handle_event(GameEvent("SERVICE_MENU_ENTER", ()))
@@ -236,6 +250,24 @@ def main():
                 state.service_menu.should_launch_guitar_chart_editor = False
                 run_guitar_chart_editor(gui, serial_reader)
                 continue
+
+            if (state.state == AppState.SERVICE_MENU
+                    and state.service_menu.should_launch_raspi_config):
+                state.service_menu.should_launch_raspi_config = False
+                # A soros kapcsolat nyitva marad: ne reseteljuk az Arduinot.
+                run_raspi_config(gui, state.service_menu)
+                continue
+
+            if state.state == AppState.SERVICE_MENU:
+                if state.service_menu.should_shutdown:
+                    state.service_menu.should_shutdown = False
+                    if request_shutdown(state.service_menu):
+                        running = False
+                        continue
+                if state.service_menu.should_restart_gui:
+                    restart_requested = True
+                    running = False
+                    continue
 
             # 4. Allapotvaltas kezelese
             transition = state.consume_transition()
@@ -345,6 +377,9 @@ def main():
         serial_reader.stop()
         png_video.close()
         gui.release_display()
+        if restart_requested and exit_code == 0:
+            # Sikeres frissites utan ugyanebben a systemd processben uj GUI.
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
         sys.exit(exit_code)
 
 

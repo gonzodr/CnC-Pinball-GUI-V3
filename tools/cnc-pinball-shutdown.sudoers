@@ -1,0 +1,2 @@
+# Only the root-owned, shutdown-only helper; no arguments allowed.
+gonzodr ALL=(root) NOPASSWD: /usr/local/sbin/cnc-pinball-shutdown ""

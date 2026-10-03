@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fixed shutdown-only entry point, installed root-owned, no arguments.
+set -eu
+[ "$(id -u)" -eq 0 ] && [ "$#" -eq 0 ] || exit 1
+exec /usr/bin/systemctl poweroff
