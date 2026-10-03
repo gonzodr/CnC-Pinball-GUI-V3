@@ -67,8 +67,13 @@ def parse_line(line: str) -> Optional[GameEvent]:
         elif cmd == "ARCADE_EXIT" and len(parts) == 1:
             return GameEvent("ARCADE_EXIT")
 
-        elif cmd == "GUITAR_SOLO_START" and len(parts) == 1:
-            return GameEvent("GUITAR_SOLO_START")
+        elif cmd == "GUITAR_SOLO_START" and len(parts) in (1, 2):
+            if len(parts) == 1:
+                return GameEvent("GUITAR_SOLO_START")
+            session = int(parts[1])
+            if not 1 <= session <= 0xFFFF:
+                return None
+            return GameEvent("GUITAR_SOLO_START", (session,))
 
         elif cmd == "GAME_START" and len(parts) == 3:
             mode_id, player_count = map(int, parts[1:3])

@@ -18,6 +18,7 @@ env/
 src/minigame_settings.json
 src/serial_port.json
 src/munchies_hiscores.json
+src/puff_hiscores.json
 src/team_hiscores.json
 src/particle_settings.json
 

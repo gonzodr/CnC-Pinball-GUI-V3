@@ -275,11 +275,21 @@ Start/piros belép az Arcade almenübe, a flippergombok választanak a
 Shoot/zöld visszalép a fő módválasztóba. A fizikai vezérléshez az Arcade
 protokollt küldő firmware is szükséges (F6 → Arduino frissítés).
 
-Hardveres státusz: az Arcade almenü és a Munchies ág bekötött. A Puff ág
-már küld `GUITAR_SOLO_START` eseményt, de még prototípus: a folyamatos
-gombállapot-átadás és a játék végének pontozási/firmware-lezárási protokollja
-még nincs bekötve. A PC-s billentyűzetes játék és a hordozható assetek készek;
-a vasas Puff játék nem tekinthető végig integrált játékmódnak.
+Hardveres Puff: `GUITAR_SOLO_START,sid` indítja; a folyamatos `MG_INPUT`
+gombállapotok a nyomást és felengedést is átadják (bal / zöld / jobb =
+bal / középső / jobb sáv). A kapcsolópergés 10 ms-os szűrést kap. A Pi már
+betöltés alatt küld háttér-heartbeatet, és csak a kész játékra ad `MG_READY`-t.
+A firmware legfeljebb 90 másodpercet enged betölteni, kapcsolat nélkül 10
+másodperc után megszakít; játékban a watchdog 5 másodperc, az abszolút limit
+230 másodperc. Puff alatt nem fut a golyókezelés, minden játéktekercs LOW.
+
+A pontot `MG_DONE,sid,score` adja át, ACK és idempotens újraküldés védi a
+dupla pontozástól. A közös Arcade koordinátor játékosonként egy menetet
+indít; a `MUNCHIES_PLAYER/RESULT/FINISH` üzenetnevek Puffnál is ezt a közös
+protokollt jelölik. A végén eredménylista és külön Puff ranglista következik
+(`src/puff_hiscores.json`), majd attract. A fizikai szervizkombó megszakítja
+a játékot és a Pi zenéjét is. A helyi tesztek nem helyettesítik a kabinet
+valódi gombjainak és hangkimenetének próbáját.
 
 A Puff 'n' Riff történetképpel és 3–2–1 visszaszámlálással indul.
 A külön `.guitar.wav` és `.no_guitar.wav` sávok a Git repó részei:

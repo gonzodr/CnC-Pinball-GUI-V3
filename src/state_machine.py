@@ -107,6 +107,7 @@ class StateMachine:
         self.quick_score_manager = ScoreManager(ScoreManager.QUICK_FILE_PATH)
         self.mayhem_score_manager = ScoreManager(ScoreManager.MAYHEM_FILE_PATH)
         self.munchies_score_manager = ScoreManager(ScoreManager.MUNCHIES_FILE_PATH)
+        self.puff_score_manager = ScoreManager(ScoreManager.PUFF_FILE_PATH)
         self.highscore_manager = self.score_manager
         self.highscore_title = "HIGHSCORES"
         self.name_entry_title = None
@@ -287,6 +288,12 @@ class StateMachine:
             self.highscore_manager = getattr(self, "munchies_score_manager", None)
             self.highscore_title = "MUNCHIES HIGH SCORES"
             self.name_entry_title = None
+        elif (getattr(self, "running_game_mode", GAME_STANDARD) == GAME_ARCADE
+              and getattr(self, "running_arcade_game", ARCADE_MUNCHIES)
+                  == ARCADE_PUFF_N_RIFF):
+            self.highscore_manager = getattr(self, "puff_score_manager", None)
+            self.highscore_title = "PUFF 'N' RIFF HIGH SCORES"
+            self.name_entry_title = None
         else:
             self.highscore_manager = getattr(self, "score_manager", None)
             self.highscore_title = "HIGHSCORES"
@@ -420,7 +427,7 @@ class StateMachine:
 
         if event.kind == "MUNCHIES_PLAYER":
             player_num = event.args[0]
-            self.munchies_challenge_active = True
+            self.munchies_challenge_active = self.running_arcade_game == ARCADE_MUNCHIES
             self.munchies_challenge_phase = "RUNNING"
             self.current_player = player_num
             return
@@ -436,7 +443,11 @@ class StateMachine:
             self.munchies_challenge_active = False
             self.final_scores = dict(self.players)
             self.final_player_count = self.active_player_count
-            self.final_scores_title = "MUNCHIES RESULTS"
+            self.final_scores_title = (
+                "PUFF 'N' RIFF RESULTS"
+                if self.running_arcade_game == ARCADE_PUFF_N_RIFF
+                else "MUNCHIES RESULTS"
+            )
             self._select_highscore_profile()
             self._pending_highscore_check = self.players.get(winner, 0)
             self.pending_highscore_player = winner
@@ -548,7 +559,7 @@ class StateMachine:
                 except (TypeError, ValueError):
                     pass
             if (
-                self.state == AppState.MINIGAME
+                self.state in (AppState.MINIGAME, AppState.PUFF_LOADING)
                 and (session is None or session == self._minigame_session)
             ):
                 print(
@@ -897,6 +908,8 @@ class StateMachine:
         elif event.kind == "SERVICE_MENU_ENTER":
             # Titkos szerviz menu (Ctrl+M) - csak nyugalmi/attract
             # allapotokbol nyithato, jatek kozben nem.
+            if self.state in (AppState.MINIGAME, AppState.PUFF_LOADING):
+                self._abort_minigame()
             if self.state in self.SERVICE_MENU_ALLOWED_STATES:
                 self._in_attract_loop = False
                 self.service_menu.reset()
@@ -933,8 +946,33 @@ class StateMachine:
             # Eloszor a tortenetkep jelenik meg. A Harleycaster csak a
             # kovetkezo main-loop frame-ben kezd betoltodni, igy a lassabb
             # Raspberry Pi-n sem fekete/fagyott kep fogadja a jatekost.
-            if self.state != AppState.SCORE or self.minigame is not None:
+            session = event.args[0] if event.args else None
+            if (session is not None and self._minigame_pending_done is not None
+                    and session == self._minigame_pending_done[0]):
+                # A delayed START cannot replay a run awaiting its DONE ack.
+                self._send_minigame_line(
+                    f"MG_DONE,{session},{self._minigame_pending_done[1]}"
+                )
                 return
+            if (session is not None and session == self._minigame_session
+                    and self.state in (AppState.PUFF_LOADING, AppState.MINIGAME)):
+                # Retries must not restart loading or falsely acknowledge it.
+                self._send_minigame_line(f"MG_ALIVE,{session}")
+                if self.state == AppState.MINIGAME:
+                    self._send_minigame_line(f"MG_READY,{session}")
+                return
+            if self.state != AppState.SCORE or self.minigame is not None:
+                if session is not None:
+                    self._send_minigame_line(f"MG_BUSY,{session}")
+                return
+            self._minigame_session = session
+            self._minigame_last_input_seq = None
+            self._minigame_pending_done = None
+            self._active_minigame_kind = "harleycaster_solo"
+            self._minigame_next_heartbeat = time.monotonic()
+            if session is not None:
+                self._send_minigame_line(f"MG_ALIVE,{session}")
+                self._arm_minigame_heartbeat(session)
             self._puff_loading_started_at = 0.0
             self._puff_loading_presented = False
             self._puff_loading_attempted = False
@@ -1101,17 +1139,20 @@ class StateMachine:
             self._send_minigame_line(f"MG_COLLECTION,{session}")
 
     def _abort_minigame(self):
-        if self.minigame is None:
-            return
         self._disarm_minigame_heartbeat()
         aborted = self.minigame
         self.minigame = None
-        aborted.prepare_for_replay()
-        if self._active_minigame_kind == "munchies_abduction":
-            self._preloaded_minigame = aborted
+        if aborted is not None:
+            aborted.prepare_for_replay()
+            if self._active_minigame_kind == "munchies_abduction":
+                self._preloaded_minigame = aborted
+            elif self._active_minigame_kind == "harleycaster_solo":
+                self._preloaded_harleycaster = aborted
         self._active_minigame_kind = None
         self._minigame_session = None
         self._minigame_last_input_seq = None
+        self._minigame_pending_done = None
+        self._mock_munchies_challenge = False
         self.state = AppState.SCORE
 
     def _arm_minigame_heartbeat(self, session):
@@ -1128,7 +1169,7 @@ class StateMachine:
         session = self._minigame_session
         if (
             session is not None
-            and self.state == AppState.MINIGAME
+            and self.state in (AppState.MINIGAME, AppState.PUFF_LOADING)
             and now >= self._minigame_next_heartbeat
         ):
             self._send_minigame_line(f"MG_ALIVE,{session}")
@@ -1262,6 +1303,9 @@ class StateMachine:
                 self._mock_munchies_challenge = True
                 self.handle_event(GameEvent("MUNCHIES_START"))
             elif mode_id == GAME_ARCADE and self.running_arcade_game == ARCADE_PUFF_N_RIFF:
+                self.players = {1: 0, 2: 0, 3: 0, 4: 0}
+                self.current_player = 1
+                self._mock_munchies_challenge = True
                 self.handle_event(GameEvent("GUITAR_SOLO_START"))
 
         if self.state == AppState.PUFF_LOADING and self._puff_loading_presented:
@@ -1289,7 +1333,9 @@ class StateMachine:
                     self.party_message = "HARLEYCASTER ASSET ERROR"
                     self.party_message_until = time.time() + 4.0
                     self._preloaded_harleycaster = None
-                    self.state = AppState.SCORE
+                    if self._minigame_session is not None:
+                        self._send_minigame_line(f"MG_BUSY,{self._minigame_session}")
+                    self._abort_minigame()
                     return
 
             if (
@@ -1306,30 +1352,20 @@ class StateMachine:
                     )
                 self.minigame.activate()
                 self._active_minigame_kind = "harleycaster_solo"
-                self._minigame_session = None
                 self._minigame_last_input_seq = None
                 self._minigame_pending_done = None
                 self._minigame_last_tick = time.monotonic()
                 self.state = AppState.MINIGAME
+                if self._minigame_session is not None:
+                    self._send_minigame_line(f"MG_READY,{self._minigame_session}")
+                    self._service_minigame_protocol(time.monotonic())
 
         if self.state == AppState.MINIGAME and self.minigame is not None:
-            now = protocol_now
+            now = time.monotonic()  # loading may have blocked since protocol_now
             self.minigame.update(now - self._minigame_last_tick)
             self._minigame_last_tick = now
             if self.minigame.finished:
-                if self._active_minigame_kind == "harleycaster_solo":
-                    result = self.minigame.result_dict()
-                    self.last_minigame_result = result
-                    self.players[self.current_player] += result["total_bonus"]
-                    completed_game = self.minigame
-                    self.minigame = None
-                    completed_game.prepare_for_replay()
-                    self._preloaded_harleycaster = completed_game
-                    self._active_minigame_kind = None
-                    self._minigame_session = None
-                    self._minigame_last_input_seq = None
-                    self.state = AppState.SCORE
-                    return
+                puff = self._active_minigame_kind == "harleycaster_solo"
                 result = self.minigame.result_dict()
                 self.last_minigame_result = result
                 bonus = result["total_bonus"]
@@ -1340,7 +1376,7 @@ class StateMachine:
                     self._minigame_pending_done = (session, bonus, deadline, now)
                     # Az elso DONE ne varjon a kovetkezo GUI frame-ig.
                     self._service_minigame_protocol(now)
-                elif (not self._mock_munchies_challenge
+                elif (not puff and not self._mock_munchies_challenge
                       and self.serial_reader is not None
                       and hasattr(self.serial_reader, "send_raw")):
                     # Regi, session nelkuli firmware kompatibilitasa.
@@ -1352,7 +1388,10 @@ class StateMachine:
                 # samples. Re-arming only creates a fresh lightweight road
                 # streamer, so later VUK entries remain just as immediate.
                 completed_game.prepare_for_replay()
-                self._preloaded_minigame = completed_game
+                if puff:
+                    self._preloaded_harleycaster = completed_game
+                else:
+                    self._preloaded_minigame = completed_game
                 self._active_minigame_kind = None
                 self._minigame_session = None
                 self._minigame_last_input_seq = None
@@ -1361,7 +1400,9 @@ class StateMachine:
                         self.current_player += 1
                         self.munchies_challenge_phase = "RUNNING"
                         self.state = AppState.SCORE
-                        self.handle_event(GameEvent("MUNCHIES_START"))
+                        self.handle_event(GameEvent(
+                            "GUITAR_SOLO_START" if puff else "MUNCHIES_START"
+                        ))
                     else:
                         winner = max(
                             range(1, self.active_player_count + 1),

@@ -9,6 +9,7 @@ import threading
 # Runtime data may differ on a cabinet; code/asset edits must be saved first.
 RUNTIME_FILES = {
     "src/hiscores.json", "src/thanks_names.json", "src/munchies_hiscores.json",
+    "src/puff_hiscores.json",
     "src/particle_settings.json", "src/minigame_settings.json",
     "src/serial_port.json",
 }
