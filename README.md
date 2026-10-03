@@ -275,6 +275,12 @@ Start/piros belép az Arcade almenübe, a flippergombok választanak a
 Shoot/zöld visszalép a fő módválasztóba. A fizikai vezérléshez az Arcade
 protokollt küldő firmware is szükséges (F6 → Arduino frissítés).
 
+Hardveres státusz: az Arcade almenü és a Munchies ág bekötött. A Puff ág
+már küld `GUITAR_SOLO_START` eseményt, de még prototípus: a folyamatos
+gombállapot-átadás és a játék végének pontozási/firmware-lezárási protokollja
+még nincs bekötve. A PC-s billentyűzetes játék és a hordozható assetek készek;
+a vasas Puff játék nem tekinthető végig integrált játékmódnak.
+
 A Puff 'n' Riff történetképpel és 3–2–1 visszaszámlálással indul.
 A külön `.guitar.wav` és `.no_guitar.wav` sávok a Git repó részei:
 hibánál csak a gitár halkul el, a kíséret folytatódik. A loading stinger,
